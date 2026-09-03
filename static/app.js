@@ -206,6 +206,7 @@ $("m-action").onclick = () => {
 };
 $("btn-hidden").onclick = () => {
   restoreHidden = !restoreHidden;
+  $("btn-hidden").classList.toggle("active", restoreHidden);
   loadRadar();
 };
 

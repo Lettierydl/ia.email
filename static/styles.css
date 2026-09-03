@@ -90,6 +90,11 @@ button {
   color: var(--ink);
 }
 .ghost:hover { background: #f1f3f4; }
+.ghost.active {
+  background: var(--blue-soft);
+  border-color: var(--blue);
+  color: var(--blue-dark);
+}
 .icon-btn {
   background: transparent;
   border: 0;
@@ -496,7 +501,11 @@ body.conversation .pane {
   border-top: 1px solid var(--line);
   background: var(--green-soft);
 }
-.send-target { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.send-target { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+@media (max-width: 480px) {
+  .send-bar { flex-wrap: wrap; }
+  .send-target { flex-basis: 100%; white-space: normal; }
+}
 .send-mail-btn {
   background: var(--green);
   flex-shrink: 0;
