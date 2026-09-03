@@ -431,6 +431,39 @@ function formatSummary(text) {
     .join("\n");
 }
 
+function renderCaptureSuggestion(note, status) {
+  const card = $("capture-suggestion");
+  if (!note || status !== "pending") {
+    card.classList.add("hidden");
+    return;
+  }
+  $("capture-note-text").textContent = note;
+  card.classList.remove("hidden");
+}
+
+$("capture-dismiss").onclick = async () => {
+  if (!paneId) return;
+  $("capture-suggestion").classList.add("hidden");
+  await fetch(`/api/threads/${paneId}/capture/dismiss`, { method: "POST" });
+};
+
+$("capture-approve").onclick = async () => {
+  if (!paneId) return;
+  $("capture-approve").disabled = true;
+  try {
+    const res = await fetch(`/api/threads/${paneId}/capture/approve`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      $("capture-suggestion").classList.add("hidden");
+      $("pane-status").textContent = `Guardado no cérebro (${data.path}).`;
+    } else {
+      $("pane-status").textContent = data.detail || "Falha ao guardar.";
+    }
+  } finally {
+    $("capture-approve").disabled = false;
+  }
+};
+
 async function openPane(id, force) {
   paneId = id;
   chatHistory = [];
@@ -468,6 +501,7 @@ async function openPane(id, force) {
       });
     }
     renderChat();
+    renderCaptureSuggestion(data.capture_note, data.capture_status);
     if (data.subject) document.title = data.subject + " · IA.Email";
     setTab("resumo");
   } catch (err) {

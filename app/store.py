@@ -54,6 +54,8 @@ def init() -> None:
             ("body_text", "TEXT"),
             ("chat_json", "TEXT"),
             ("fyi_only", "INTEGER"),
+            ("capture_note", "TEXT"),
+            ("capture_status", "TEXT"),
         ):
             try:
                 conn.execute(f"ALTER TABLE threads ADD COLUMN {col} {typ}")
@@ -158,7 +160,16 @@ def get_thread(thread_id: str) -> dict[str, Any] | None:
 
 
 def save_ai(thread_id: str, **fields: Any) -> None:
-    allowed = {"summary", "draft", "body_text", "needs_action_hint", "chat_json", "fyi_only"}
+    allowed = {
+        "summary",
+        "draft",
+        "body_text",
+        "needs_action_hint",
+        "chat_json",
+        "fyi_only",
+        "capture_note",
+        "capture_status",
+    }
     sets = []
     values = []
     for key, value in fields.items():

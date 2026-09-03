@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 
 from . import gmail_client, llm, store
-from .config import EMAIL_EXPORT_DIR, EMAIL_EXPORT_RETENTION_DAYS
+from .config import CONTEXT_MD, EMAIL_EXPORT_DIR, EMAIL_EXPORT_RETENTION_DAYS
 
 _LOCK = threading.Lock()
 
@@ -29,6 +29,14 @@ nada dele: atas de reunião distribuídas em massa, avisos de status entre
 outras pessoas, threads onde a decisão já foi resolvida por terceiros, etc.
 so_copia=true mesmo que o assunto pareça importante, desde que não haja
 pedido/decisão direta a Leo. Nesse caso acao_leo deve ser false também.
+
+Preencha nota_captura APENAS quando o e-mail tiver um fato durável que valha
+guardar num arquivo de referência pessoal do Leo (uma decisão tomada, uma
+regra/política definida, um número ou acordo que vai ser consultado depois).
+Não preencha para chamados pontuais, cobranças rotineiras ou "ainda em
+aberto". Se preencher, escreva 1-2 linhas objetivas, estilo nota de
+referência (fato + data + quem decidiu), sem floreio. Deixe "" se não houver
+nada que valha a pena.
 """
 
 SUMARIO_EXEMPLO = """Exemplo de resumo bom:
@@ -79,18 +87,28 @@ def _ensure_body(thread_id: str) -> str:
     return text
 
 
+_EMPTY_PARSED = {
+    "resumo": "",
+    "acao_leo": False,
+    "sugestao": "",
+    "so_copia": False,
+    "nota_captura": "",
+}
+
+
 def _parse_json(raw: str) -> dict:
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if not match:
-        return {"resumo": raw.strip(), "acao_leo": False, "sugestao": "", "so_copia": False}
+        return {**_EMPTY_PARSED, "resumo": raw.strip()}
     try:
         data = json.loads(match.group(0))
     except json.JSONDecodeError:
-        return {"resumo": raw.strip(), "acao_leo": False, "sugestao": "", "so_copia": False}
+        return {**_EMPTY_PARSED, "resumo": raw.strip()}
     return {
         "resumo": str(data.get("resumo") or "").strip(),
         "acao_leo": bool(data.get("acao_leo")),
         "sugestao": str(data.get("sugestao") or "").strip(),
+        "nota_captura": str(data.get("nota_captura") or "").strip(),
         "so_copia": bool(data.get("so_copia")),
     }
 
@@ -115,6 +133,8 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
                     "body": body,
                     "needs_action_hint": bool(row.get("needs_action_hint")),
                     "fyi_only": bool(row.get("fyi_only")),
+                    "capture_note": row.get("capture_note") or "",
+                    "capture_status": row.get("capture_status"),
                     "cached": True,
                 }
         if not llm.has_key():
@@ -128,6 +148,8 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
                 "body": body,
                 "needs_action_hint": bool(row.get("needs_action_hint")),
                 "fyi_only": bool(row.get("fyi_only")),
+                "capture_note": row.get("capture_note") or "",
+                "capture_status": row.get("capture_status"),
                 "cached": False,
                 "warning": "Sem chave de LLM (Claude/Gemini/OpenRouter): não dá para resumir no estilo do painel. Cole uma chave no .env do cérebro.",
             }
@@ -138,10 +160,12 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
             '{"resumo":"Pedido: ...\\nFatos:\\n- ...\\nDecisão/ação de Leo:\\n- ...\\nRuído: ...",'
             '"acao_leo":true,'
             '"sugestao":"",'
-            '"so_copia":false}\n'
+            '"so_copia":false,'
+            '"nota_captura":""}\n'
             "sugestao só se der para responder sem inventar; senão string vazia.\n"
             "acao_leo=true só se pede decisão/validação direta do Leo.\n"
-            "so_copia=true se Leo só está em cópia/FYI, sem nada pra fazer (ver regra no system).\n\n"
+            "so_copia=true se Leo só está em cópia/FYI, sem nada pra fazer (ver regra no system).\n"
+            "nota_captura só se houver fato durável pra guardar (ver regra no system).\n\n"
             f"Assunto: {subject}\n\n{body[:12000]}",
             system=llm.SYSTEM + "\n" + SUMARIO_SYSTEM,
         )
@@ -157,14 +181,17 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
         chat = _load_chat(row)
         if parsed["sugestao"] and not chat:
             chat = [{"role": "ai", "text": parsed["sugestao"]}]
-        store.save_ai(
-            thread_id,
+        save_kwargs = dict(
             summary=summary,
             draft=parsed["sugestao"],
             chat_json=json.dumps(chat),
             needs_action_hint=1 if parsed["acao_leo"] else 0,
             fyi_only=1 if parsed["so_copia"] else 0,
         )
+        if parsed["nota_captura"]:
+            save_kwargs["capture_note"] = parsed["nota_captura"]
+            save_kwargs["capture_status"] = "pending"
+        store.save_ai(thread_id, **save_kwargs)
         return {
             "id": thread_id,
             "subject": row.get("subject") or "",
@@ -173,6 +200,8 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
             "draft": parsed["sugestao"],
             "chat": chat,
             "fyi_only": parsed["so_copia"],
+            "capture_note": parsed["nota_captura"],
+            "capture_status": "pending" if parsed["nota_captura"] else None,
             "body": body,
             "needs_action_hint": parsed["acao_leo"],
             "cached": False,
@@ -258,3 +287,27 @@ def export_context(thread_id: str) -> dict:
             f"{export_path} antes de responder."
         )
         return {"path": str(export_path), "prompt": prompt}
+
+
+def approve_capture(thread_id: str) -> dict:
+    with _LOCK:
+        row = store.get_thread(thread_id) or {}
+        note = (row.get("capture_note") or "").strip()
+        if not note:
+            raise RuntimeError("Essa thread não tem nota de captura pendente.")
+        subject = row.get("subject") or "(sem assunto)"
+        entry = (
+            f"\n\n## Captura do Radar — {datetime.now().strftime('%d/%m/%Y')} — {subject}\n"
+            f"{note}\n"
+        )
+        CONTEXT_MD.parent.mkdir(parents=True, exist_ok=True)
+        with CONTEXT_MD.open("a", encoding="utf-8") as fh:
+            fh.write(entry)
+        store.save_ai(thread_id, capture_status="approved")
+        return {"ok": True, "path": str(CONTEXT_MD)}
+
+
+def dismiss_capture(thread_id: str) -> dict:
+    with _LOCK:
+        store.save_ai(thread_id, capture_status="dismissed")
+        return {"ok": True}

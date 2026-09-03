@@ -251,6 +251,19 @@ def thread_export_context(thread_id: str):
         raise HTTPException(502, str(exc)) from exc
 
 
+@app.post("/api/threads/{thread_id}/capture/approve")
+def thread_capture_approve(thread_id: str):
+    try:
+        return assistant.approve_capture(thread_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/threads/{thread_id}/capture/dismiss")
+def thread_capture_dismiss(thread_id: str):
+    return assistant.dismiss_capture(thread_id)
+
+
 @app.post("/api/threads/{thread_id}/send")
 def thread_send(thread_id: str, body: SendBody):
     text = body.text.strip()
