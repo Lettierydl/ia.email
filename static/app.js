@@ -21,7 +21,7 @@ function tags(item) {
 
 function card(item) {
   const href = `/mail/${encodeURIComponent(item.id)}`;
-  return `<a class="card" href="${href}" target="_blank" rel="noopener" data-id="${item.id}">
+  return `<a class="card" href="${href}" data-id="${item.id}">
     <header>
       <span class="from">${item.from_email || item.from_name}</span>
       <span class="time">${item.time}</span>

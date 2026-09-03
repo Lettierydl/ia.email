@@ -317,7 +317,7 @@ body.conversation .metrics,
 body.conversation .controls,
 body.conversation .menu,
 body.conversation .board { display: none; }
-body.conversation { max-width: 760px; }
+body.conversation { max-width: 1100px; }
 body.conversation .pane {
   position: static;
   width: 100%;
@@ -325,6 +325,32 @@ body.conversation .pane {
   border: 0;
   box-shadow: none;
   padding: 0;
+}
+@media (min-width: 900px) {
+  body.conversation .pane-header { padding: 20px 8px 16px; }
+  body.conversation .tabs { display: none; }
+  body.conversation .pane-body-wrap {
+    padding: 0 8px 32px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 32px;
+    align-items: start;
+  }
+  body.conversation #tab-resumo,
+  body.conversation #tab-texto.hidden {
+    display: block !important;
+  }
+  body.conversation #tab-texto .messages { max-height: 70vh; overflow-y: auto; }
+  body.conversation .split-label { display: block; }
+}
+.split-label {
+  display: none;
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--muted);
+  margin-bottom: 8px;
 }
 
 /* ── PANE (detail/reply) ── */
