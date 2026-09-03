@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IA.Email</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css?v=12" />
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>
+        <a id="back-inbox" class="back hidden" href="/">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+          Caixa
+        </a>
+        <span class="logo">IA</span>.Email
+      </h1>
+      <p class="sub">
+        <strong id="account">leo@confrapag.com.br</strong>
+        <span id="llm-badge" class="llm-badge hidden"></span>
+      </p>
+    </div>
+    <div class="top-actions">
+      <span class="last-update" id="updated">—</span>
+      <button type="button" id="btn-refresh" class="icon-btn" data-tooltip="Atualizar emails do Gmail">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+      </button>
+      <button type="button" id="btn-auth" class="ghost hidden">Entrar no Gmail</button>
+    </div>
+  </header>
+
+  <p id="banner" class="banner hidden"></p>
+
+  <form id="setup" class="setup hidden">
+    <p>Cole aqui suas credenciais OAuth Desktop (Gmail API).</p>
+    <label>Client ID <input id="cid" type="text" autocomplete="off" /></label>
+    <label>Client secret <input id="csecret" type="password" autocomplete="off" /></label>
+    <button type="submit" class="primary">Salvar e entrar</button>
+  </form>
+
+  <section class="metrics">
+    <button type="button" class="metric" id="m-unanswered">
+      <strong id="n-unanswered">0</strong> <span>não respondidos</span>
+    </button>
+    <button type="button" class="metric action" id="m-action">
+      <strong id="n-action">0</strong> <span>precisam de ação</span>
+    </button>
+  </section>
+
+  <section class="controls">
+    <input id="q" type="search" placeholder="Buscar por remetente ou assunto" />
+    <label><input type="checkbox" id="acao" /> só ação minha</label>
+    <label><input type="checkbox" id="mkt" /> marketing</label>
+    <button type="button" id="btn-hidden" class="ghost">Restaurar ocultos (0)</button>
+  </section>
+
+  <details id="waiting-menu" class="menu">
+    <summary>Aguardando resposta <span id="c-waiting">0</span></summary>
+    <div id="waiting" class="list"></div>
+  </details>
+
+  <section class="board">
+    <article>
+      <h2>Não lidos <span id="c-unread">0</span></h2>
+      <div id="unread" class="list"></div>
+    </article>
+    <article>
+      <div class="auto-header">
+        <h2>Automáticos <span id="c-auto">0</span></h2>
+        <div class="auto-actions">
+          <button type="button" id="btn-auto-read" class="ghost" data-tooltip="Marcar todos automáticos como lidos no Gmail">
+            <svg style="width:16px;height:16px;vertical-align:middle;margin-right:2px" viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
+            Marcar lidos
+          </button>
+        </div>
+      </div>
+      <div id="automatic" class="list"></div>
+    </article>
+  </section>
+
+  <aside id="pane" class="pane hidden">
+    <div class="pane-header">
+      <div>
+        <p class="from" id="pane-from"></p>
+        <h3 id="pane-subject"></h3>
+      </div>
+      <div class="pane-actions">
+        <button type="button" id="pane-mark-read" class="icon-btn" data-tooltip="Marcar como lido">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
+        </button>
+        <button type="button" id="pane-close" class="icon-btn" data-tooltip="Fechar">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button type="button" class="tab on" data-tab="resumo">Resumo</button>
+      <button type="button" class="tab" data-tab="texto">Texto completo</button>
+    </div>
+
+    <div class="pane-body-wrap">
+      <div id="tab-resumo">
+        <p id="pane-status" class="muted"></p>
+        <div id="pane-summary" class="box"></div>
+
+        <div class="compose-area">
+          <div class="compose-toolbar">
+            <button type="button" id="pane-resumir" data-tooltip="Gerar resumo de novo">
+              <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+            </button>
+            <span class="sep"></span>
+            <button type="button" title="Negrito" style="font-weight:bold">B</button>
+            <button type="button" title="Itálico" style="font-style:italic">I</button>
+            <button type="button" title="Sublinhado" style="text-decoration:underline">U</button>
+            <span class="sep"></span>
+            <button type="button" title="Anexo">
+              <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 015 0v10.5c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5V6H9v9.5a3 3 0 006 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg>
+            </button>
+          </div>
+          <div id="chat-messages" class="chat-messages"></div>
+          <div id="send-bar" class="send-bar hidden">
+            <span id="send-target" class="send-target"></span>
+            <button type="button" id="pane-send" class="primary send-mail-btn">
+              <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px;vertical-align:middle;margin-right:4px"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+              Enviar e-mail
+            </button>
+          </div>
+          <div class="compose-input-row">
+            <textarea id="pane-instr" rows="3" placeholder="Diga o que quer responder..."></textarea>
+            <button type="button" id="pane-gen" class="send-btn" data-tooltip="Gerar rascunho">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-texto" class="hidden">
+        <div id="pane-body" class="messages"></div>
+      </div>
+    </div>
+  </aside>
+
+  <script src="/static/app.js?v=14"></script>
+</body>
+</html>

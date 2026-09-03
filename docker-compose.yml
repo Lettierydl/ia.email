@@ -1,0 +1,22 @@
+services:
+  radar:
+    build: .
+    container_name: radar-confrapag
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    env_file:
+      - path: /Users/leo/Learning Base/credenciais/.env
+        required: true
+      - path: .env
+        required: false
+    environment:
+      RADAR_BIND: "0.0.0.0"
+      RADAR_HOST: "127.0.0.1"
+      RADAR_PUBLIC_HOST: "127.0.0.1"
+      RADAR_PORT: "8765"
+      RADAR_ACCOUNT: "leo@confrapag.com.br"
+    volumes:
+      - ./data:/app/data
+      - ./app:/app/app
+      - ./static:/app/static
