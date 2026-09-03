@@ -22,16 +22,39 @@ function tags(item) {
 
 function card(item) {
   const href = `/mail/${encodeURIComponent(item.id)}`;
+  const quickRead = item.fyi_only
+    ? `<button type="button" class="quick-read" data-id="${item.id}" data-tooltip="Marcar como lido (só cópia, sem ação)">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
+      </button>`
+    : "";
   return `<a class="card${item.fyi_only ? " fyi" : ""}" href="${href}" data-id="${item.id}">
     <header>
       <span class="from">${item.from_email || item.from_name}</span>
       <span class="time">${item.time}</span>
+      ${quickRead}
     </header>
     <div class="subject">${item.subject}</div>
     <div class="snippet">${item.snippet || ""}</div>
     <div class="tags">${tags(item)}</div>
   </a>`;
 }
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".quick-read");
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const id = btn.dataset.id;
+  btn.disabled = true;
+  fetch(`/api/threads/${id}/mark-read`, { method: "POST" })
+    .then(() => {
+      kickPreload();
+      loadRadar({ preload: false });
+    })
+    .catch(() => {
+      btn.disabled = false;
+    });
+});
 
 function renderList(id, items) {
   $(id).innerHTML = items.map(card).join("");
@@ -147,6 +170,7 @@ async function refresh(silent) {
   if (document.hidden || refresh.inFlight) return;
   refresh.inFlight = true;
   if (!silent) $("btn-refresh").disabled = true;
+  $("btn-refresh").classList.add("spinning");
   try {
     const res = await fetch("/api/refresh", { method: "POST" });
     const err = await res.json().catch(() => ({}));
@@ -160,6 +184,7 @@ async function refresh(silent) {
   } finally {
     refresh.inFlight = false;
     $("btn-refresh").disabled = false;
+    $("btn-refresh").classList.remove("spinning");
   }
 }
 
@@ -264,6 +289,28 @@ async function preloadEnds(unread) {
   }
 }
 
+// Dispara o preload dos proximos 2+2 ANTES de navegar (ex.: logo apos
+// marcar como lido), pra dar um tempo de vantagem ao backend em vez de
+// so comecar depois que a proxima pagina termina de carregar.
+async function kickPreload() {
+  try {
+    const res = await fetch(`/api/radar${qs()}`);
+    const data = await res.json();
+    const missing = data.unread.filter((item) => !item.has_summary).map((item) => item.id);
+    const ids = pickPreload(missing.length ? missing : data.unread.map((item) => item.id));
+    if (ids.length) {
+      fetch("/api/preload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+        keepalive: true,
+      });
+    }
+  } catch {
+    // silencioso: preload e best-effort
+  }
+}
+
 function splitMessages(body) {
   return (body || "")
     .split(/\n\n----\n\n/)
@@ -271,10 +318,22 @@ function splitMessages(body) {
     .filter(Boolean);
 }
 
+function formatDatePt(raw) {
+  const dt = new Date(raw);
+  if (isNaN(dt.getTime())) return raw;
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(dt);
+}
+
 function parseMessage(block) {
   const m = block.match(/^De:\s*(.*)\nData:\s*(.*)\n\n([\s\S]*)$/);
   if (!m) return { from: "", date: "", text: block };
-  return { from: m[1].trim(), date: m[2].trim(), text: m[3].trim() };
+  return { from: m[1].trim(), date: formatDatePt(m[2].trim()), text: m[3].trim() };
 }
 
 function renderBody(body) {
@@ -383,29 +442,43 @@ async function openPane(id, force) {
   renderChat();
   loadAttachments();
   const q = force ? "?force=true" : "";
-  const res = await fetch(`/api/threads/${encodeURIComponent(id)}${q}`);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    $("pane-status").textContent = data.detail || "Não abriu o e-mail.";
-    return;
-  }
-  $("pane-subject").textContent = data.subject || "";
-  $("pane-from").textContent = data.from_email || "";
-  currentTo = data.from_email || "";
-  $("pane-status").textContent = data.warning || (data.cached ? "Do cache" : "Gerado agora");
-  $("pane-summary").innerHTML = formatSummary(data.summary);
-  renderBody(data.body || "");
-  chatHistory = Array.isArray(data.chat) ? data.chat.slice() : [];
-  if (!chatHistory.length && !data.warning) {
-    chatHistory.push({
-      role: "ai",
-      text: "Sem sugestão automática pra este e-mail. Fale aqui embaixo para eu gerar a resposta.",
-      placeholder: true,
+  const controller = new AbortController();
+  const killer = setTimeout(() => controller.abort(), 60000);
+  try {
+    const res = await fetch(`/api/threads/${encodeURIComponent(id)}${q}`, {
+      signal: controller.signal,
     });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $("pane-status").textContent = data.detail || "Não abriu o e-mail.";
+      return;
+    }
+    $("pane-subject").textContent = data.subject || "";
+    $("pane-from").textContent = data.from_email || "";
+    currentTo = data.from_email || "";
+    $("pane-status").textContent = data.warning || (data.cached ? "Do cache" : "Gerado agora");
+    $("pane-summary").innerHTML = formatSummary(data.summary);
+    renderBody(data.body || "");
+    chatHistory = Array.isArray(data.chat) ? data.chat.slice() : [];
+    if (!chatHistory.length && !data.warning) {
+      chatHistory.push({
+        role: "ai",
+        text: "Sem sugestão automática pra este e-mail. Fale aqui embaixo para eu gerar a resposta.",
+        placeholder: true,
+      });
+    }
+    renderChat();
+    if (data.subject) document.title = data.subject + " · IA.Email";
+    setTab("resumo");
+  } catch (err) {
+    console.error("openPane falhou", err);
+    const timedOut = err && err.name === "AbortError";
+    $("pane-status").textContent = timedOut
+      ? "Demorou demais pra responder (60s). Tente de novo."
+      : "Erro ao carregar este e-mail. Tente de novo.";
+  } finally {
+    clearTimeout(killer);
   }
-  renderChat();
-  if (data.subject) document.title = data.subject + " · IA.Email";
-  setTab("resumo");
 }
 
 document.querySelectorAll(".tab").forEach((btn) => {
@@ -426,6 +499,7 @@ $("pane-mark-read").onclick = async () => {
   $("pane-mark-read").disabled = true;
   try {
     await fetch(`/api/threads/${paneId}/mark-read`, { method: "POST" });
+    await kickPreload();
     if (mailPathId()) {
       window.location.href = "/";
     } else {
@@ -549,6 +623,7 @@ $("modal-confirm").onclick = async () => {
     $("pane-status").textContent = `Enviado para ${data.to}.`;
     $("send-bar").classList.add("hidden");
     renderAttachments([]);
+    kickPreload();
     if (mailPathId()) {
       setTimeout(() => (window.location.href = "/"), 900);
     } else {

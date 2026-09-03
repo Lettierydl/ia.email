@@ -109,6 +109,8 @@ button {
 }
 .icon-btn:hover { background: #e8eaed; }
 .icon-btn svg { width: 20px; height: 20px; }
+.icon-btn.spinning svg { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .hidden { display: none !important; }
 
 /* ── BANNER ── */
@@ -249,7 +251,23 @@ a.card { display: block; text-decoration: none; color: inherit; }
 .card:last-child { border-radius: 0 0 var(--radius) var(--radius); border-bottom: 1px solid var(--line); }
 .card:only-child { border-radius: var(--radius); }
 .card:hover { background: #f2f6fc; }
-.card header { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.card header { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.quick-read {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.quick-read svg { width: 14px; height: 14px; }
+.quick-read:hover { background: var(--green-soft); border-color: var(--green); color: var(--green); }
+.quick-read:disabled { opacity: .5; }
 .from { font-weight: 500; font-size: 14px; }
 .time { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .subject { margin: 2px 0; font-size: 14px; }
@@ -671,4 +689,9 @@ body.conversation .pane {
   z-index: 100;
   margin-top: 4px;
   pointer-events: none;
+}
+.top-actions [data-tooltip]:hover::after,
+.pane-actions [data-tooltip]:hover::after {
+  left: auto;
+  right: 0;
 }
