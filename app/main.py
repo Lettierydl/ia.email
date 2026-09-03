@@ -250,7 +250,30 @@ def thread_send(thread_id: str, body: SendBody):
     except Exception as exc:
         raise HTTPException(502, str(exc)) from exc
     store.save_ai(thread_id, draft="")
+    for item in attachments.list_files(thread_id):
+        attachments.delete_file(thread_id, item["name"])
     return {"ok": True, **result}
+
+
+@app.get("/api/threads/{thread_id}/attachments")
+def list_attachments(thread_id: str):
+    return {"files": attachments.list_files(thread_id)}
+
+
+@app.post("/api/threads/{thread_id}/attachments")
+async def upload_attachment(thread_id: str, file: UploadFile = File(...)):
+    data = await file.read()
+    try:
+        saved = attachments.save_file(thread_id, file.filename or "anexo", data)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, **saved}
+
+
+@app.delete("/api/threads/{thread_id}/attachments/{filename}")
+def delete_attachment(thread_id: str, filename: str):
+    attachments.delete_file(thread_id, filename)
+    return {"ok": True}
 
 
 @app.post("/api/preload")

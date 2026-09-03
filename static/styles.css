@@ -451,6 +451,40 @@ body.conversation .pane {
 }
 .compose-toolbar button:hover { background: #e8eaed; }
 .compose-toolbar .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+.attach-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 0;
+}
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 3px 8px 3px 10px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.attach-chip .size { color: var(--muted); }
+.attach-chip button {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+}
+.attach-chip button:hover { background: #e8eaed; color: var(--red); }
+
 .chat-messages {
   max-height: 300px;
   overflow-y: auto;

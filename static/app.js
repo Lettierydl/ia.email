@@ -378,7 +378,9 @@ async function openPane(id, force) {
   $("pane-status").textContent = "Carregando…";
   $("pane-summary").textContent = "";
   $("pane-body").textContent = "";
+  renderAttachments([]);
   renderChat();
+  loadAttachments();
   const q = force ? "?force=true" : "";
   const res = await fetch(`/api/threads/${encodeURIComponent(id)}${q}`);
   const data = await res.json().catch(() => ({}));
@@ -436,6 +438,53 @@ $("pane-mark-read").onclick = async () => {
 
 $("pane-resumir").onclick = () => paneId && openPane(paneId, true);
 
+// ── Anexos ──
+function renderAttachments(files) {
+  const el = $("attach-list");
+  if (!files.length) {
+    el.innerHTML = "";
+    el.classList.add("hidden");
+    return;
+  }
+  el.classList.remove("hidden");
+  el.innerHTML = files
+    .map(
+      (f) => `<span class="attach-chip" data-name="${escHtml(f.name)}">
+        📎 ${escHtml(f.name)} <span class="size">${(f.size / 1024).toFixed(0)}KB</span>
+        <button type="button" data-remove="${escHtml(f.name)}">×</button>
+      </span>`
+    )
+    .join("");
+  el.querySelectorAll("[data-remove]").forEach((btn) => {
+    btn.onclick = async () => {
+      await fetch(`/api/threads/${paneId}/attachments/${encodeURIComponent(btn.dataset.remove)}`, {
+        method: "DELETE",
+      });
+      loadAttachments();
+    };
+  });
+}
+
+async function loadAttachments() {
+  if (!paneId) return;
+  const res = await fetch(`/api/threads/${paneId}/attachments`);
+  const data = await res.json().catch(() => ({ files: [] }));
+  renderAttachments(data.files || []);
+}
+
+$("pane-attach").onclick = () => $("pane-file").click();
+
+$("pane-file").onchange = async () => {
+  if (!paneId || !$("pane-file").files.length) return;
+  for (const file of $("pane-file").files) {
+    const form = new FormData();
+    form.append("file", file);
+    await fetch(`/api/threads/${paneId}/attachments`, { method: "POST", body: form });
+  }
+  $("pane-file").value = "";
+  await loadAttachments();
+};
+
 $("pane-send").onclick = async () => {
   if (!paneId) return;
   const text = lastDraft();
@@ -464,6 +513,7 @@ $("pane-send").onclick = async () => {
     }
     $("pane-status").textContent = `Enviado para ${data.to}.`;
     $("send-bar").classList.add("hidden");
+    renderAttachments([]);
     if (mailPathId()) {
       setTimeout(() => (window.location.href = "/"), 900);
     } else {

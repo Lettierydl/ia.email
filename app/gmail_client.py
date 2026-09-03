@@ -5,6 +5,10 @@ import json
 import threading
 import time
 from datetime import datetime
+import mimetypes
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, parseaddr
 from pathlib import Path
@@ -17,6 +21,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from . import attachments
 from .classifier import classify, parse_email
 from .config import (
     ACCOUNT,
@@ -403,7 +408,21 @@ def send_reply(thread_id: str, body_text: str) -> dict:
         subject = f"Re: {subject}"
     message_id = headers.get("message-id") or ""
 
-    msg = MIMEText(body_text)
+    files = attachments.list_files(thread_id)
+    if files:
+        msg = MIMEMultipart()
+        msg.attach(MIMEText(body_text))
+        for item in files:
+            path = attachments.folder(thread_id) / item["name"]
+            ctype, _ = mimetypes.guess_type(item["name"])
+            maintype, subtype = (ctype or "application/octet-stream").split("/", 1)
+            part = MIMEBase(maintype, subtype)
+            part.set_payload(path.read_bytes())
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", "attachment", filename=item["name"])
+            msg.attach(part)
+    else:
+        msg = MIMEText(body_text)
     msg["To"] = to_addr
     msg["From"] = formataddr(("Lettiery D'Lamare", ACCOUNT))
     msg["Subject"] = subject
