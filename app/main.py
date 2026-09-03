@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 import os
-from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
@@ -14,9 +13,8 @@ from pydantic import BaseModel
 from . import assistant, attachments, gmail_client, llm, store
 from .gmail_client import QuotaPartial
 from .preload import pick_preload
-from .config import ACCOUNT, ROOT
+from .config import ACCOUNT, ROOT, TZ
 
-TZ = ZoneInfo("America/Fortaleza")
 STATIC = ROOT / "static"
 
 app = FastAPI(title="IA.Email")
@@ -52,6 +50,11 @@ def _index():
 @app.get("/")
 def index():
     return _index()
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return RedirectResponse("/static/favicon.svg")
 
 
 @app.get("/mail/{thread_id}")
@@ -236,6 +239,29 @@ def thread_draft(thread_id: str, body: DraftBody):
         raise HTTPException(502, str(exc)) from exc
 
 
+@app.post("/api/threads/{thread_id}/export-context")
+def thread_export_context(thread_id: str):
+    try:
+        return assistant.export_context(thread_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.post("/api/threads/{thread_id}/capture/approve")
+def thread_capture_approve(thread_id: str):
+    try:
+        return assistant.approve_capture(thread_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/threads/{thread_id}/capture/dismiss")
+def thread_capture_dismiss(thread_id: str):
+    return assistant.dismiss_capture(thread_id)
+
+
 @app.post("/api/threads/{thread_id}/send")
 def thread_send(thread_id: str, body: SendBody):
     text = body.text.strip()
@@ -243,12 +269,37 @@ def thread_send(thread_id: str, body: SendBody):
         raise HTTPException(400, "Texto vazio.")
     try:
         result = gmail_client.send_reply(thread_id, text)
+        gmail_client.mark_threads_read([thread_id])
+        gmail_client.refresh_thread(thread_id)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, str(exc)) from exc
     store.save_ai(thread_id, draft="")
+    for item in attachments.list_files(thread_id):
+        attachments.delete_file(thread_id, item["name"])
     return {"ok": True, **result}
+
+
+@app.get("/api/threads/{thread_id}/attachments")
+def list_attachments(thread_id: str):
+    return {"files": attachments.list_files(thread_id)}
+
+
+@app.post("/api/threads/{thread_id}/attachments")
+async def upload_attachment(thread_id: str, file: UploadFile = File(...)):
+    data = await file.read()
+    try:
+        saved = attachments.save_file(thread_id, file.filename or "anexo", data)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, **saved}
+
+
+@app.delete("/api/threads/{thread_id}/attachments/{filename}")
+def delete_attachment(thread_id: str, filename: str):
+    attachments.delete_file(thread_id, filename)
+    return {"ok": True}
 
 
 @app.post("/api/preload")
@@ -291,4 +342,5 @@ def _public(row: dict) -> dict:
         "conferido": bool(row["conferido"]),
         "has_summary": bool(row.get("summary")),
         "has_draft": bool(row.get("draft")),
+        "fyi_only": bool(row.get("fyi_only")),
     }

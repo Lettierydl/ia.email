@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
+
+# O container roda com relogio do sistema em UTC; todo horario exibido pro
+# Leo tem que passar por essa TZ explicitamente (datetime.now() sozinho
+# nao converte nada, so herda o fuso do SO).
+TZ = ZoneInfo("America/Fortaleza")
 
 ROOT = Path(__file__).resolve().parent.parent
 ENV_POINTER = Path.home() / ".config" / "mind-matson" / "env-file"
@@ -34,6 +40,16 @@ REDIRECT_URI = f"http://{PUBLIC_HOST}:{PORT}/api/auth/callback"
 CONTEXT_MD = Path(
     "/Users/leo/Learning Base/principal_agents/emails/context.md"
 )
+
+# Pasta dedicada ao botao "exportar contexto" do Radar -- NUNCA usar
+# CONTEXT_MD para isso: aquele arquivo ja tem uma rotina/ruleset de outro
+# fluxo (Codex/MCP) e seria destruido por um write_text() nele.
+# Um arquivo por e-mail exportado; arquivos mais velhos que
+# EMAIL_EXPORT_RETENTION_DAYS sao apagados a cada nova exportacao.
+EMAIL_EXPORT_DIR = Path(
+    "/Users/leo/Learning Base/principal_agents/emails/radar-contextos"
+)
+EMAIL_EXPORT_RETENTION_DAYS = 7
 
 HOME_CLIENT_SECRETS = Path.home() / ".config" / "mind-matson" / "gmail-oauth.keys.json"
 

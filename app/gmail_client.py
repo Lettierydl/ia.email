@@ -5,6 +5,10 @@ import json
 import threading
 import time
 from datetime import datetime
+import mimetypes
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, parseaddr
 from pathlib import Path
@@ -17,6 +21,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from . import attachments
 from .classifier import classify, parse_email
 from .config import (
     ACCOUNT,
@@ -24,6 +29,7 @@ from .config import (
     REDIRECT_URI,
     SCOPES,
     TOKEN_PATH,
+    TZ,
     client_id,
     client_secret,
     oauth_credentials_file,
@@ -195,6 +201,14 @@ def _header_map(payload: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def refresh_thread(thread_id: str) -> None:
+    """Re-busca uma unica thread no Gmail e atualiza a classificacao local."""
+    creds = load_credentials()
+    if not creds:
+        raise RuntimeError("Gmail nao autenticado.")
+    _ingest_thread(_service(creds), thread_id)
+
+
 def _ingest_thread(service, thread_id: str) -> None:
     raw = _execute(
         service.users().threads().get(userId="me", id=thread_id, format="metadata")
@@ -276,11 +290,11 @@ def refresh(recent: int = 25, unread: int = 20) -> dict[str, int]:
                 body = (exc.content or b"").decode("utf-8", errors="replace")
                 if exc.resp.status in {403, 429} and "rateLimitExceeded" in body:
                     store.set_meta(
-                        "last_refresh", datetime.now().astimezone().strftime("%H:%M")
+                        "last_refresh", datetime.now(TZ).strftime("%H:%M")
                     )
                     raise QuotaPartial(ingested, len(ordered)) from exc
                 raise
-        store.set_meta("last_refresh", datetime.now().astimezone().strftime("%H:%M"))
+        store.set_meta("last_refresh", datetime.now(TZ).strftime("%H:%M"))
         store.set_meta(
             "last_scope",
             json.dumps(
@@ -395,7 +409,21 @@ def send_reply(thread_id: str, body_text: str) -> dict:
         subject = f"Re: {subject}"
     message_id = headers.get("message-id") or ""
 
-    msg = MIMEText(body_text)
+    files = attachments.list_files(thread_id)
+    if files:
+        msg = MIMEMultipart()
+        msg.attach(MIMEText(body_text))
+        for item in files:
+            path = attachments.folder(thread_id) / item["name"]
+            ctype, _ = mimetypes.guess_type(item["name"])
+            maintype, subtype = (ctype or "application/octet-stream").split("/", 1)
+            part = MIMEBase(maintype, subtype)
+            part.set_payload(path.read_bytes())
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", "attachment", filename=item["name"])
+            msg.attach(part)
+    else:
+        msg = MIMEText(body_text)
     msg["To"] = to_addr
     msg["From"] = formataddr(("Lettiery D'Lamare", ACCOUNT))
     msg["Subject"] = subject

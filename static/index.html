@@ -4,10 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>IA.Email</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=12" />
+  <link rel="stylesheet" href="/static/styles.css?v=23" />
 </head>
 <body>
   <header class="top">
@@ -105,8 +106,18 @@
 
     <div class="pane-body-wrap">
       <div id="tab-resumo">
+        <h2 class="split-label">Resumo</h2>
         <p id="pane-status" class="muted"></p>
         <div id="pane-summary" class="box"></div>
+
+        <div id="capture-suggestion" class="capture-card hidden">
+          <p>💡 <strong>Vale guardar no seu cérebro?</strong></p>
+          <p id="capture-note-text" class="capture-note"></p>
+          <div class="capture-actions">
+            <button type="button" id="capture-dismiss" class="ghost">Ignorar</button>
+            <button type="button" id="capture-approve" class="primary">Guardar no cérebro</button>
+          </div>
+        </div>
 
         <div class="compose-area">
           <div class="compose-toolbar">
@@ -114,14 +125,16 @@
               <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
             </button>
             <span class="sep"></span>
-            <button type="button" title="Negrito" style="font-weight:bold">B</button>
-            <button type="button" title="Itálico" style="font-style:italic">I</button>
-            <button type="button" title="Sublinhado" style="text-decoration:underline">U</button>
-            <span class="sep"></span>
-            <button type="button" title="Anexo">
+            <button type="button" id="pane-attach" data-tooltip="Anexar arquivo">
               <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 015 0v10.5c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5V6H9v9.5a3 3 0 006 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg>
             </button>
+            <input type="file" id="pane-file" multiple hidden />
+            <span class="sep"></span>
+            <button type="button" id="pane-export-ctx" data-tooltip="Exportar contexto pra outra IA (Cursor/Claude/Codex)">
+              <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+            </button>
           </div>
+          <div id="attach-list" class="attach-list hidden"></div>
           <div id="chat-messages" class="chat-messages"></div>
           <div id="send-bar" class="send-bar hidden">
             <span id="send-target" class="send-target"></span>
@@ -140,11 +153,26 @@
       </div>
 
       <div id="tab-texto" class="hidden">
+        <h2 class="split-label">Thread completa</h2>
         <div id="pane-body" class="messages"></div>
       </div>
     </div>
   </aside>
 
-  <script src="/static/app.js?v=14"></script>
+  <div id="send-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3>Enviar e-mail?</h3>
+      <p class="modal-row"><strong>Para:</strong> <span id="modal-to"></span></p>
+      <p class="modal-row"><strong>Assunto:</strong> <span id="modal-subject"></span></p>
+      <div id="modal-preview" class="modal-preview"></div>
+      <p class="modal-warning">Essa ação é definitiva — o e-mail sai imediatamente e não pode ser desfeito.</p>
+      <div class="modal-actions">
+        <button type="button" id="modal-cancel" class="ghost">Cancelar</button>
+        <button type="button" id="modal-confirm" class="primary send-mail-btn">Enviar agora</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=23"></script>
 </body>
 </html>

@@ -20,3 +20,4 @@ services:
       - ./data:/app/data
       - ./app:/app/app
       - ./static:/app/static
+      - "/Users/leo/Learning Base/principal_agents/emails:/Users/leo/Learning Base/principal_agents/emails"
