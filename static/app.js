@@ -509,21 +509,31 @@ $("pane-export-ctx").onclick = async () => {
   }
 };
 
-$("pane-send").onclick = async () => {
-  if (!paneId) return;
+function openSendModal() {
   const text = lastDraft();
-  if (!text) return;
+  if (!paneId || !text) return;
   const subject = $("pane-subject").textContent || "(sem assunto)";
-  const preview = text.length > 160 ? text.slice(0, 160).trim() + "…" : text;
-  const ok = confirm(
-    `Enviar para ${currentTo}\n` +
-      `Assunto: Re: ${subject}\n\n` +
-      `"${preview}"\n\n` +
-      `Esta ação é definitiva — o e-mail sai imediatamente e não pode ser desfeito.`
-  );
-  if (!ok) return;
-  $("pane-send").disabled = true;
-  $("pane-send").textContent = "Enviando…";
+  $("modal-to").textContent = currentTo;
+  $("modal-subject").textContent = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
+  $("modal-preview").textContent = text;
+  $("send-modal").classList.remove("hidden");
+}
+
+function closeSendModal() {
+  $("send-modal").classList.add("hidden");
+}
+
+$("pane-send").onclick = openSendModal;
+$("modal-cancel").onclick = closeSendModal;
+$("send-modal").onclick = (e) => {
+  if (e.target === $("send-modal")) closeSendModal();
+};
+
+$("modal-confirm").onclick = async () => {
+  const text = lastDraft();
+  if (!paneId || !text) return;
+  $("modal-confirm").disabled = true;
+  $("modal-confirm").textContent = "Enviando…";
   try {
     const res = await fetch(`/api/threads/${paneId}/send`, {
       method: "POST",
@@ -531,6 +541,7 @@ $("pane-send").onclick = async () => {
       body: JSON.stringify({ text }),
     });
     const data = await res.json().catch(() => ({}));
+    closeSendModal();
     if (!res.ok) {
       $("pane-status").textContent = data.detail || "Falha ao enviar.";
       return;
@@ -547,9 +558,8 @@ $("pane-send").onclick = async () => {
       }, 900);
     }
   } finally {
-    $("pane-send").disabled = false;
-    $("pane-send").innerHTML =
-      '<svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px;vertical-align:middle;margin-right:4px"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>Enviar e-mail';
+    $("modal-confirm").disabled = false;
+    $("modal-confirm").textContent = "Enviar agora";
   }
 };
 

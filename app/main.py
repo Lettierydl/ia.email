@@ -54,6 +54,11 @@ def index():
     return _index()
 
 
+@app.get("/favicon.ico")
+def favicon():
+    return RedirectResponse("/static/favicon.svg")
+
+
 @app.get("/mail/{thread_id}")
 def mail_page(thread_id: str):
     return _index()

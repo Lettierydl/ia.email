@@ -4,10 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>IA.Email</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20" />
+  <link rel="stylesheet" href="/static/styles.css?v=21" />
 </head>
 <body>
   <header class="top">
@@ -149,6 +150,20 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=20"></script>
+  <div id="send-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3>Enviar e-mail?</h3>
+      <p class="modal-row"><strong>Para:</strong> <span id="modal-to"></span></p>
+      <p class="modal-row"><strong>Assunto:</strong> <span id="modal-subject"></span></p>
+      <div id="modal-preview" class="modal-preview"></div>
+      <p class="modal-warning">Essa ação é definitiva — o e-mail sai imediatamente e não pode ser desfeito.</p>
+      <div class="modal-actions">
+        <button type="button" id="modal-cancel" class="ghost">Cancelar</button>
+        <button type="button" id="modal-confirm" class="primary send-mail-btn">Enviar agora</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=21"></script>
 </body>
 </html>
