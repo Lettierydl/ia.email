@@ -243,6 +243,8 @@ def thread_send(thread_id: str, body: SendBody):
         raise HTTPException(400, "Texto vazio.")
     try:
         result = gmail_client.send_reply(thread_id, text)
+        gmail_client.mark_threads_read([thread_id])
+        gmail_client.refresh_thread(thread_id)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:

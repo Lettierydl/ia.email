@@ -195,6 +195,14 @@ def _header_map(payload: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def refresh_thread(thread_id: str) -> None:
+    """Re-busca uma unica thread no Gmail e atualiza a classificacao local."""
+    creds = load_credentials()
+    if not creds:
+        raise RuntimeError("Gmail nao autenticado.")
+    _ingest_thread(_service(creds), thread_id)
+
+
 def _ingest_thread(service, thread_id: str) -> None:
     raw = _execute(
         service.users().threads().get(userId="me", id=thread_id, format="metadata")
