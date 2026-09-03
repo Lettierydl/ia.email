@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from datetime import datetime
 
 from . import gmail_client, llm, store
-from .config import EMAIL_EXPORT_MD
+from .config import EMAIL_EXPORT_DIR, EMAIL_EXPORT_RETENTION_DAYS
 
 _LOCK = threading.Lock()
 
@@ -22,6 +23,12 @@ Decisão/ação de Leo:
 Ruído: uma linha se houver (cópia, marketing, aceite de agenda) ou "nenhum".
 
 Se faltar evidência, escreva "Não identificado". Sem tom alarmista.
+
+Marque so_copia=true quando Leo está apenas em cópia/FYI e o e-mail não pede
+nada dele: atas de reunião distribuídas em massa, avisos de status entre
+outras pessoas, threads onde a decisão já foi resolvida por terceiros, etc.
+so_copia=true mesmo que o assunto pareça importante, desde que não haja
+pedido/decisão direta a Leo. Nesse caso acao_leo deve ser false também.
 """
 
 SUMARIO_EXEMPLO = """Exemplo de resumo bom:
@@ -75,15 +82,16 @@ def _ensure_body(thread_id: str) -> str:
 def _parse_json(raw: str) -> dict:
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if not match:
-        return {"resumo": raw.strip(), "acao_leo": False, "sugestao": ""}
+        return {"resumo": raw.strip(), "acao_leo": False, "sugestao": "", "so_copia": False}
     try:
         data = json.loads(match.group(0))
     except json.JSONDecodeError:
-        return {"resumo": raw.strip(), "acao_leo": False, "sugestao": ""}
+        return {"resumo": raw.strip(), "acao_leo": False, "sugestao": "", "so_copia": False}
     return {
         "resumo": str(data.get("resumo") or "").strip(),
         "acao_leo": bool(data.get("acao_leo")),
         "sugestao": str(data.get("sugestao") or "").strip(),
+        "so_copia": bool(data.get("so_copia")),
     }
 
 
@@ -106,6 +114,7 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
                     "chat": _load_chat(row),
                     "body": body,
                     "needs_action_hint": bool(row.get("needs_action_hint")),
+                    "fyi_only": bool(row.get("fyi_only")),
                     "cached": True,
                 }
         if not llm.has_key():
@@ -118,6 +127,7 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
                 "chat": _load_chat(row),
                 "body": body,
                 "needs_action_hint": bool(row.get("needs_action_hint")),
+                "fyi_only": bool(row.get("fyi_only")),
                 "cached": False,
                 "warning": "Sem chave de LLM (Claude/Gemini/OpenRouter): não dá para resumir no estilo do painel. Cole uma chave no .env do cérebro.",
             }
@@ -127,9 +137,11 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
             "Agora resuma ESTA thread. JSON apenas:\n"
             '{"resumo":"Pedido: ...\\nFatos:\\n- ...\\nDecisão/ação de Leo:\\n- ...\\nRuído: ...",'
             '"acao_leo":true,'
-            '"sugestao":""}\n'
+            '"sugestao":"",'
+            '"so_copia":false}\n'
             "sugestao só se der para responder sem inventar; senão string vazia.\n"
-            "acao_leo=true só se pede decisão/validação direta do Leo.\n\n"
+            "acao_leo=true só se pede decisão/validação direta do Leo.\n"
+            "so_copia=true se Leo só está em cópia/FYI, sem nada pra fazer (ver regra no system).\n\n"
             f"Assunto: {subject}\n\n{body[:12000]}",
             system=llm.SYSTEM + "\n" + SUMARIO_SYSTEM,
         )
@@ -151,6 +163,7 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
             draft=parsed["sugestao"],
             chat_json=json.dumps(chat),
             needs_action_hint=1 if parsed["acao_leo"] else 0,
+            fyi_only=1 if parsed["so_copia"] else 0,
         )
         return {
             "id": thread_id,
@@ -159,6 +172,7 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
             "summary": summary,
             "draft": parsed["sugestao"],
             "chat": chat,
+            "fyi_only": parsed["so_copia"],
             "body": body,
             "needs_action_hint": parsed["acao_leo"],
             "cached": False,
@@ -192,6 +206,23 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
         }
 
 
+def _slug(text: str, max_len: int = 60) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    return slug[:max_len] or "sem-assunto"
+
+
+def _cleanup_old_exports() -> None:
+    if not EMAIL_EXPORT_DIR.is_dir():
+        return
+    cutoff = time.time() - EMAIL_EXPORT_RETENTION_DAYS * 86400
+    for path in EMAIL_EXPORT_DIR.glob("*.md"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            pass
+
+
 def export_context(thread_id: str) -> dict:
     with _LOCK:
         row = store.get_thread(thread_id) or {}
@@ -216,11 +247,14 @@ def export_context(thread_id: str) -> dict:
         parts += ["## Texto completo da thread", "", body, ""]
         markdown = "\n".join(parts)
 
-        EMAIL_EXPORT_MD.parent.mkdir(parents=True, exist_ok=True)
-        EMAIL_EXPORT_MD.write_text(markdown, encoding="utf-8")
+        EMAIL_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        _cleanup_old_exports()
+        filename = f"{datetime.now().strftime('%Y-%m-%d')}_{_slug(subject)}_{thread_id[:8]}.md"
+        export_path = EMAIL_EXPORT_DIR / filename
+        export_path.write_text(markdown, encoding="utf-8")
 
         prompt = (
             f'Pegue o contexto do e-mail "{subject}" no arquivo '
-            f"{EMAIL_EXPORT_MD} antes de responder."
+            f"{export_path} antes de responder."
         )
-        return {"path": str(EMAIL_EXPORT_MD), "prompt": prompt}
+        return {"path": str(export_path), "prompt": prompt}

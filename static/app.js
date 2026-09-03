@@ -7,6 +7,7 @@ let canSend = false;
 
 function tags(item) {
   const out = [];
+  if (item.fyi_only) out.push(["SÓ CÓPIA · SEM AÇÃO", "fyi"]);
   if (item.is_unread) out.push(["NÃO LIDO", "unread"]);
   if (item.awaiting_reply) out.push(["SEM RESPOSTA", ""]);
   if (item.conferido) out.push(["CONFERIDO", "ok"]);
@@ -21,7 +22,7 @@ function tags(item) {
 
 function card(item) {
   const href = `/mail/${encodeURIComponent(item.id)}`;
-  return `<a class="card" href="${href}" data-id="${item.id}">
+  return `<a class="card${item.fyi_only ? " fyi" : ""}" href="${href}" data-id="${item.id}">
     <header>
       <span class="from">${item.from_email || item.from_name}</span>
       <span class="time">${item.time}</span>

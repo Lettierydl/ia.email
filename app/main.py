@@ -326,4 +326,5 @@ def _public(row: dict) -> dict:
         "conferido": bool(row["conferido"]),
         "has_summary": bool(row.get("summary")),
         "has_draft": bool(row.get("draft")),
+        "fyi_only": bool(row.get("fyi_only")),
     }
