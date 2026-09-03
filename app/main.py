@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 import os
-from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
@@ -14,9 +13,8 @@ from pydantic import BaseModel
 from . import assistant, attachments, gmail_client, llm, store
 from .gmail_client import QuotaPartial
 from .preload import pick_preload
-from .config import ACCOUNT, ROOT
+from .config import ACCOUNT, ROOT, TZ
 
-TZ = ZoneInfo("America/Fortaleza")
 STATIC = ROOT / "static"
 
 app = FastAPI(title="IA.Email")

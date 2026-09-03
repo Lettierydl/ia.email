@@ -29,6 +29,7 @@ from .config import (
     REDIRECT_URI,
     SCOPES,
     TOKEN_PATH,
+    TZ,
     client_id,
     client_secret,
     oauth_credentials_file,
@@ -289,11 +290,11 @@ def refresh(recent: int = 25, unread: int = 20) -> dict[str, int]:
                 body = (exc.content or b"").decode("utf-8", errors="replace")
                 if exc.resp.status in {403, 429} and "rateLimitExceeded" in body:
                     store.set_meta(
-                        "last_refresh", datetime.now().astimezone().strftime("%H:%M")
+                        "last_refresh", datetime.now(TZ).strftime("%H:%M")
                     )
                     raise QuotaPartial(ingested, len(ordered)) from exc
                 raise
-        store.set_meta("last_refresh", datetime.now().astimezone().strftime("%H:%M"))
+        store.set_meta("last_refresh", datetime.now(TZ).strftime("%H:%M"))
         store.set_meta(
             "last_scope",
             json.dumps(

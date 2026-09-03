@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
+
+# O container roda com relogio do sistema em UTC; todo horario exibido pro
+# Leo tem que passar por essa TZ explicitamente (datetime.now() sozinho
+# nao converte nada, so herda o fuso do SO).
+TZ = ZoneInfo("America/Fortaleza")
 
 ROOT = Path(__file__).resolve().parent.parent
 ENV_POINTER = Path.home() / ".config" / "mind-matson" / "env-file"
