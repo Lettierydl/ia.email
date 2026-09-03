@@ -236,6 +236,16 @@ def thread_draft(thread_id: str, body: DraftBody):
         raise HTTPException(502, str(exc)) from exc
 
 
+@app.post("/api/threads/{thread_id}/export-context")
+def thread_export_context(thread_id: str):
+    try:
+        return assistant.export_context(thread_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
 @app.post("/api/threads/{thread_id}/send")
 def thread_send(thread_id: str, body: SendBody):
     text = body.text.strip()

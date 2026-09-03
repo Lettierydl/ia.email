@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import re
 import threading
+from datetime import datetime
 
 from . import gmail_client, llm, store
+from .config import EMAIL_EXPORT_MD
 
 _LOCK = threading.Lock()
 
@@ -188,3 +190,37 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
             "chat": chat,
             "summary": row.get("summary") or "",
         }
+
+
+def export_context(thread_id: str) -> dict:
+    with _LOCK:
+        row = store.get_thread(thread_id) or {}
+        if not row:
+            raise RuntimeError("Thread não está no radar. Atualize a lista.")
+        body = _ensure_body(thread_id)
+        subject = row.get("subject") or "(sem assunto)"
+        chat = _load_chat(row)
+
+        parts = [f"# {subject}", ""]
+        parts.append(f"- **De:** {row.get('from_name') or ''} <{row.get('from_email') or ''}>")
+        parts.append(f"- **Exportado em:** {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+        parts.append("")
+        if row.get("summary"):
+            parts += ["## Resumo (IA)", "", row["summary"], ""]
+        if chat:
+            parts += ["## Conversa (instruções e rascunhos)", ""]
+            for msg in chat:
+                who = "Você" if msg.get("role") == "user" else "IA"
+                parts.append(f"**{who}:** {msg.get('text', '')}")
+                parts.append("")
+        parts += ["## Texto completo da thread", "", body, ""]
+        markdown = "\n".join(parts)
+
+        EMAIL_EXPORT_MD.parent.mkdir(parents=True, exist_ok=True)
+        EMAIL_EXPORT_MD.write_text(markdown, encoding="utf-8")
+
+        prompt = (
+            f'Pegue o contexto do e-mail "{subject}" no arquivo '
+            f"{EMAIL_EXPORT_MD} antes de responder."
+        )
+        return {"path": str(EMAIL_EXPORT_MD), "prompt": prompt}

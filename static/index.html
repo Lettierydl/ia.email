@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=18" />
+  <link rel="stylesheet" href="/static/styles.css?v=19" />
 </head>
 <body>
   <header class="top">
@@ -105,6 +105,7 @@
 
     <div class="pane-body-wrap">
       <div id="tab-resumo">
+        <h2 class="split-label">Resumo</h2>
         <p id="pane-status" class="muted"></p>
         <div id="pane-summary" class="box"></div>
 
@@ -118,6 +119,10 @@
               <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 015 0v10.5c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5V6H9v9.5a3 3 0 006 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg>
             </button>
             <input type="file" id="pane-file" multiple hidden />
+            <span class="sep"></span>
+            <button type="button" id="pane-export-ctx" data-tooltip="Exportar contexto pra outra IA (Cursor/Claude/Codex)">
+              <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+            </button>
           </div>
           <div id="attach-list" class="attach-list hidden"></div>
           <div id="chat-messages" class="chat-messages"></div>
@@ -144,6 +149,6 @@
     </div>
   </aside>
 
-  <script src="/static/app.js?v=18"></script>
+  <script src="/static/app.js?v=19"></script>
 </body>
 </html>

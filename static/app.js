@@ -485,6 +485,29 @@ $("pane-file").onchange = async () => {
   await loadAttachments();
 };
 
+// ── Exportar contexto pra outra IA ──
+$("pane-export-ctx").onclick = async () => {
+  if (!paneId) return;
+  const btn = $("pane-export-ctx");
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/threads/${paneId}/export-context`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $("pane-status").textContent = data.detail || "Falha ao exportar contexto.";
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(data.prompt);
+      $("pane-status").textContent = `Contexto salvo em ${data.path} — prompt copiado, é só colar no chat da IA.`;
+    } catch {
+      $("pane-status").textContent = `Contexto salvo em ${data.path}. Prompt: ${data.prompt}`;
+    }
+  } finally {
+    btn.disabled = false;
+  }
+};
+
 $("pane-send").onclick = async () => {
   if (!paneId) return;
   const text = lastDraft();

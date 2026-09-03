@@ -35,6 +35,13 @@ CONTEXT_MD = Path(
     "/Users/leo/Learning Base/principal_agents/emails/context.md"
 )
 
+# Arquivo dedicado ao botao "exportar contexto" do Radar -- NUNCA usar
+# CONTEXT_MD para isso: aquele arquivo ja tem uma rotina/ruleset de outro
+# fluxo (Codex/MCP) e seria destruido por um write_text().
+EMAIL_EXPORT_MD = Path(
+    "/Users/leo/Learning Base/principal_agents/emails/radar-email-atual.md"
+)
+
 HOME_CLIENT_SECRETS = Path.home() / ".config" / "mind-matson" / "gmail-oauth.keys.json"
 
 
