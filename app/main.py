@@ -85,7 +85,7 @@ def login():
     if not gmail_client.has_client():
         raise HTTPException(
             400,
-            "Falta client OAuth. Cole o Client ID e o Secret no quadro abaixo, ou preencha radar-confrapag/.env.",
+            "Falta client OAuth. Cole o Client ID e o Secret no quadro abaixo, ou preencha ia_email/.env.",
         )
     try:
         return {"url": gmail_client.auth_url()}
@@ -151,21 +151,21 @@ def refresh():
 def radar(
     q: str = "",
     acao_sua: bool = False,
-    marketing: bool = False,
     restore_hidden: bool = False,
 ):
     rows = store.list_visible(include_hidden=restore_hidden)
     needle = q.strip().lower()
-    unread, waiting, automatic = [], [], []
+    unread, waiting, automatic, promotions = [], [], [], []
     for row in rows:
-        if not marketing and row["is_marketing"] and not row["is_unread"]:
-            continue
         if acao_sua and not row["needs_action_hint"]:
             continue
         hay = f"{row['from_email']} {row['from_name']} {row['subject']}".lower()
         if needle and needle not in hay:
             continue
         item = _public(row)
+        if row["is_marketing"]:
+            promotions.append(item)
+            continue
         if row["is_automatic"]:
             if row["is_unread"]:
                 automatic.append(item)
@@ -187,6 +187,7 @@ def radar(
         "hidden": store.hidden_count(),
         "unread": unread,
         "waiting": waiting,
+        "promotions": promotions,
         "automatic": automatic,
     }
 
@@ -260,6 +261,17 @@ def thread_capture_approve(thread_id: str):
 @app.post("/api/threads/{thread_id}/capture/dismiss")
 def thread_capture_dismiss(thread_id: str):
     return assistant.dismiss_capture(thread_id)
+
+
+@app.post("/api/threads/{thread_id}/not-interested")
+def thread_not_interested(thread_id: str):
+    row = store.get_thread(thread_id)
+    if not row:
+        raise HTTPException(404, "Thread não encontrada.")
+    email = row.get("from_email") or ""
+    store.block_sender(email)
+    store.save_ai(thread_id, is_marketing=1)
+    return {"ok": True, "blocked": email}
 
 
 @app.post("/api/threads/{thread_id}/send")

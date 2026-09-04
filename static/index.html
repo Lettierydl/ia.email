@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=23" />
+  <link rel="stylesheet" href="/static/styles.css?v=25" />
 </head>
 <body>
   <header class="top">
@@ -18,7 +18,7 @@
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
           Caixa
         </a>
-        <span class="logo">IA</span>.Email
+        <span class="brand"><span class="logo">IA</span>.Email</span>
       </h1>
       <p class="sub">
         <strong id="account">leo@confrapag.com.br</strong>
@@ -55,13 +55,17 @@
   <section class="controls">
     <input id="q" type="search" placeholder="Buscar por remetente ou assunto" />
     <label><input type="checkbox" id="acao" /> só ação minha</label>
-    <label><input type="checkbox" id="mkt" /> marketing</label>
     <button type="button" id="btn-hidden" class="ghost">Restaurar ocultos (0)</button>
   </section>
 
   <details id="waiting-menu" class="menu">
     <summary>Aguardando resposta <span id="c-waiting">0</span></summary>
     <div id="waiting" class="list"></div>
+  </details>
+
+  <details id="promotions-menu" class="menu">
+    <summary>Promoções <span id="c-promotions">0</span></summary>
+    <div id="promotions" class="list"></div>
   </details>
 
   <section class="board">
@@ -173,6 +177,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=23"></script>
+  <script src="/static/app.js?v=25"></script>
 </body>
 </html>

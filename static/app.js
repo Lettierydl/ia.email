@@ -27,11 +27,17 @@ function card(item) {
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
       </button>`
     : "";
+  const notInterested = item.is_marketing
+    ? `<button type="button" class="quick-not-interested" data-id="${item.id}" data-tooltip="Não tenho interesse (remetente vai pra Promoções sempre)">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.41 0 8 3.59 8 8 0 1.85-.63 3.55-1.69 4.9z"/></svg>
+      </button>`
+    : "";
   return `<a class="card${item.fyi_only ? " fyi" : ""}" href="${href}" data-id="${item.id}">
     <header>
       <span class="from">${item.from_email || item.from_name}</span>
       <span class="time">${item.time}</span>
       ${quickRead}
+      ${notInterested}
     </header>
     <div class="subject">${item.subject}</div>
     <div class="snippet">${item.snippet || ""}</div>
@@ -40,20 +46,34 @@ function card(item) {
 }
 
 document.addEventListener("click", (e) => {
-  const btn = e.target.closest(".quick-read");
-  if (!btn) return;
-  e.preventDefault();
-  e.stopPropagation();
-  const id = btn.dataset.id;
-  btn.disabled = true;
-  fetch(`/api/threads/${id}/mark-read`, { method: "POST" })
-    .then(() => {
-      kickPreload();
-      loadRadar({ preload: false });
-    })
-    .catch(() => {
-      btn.disabled = false;
-    });
+  const readBtn = e.target.closest(".quick-read");
+  if (readBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const id = readBtn.dataset.id;
+    readBtn.disabled = true;
+    fetch(`/api/threads/${id}/mark-read`, { method: "POST" })
+      .then(() => {
+        kickPreload();
+        loadRadar({ preload: false });
+      })
+      .catch(() => {
+        readBtn.disabled = false;
+      });
+    return;
+  }
+  const niBtn = e.target.closest(".quick-not-interested");
+  if (niBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const id = niBtn.dataset.id;
+    niBtn.disabled = true;
+    fetch(`/api/threads/${id}/not-interested`, { method: "POST" })
+      .then(() => loadRadar({ preload: false }))
+      .catch(() => {
+        niBtn.disabled = false;
+      });
+  }
 });
 
 function renderList(id, items) {
@@ -64,7 +84,6 @@ function qs() {
   const params = new URLSearchParams();
   if ($("q").value.trim()) params.set("q", $("q").value.trim());
   if ($("acao").checked) params.set("acao_sua", "true");
-  if ($("mkt").checked) params.set("marketing", "true");
   if (restoreHidden) params.set("restore_hidden", "true");
   const s = params.toString();
   return s ? `?${s}` : "";
@@ -84,6 +103,7 @@ async function loadRadar(opts) {
     $("c-unread").textContent = data.unread.length;
     $("c-waiting").textContent = data.waiting.length;
     $("c-auto").textContent = data.automatic.length;
+    $("c-promotions").textContent = (data.promotions || []).length;
     $("btn-hidden").textContent = `Restaurar ocultos (${data.hidden})`;
     if (data.last_refresh) {
       $("updated").textContent = data.last_refresh;
@@ -91,6 +111,7 @@ async function loadRadar(opts) {
     renderList("unread", data.unread);
     renderList("waiting", data.waiting);
     renderList("automatic", data.automatic);
+    renderList("promotions", data.promotions || []);
 
     lastAutoIds = data.automatic.map((item) => item.id);
     const autoSection = $("btn-auto-read").closest("article");
@@ -222,7 +243,6 @@ $("setup").onsubmit = async (event) => {
 $("btn-refresh").onclick = () => refresh(false);
 $("q").addEventListener("input", () => loadRadar());
 $("acao").onchange = () => loadRadar();
-$("mkt").onchange = () => loadRadar();
 $("m-unanswered").onclick = () => {
   $("waiting-menu").open = !$("waiting-menu").open;
 };

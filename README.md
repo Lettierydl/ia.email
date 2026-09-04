@@ -13,7 +13,7 @@ Veja `.env.example` para as variáveis de cada um. O provedor ativo aparece no c
 ## Subir (Docker — fica no ar até você desligar)
 
 ```bash
-cd /Users/leo/Workspace/Assistentes/radar-confrapag
+cd /Users/leo/Workspace/Assistentes/ia_email
 docker compose up -d --build
 ```
 
@@ -32,4 +32,4 @@ Cliente OAuth: tipo **Desktop**, Gmail API ligada. Redirect usado:
 
 No Google Cloud, se o login falhar com `redirect_uri_mismatch`, acrescente esse URI (ou use Desktop, que aceita loopback).
 
-Token fica em `data/gmail-token.json` (nao versionado). Escopo atual: `gmail.readonly`.
+Token fica em `data/gmail-token.json` (nao versionado). Escopos atuais: `gmail.modify` e `gmail.send`.

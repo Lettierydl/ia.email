@@ -37,6 +37,13 @@ Não preencha para chamados pontuais, cobranças rotineiras ou "ainda em
 aberto". Se preencher, escreva 1-2 linhas objetivas, estilo nota de
 referência (fato + data + quem decidiu), sem floreio. Deixe "" se não houver
 nada que valha a pena.
+
+Marque eh_propaganda=true para e-mail comercial/institucional de terceiros
+sem relação de trabalho direta com Leo: convite de webinar, newsletter,
+divulgação de produto/parceria, prospecção comercial (ex.: fornecedor
+oferecendo serviço). NÃO marque para comunicação interna da Confrapag/Pulse/
+Stalopay nem para threads de trabalho com clientes, parceiros ou fornecedores
+já em relação ativa (mesmo que peça pra "conhecer uma solução").
 """
 
 SUMARIO_EXEMPLO = """Exemplo de resumo bom:
@@ -93,6 +100,7 @@ _EMPTY_PARSED = {
     "sugestao": "",
     "so_copia": False,
     "nota_captura": "",
+    "eh_propaganda": False,
 }
 
 
@@ -110,6 +118,7 @@ def _parse_json(raw: str) -> dict:
         "sugestao": str(data.get("sugestao") or "").strip(),
         "nota_captura": str(data.get("nota_captura") or "").strip(),
         "so_copia": bool(data.get("so_copia")),
+        "eh_propaganda": bool(data.get("eh_propaganda")),
     }
 
 
@@ -188,11 +197,13 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
             '"acao_leo":true,'
             '"sugestao":"",'
             '"so_copia":false,'
-            '"nota_captura":""}\n'
+            '"nota_captura":"",'
+            '"eh_propaganda":false}\n'
             "sugestao só se der para responder sem inventar; senão string vazia.\n"
             "acao_leo=true só se pede decisão/validação direta do Leo.\n"
             "so_copia=true se Leo só está em cópia/FYI, sem nada pra fazer (ver regra no system).\n"
-            "nota_captura só se houver fato durável pra guardar (ver regra no system).\n\n"
+            "nota_captura só se houver fato durável pra guardar (ver regra no system).\n"
+            "eh_propaganda só pra e-mail comercial de terceiros (ver regra no system).\n\n"
             f"Assunto: {subject}\n\n{body[:12000]}",
             system=llm.SYSTEM + "\n" + SUMARIO_SYSTEM,
         )
@@ -216,6 +227,8 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
             fyi_only=1 if parsed["so_copia"] else 0,
             chat_anchor_date=row.get("internal_date") or 0,
         )
+        if parsed["eh_propaganda"]:
+            save_kwargs["is_marketing"] = 1
         if parsed["nota_captura"]:
             save_kwargs["capture_note"] = parsed["nota_captura"]
             save_kwargs["capture_status"] = "pending"
