@@ -444,6 +444,16 @@ body.conversation .pane {
   border-radius: var(--radius);
   margin: 8px 0;
 }
+.pane .box.loading {
+  min-height: 90px;
+  background: linear-gradient(90deg, var(--bg) 25%, #eef1f6 37%, var(--bg) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-pulse {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
 .pane pre {
   width: 100%;
   white-space: pre-wrap;
@@ -482,6 +492,27 @@ body.conversation .pane {
   border-top: 1px solid var(--line);
 }
 .msg-card.open .msg-text { display: block; }
+.msg-attachments {
+  display: none;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+.msg-card.open .msg-attachments { display: flex; }
+.msg-inline-image {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  line-height: 0;
+}
+.msg-inline-image img {
+  display: block;
+  max-width: 260px;
+  max-height: 220px;
+  object-fit: contain;
+}
 
 /* ── CHAT-STYLE DRAFT COMPOSE ── */
 .compose-area {
@@ -547,6 +578,12 @@ body.conversation .pane {
   line-height: 1;
 }
 .attach-chip button:hover { background: #e8eaed; color: var(--red); }
+.attach-chip.gmail a {
+  color: var(--blue);
+  text-decoration: none;
+  font-weight: 500;
+}
+.attach-chip.gmail a:hover { text-decoration: underline; }
 
 .chat-messages {
   max-height: 300px;

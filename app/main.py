@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import List, Optional
+import mimetypes
 import os
+import re
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from googleapiclient.errors import HttpError
 
 from pydantic import BaseModel
 
@@ -369,6 +373,37 @@ def thread_send(thread_id: str, body: SendBody):
     for item in attachments.list_files(thread_id):
         attachments.delete_file(thread_id, item["name"])
     return {"ok": True, **result}
+
+
+@app.get("/api/threads/{thread_id}/gmail-attachments")
+def list_gmail_attachments(thread_id: str):
+    try:
+        return gmail_client.list_thread_attachments(thread_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/threads/{thread_id}/gmail-attachments/{message_id}/{attachment_id}")
+def download_gmail_attachment(
+    thread_id: str,
+    message_id: str,
+    attachment_id: str,
+    filename: str = Query("anexo"),
+):
+    try:
+        data = gmail_client.get_attachment_bytes(thread_id, message_id, attachment_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except HttpError as exc:
+        raise HTTPException(404, "Anexo não encontrado.") from exc
+    ctype, _ = mimetypes.guess_type(filename)
+    safe_name = re.sub(r'[\r\n"]', "_", filename)
+    disposition = f"inline; filename=\"{safe_name}\"; filename*=UTF-8''{quote(filename)}"
+    return Response(
+        content=data,
+        media_type=ctype or "application/octet-stream",
+        headers={"Content-Disposition": disposition},
+    )
 
 
 @app.get("/api/threads/{thread_id}/attachments")
