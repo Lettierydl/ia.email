@@ -379,6 +379,55 @@ def get_invite_ics(thread_id: str) -> str | None:
     return None
 
 
+def _collect_attachments(message_id: str, payload: dict[str, Any], out: list[dict[str, Any]]) -> None:
+    filename = payload.get("filename") or ""
+    body = payload.get("body") or {}
+    if filename and body.get("attachmentId"):
+        out.append(
+            {
+                "message_id": message_id,
+                "attachment_id": body["attachmentId"],
+                "filename": filename,
+                "mime_type": payload.get("mimeType") or "application/octet-stream",
+                "size": body.get("size") or 0,
+            }
+        )
+    for part in payload.get("parts") or []:
+        _collect_attachments(message_id, part, out)
+
+
+def list_thread_attachments(thread_id: str) -> list[dict[str, Any]]:
+    """Lista os anexos reais recebidos na thread (nao os que o Leo anexa pra
+    responder -- esses ficam em `attachments.py`, sao locais)."""
+    creds = load_credentials()
+    if not creds:
+        raise RuntimeError("Gmail nao autenticado.")
+    service = _service(creds)
+    raw = _execute(
+        service.users().threads().get(userId="me", id=thread_id, format="full")
+    )
+    out: list[dict[str, Any]] = []
+    for message in raw.get("messages") or []:
+        _collect_attachments(message.get("id") or "", message.get("payload") or {}, out)
+    return out
+
+
+def get_attachment_bytes(thread_id: str, message_id: str, attachment_id: str) -> bytes:
+    creds = load_credentials()
+    if not creds:
+        raise RuntimeError("Gmail nao autenticado.")
+    service = _service(creds)
+    attachment = _execute(
+        service.users()
+        .messages()
+        .attachments()
+        .get(userId="me", messageId=message_id, id=attachment_id)
+    )
+    data = attachment.get("data") or ""
+    pad = "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(data + pad)
+
+
 def mark_threads_read(thread_ids: list[str]) -> list[str]:
     creds = load_credentials()
     if not creds:

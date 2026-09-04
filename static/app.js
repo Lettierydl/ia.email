@@ -122,7 +122,7 @@ async function loadRadar(opts) {
     }
 
     if (options.preload !== false && !document.hidden) {
-      preloadEnds(data.unread);
+      preloadEnds(data.unread, data.waiting, data.automatic, data.promotions || []);
     }
     return data;
   } catch (err) {
@@ -295,22 +295,34 @@ function pickPreload(ids) {
   return [...new Set(picked)];
 }
 
-async function preloadEnds(unread) {
+// 2 primeiros + 2 ultimos de CADA secao (nao lidos, aguardando, automaticos,
+// promocoes) -- antes so cobria "nao lidos", entao abrir um card de outra
+// secao caia sempre no caminho lento (gerar resumo na hora).
+async function preloadEnds(...sections) {
   if (document.hidden || preloadBusy) return;
-  const missing = unread.filter((item) => !item.has_summary).map((item) => item.id);
-  const ids = pickPreload(missing.length ? missing : unread.map((item) => item.id));
-  const pending = ids.filter((id) => {
-    const row = unread.find((item) => item.id === id);
-    return row && !row.has_summary;
-  });
-  if (!pending.length) return;
+  const batches = [];
+  for (const list of sections) {
+    if (!list || !list.length) continue;
+    const missing = list.filter((item) => !item.has_summary).map((item) => item.id);
+    const ids = pickPreload(missing.length ? missing : list.map((item) => item.id));
+    const pending = ids.filter((id) => {
+      const row = list.find((item) => item.id === id);
+      return row && !row.has_summary;
+    });
+    if (pending.length) batches.push(pending);
+  }
+  if (!batches.length) return;
   preloadBusy = true;
   try {
-    await fetch("/api/preload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids: pending }),
-    });
+    // Um POST por secao: cada uma ja vem cortada em 2+2 no cliente, entao o
+    // corte global do backend (mesma regra, por seguranca) nao reduz de novo.
+    for (const ids of batches) {
+      await fetch("/api/preload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+    }
     if (!document.hidden) await loadRadar({ preload: false });
   } finally {
     preloadBusy = false;
@@ -324,15 +336,19 @@ async function kickPreload() {
   try {
     const res = await fetch(`/api/radar${qs()}`);
     const data = await res.json();
-    const missing = data.unread.filter((item) => !item.has_summary).map((item) => item.id);
-    const ids = pickPreload(missing.length ? missing : data.unread.map((item) => item.id));
-    if (ids.length) {
-      fetch("/api/preload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
-        keepalive: true,
-      });
+    const sections = [data.unread, data.waiting, data.automatic, data.promotions || []];
+    for (const list of sections) {
+      if (!list || !list.length) continue;
+      const missing = list.filter((item) => !item.has_summary).map((item) => item.id);
+      const ids = pickPreload(missing.length ? missing : list.map((item) => item.id));
+      if (ids.length) {
+        fetch("/api/preload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids }),
+          keepalive: true,
+        });
+      }
     }
   } catch {
     // silencioso: preload e best-effort
@@ -654,11 +670,14 @@ async function openPane(id, force) {
   $("pane").classList.remove("hidden");
   $("pane-status").textContent = "Carregando…";
   $("pane-summary").textContent = "";
+  $("pane-summary").classList.add("loading");
   $("pane-body").textContent = "";
   $("invite-card").classList.add("hidden");
   renderAttachments([]);
+  renderGmailAttachments([]);
   renderChat();
   loadAttachments();
+  loadGmailAttachments(id);
   const q = force ? "?force=true" : "";
   const controller = new AbortController();
   const killer = setTimeout(() => controller.abort(), 60000);
@@ -668,6 +687,7 @@ async function openPane(id, force) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      $("pane-summary").classList.remove("loading");
       $("pane-status").textContent = data.detail || "Não abriu o e-mail.";
       return;
     }
@@ -675,6 +695,7 @@ async function openPane(id, force) {
     $("pane-from").textContent = data.from_email || "";
     currentTo = data.from_email || "";
     $("pane-status").textContent = data.warning || (data.cached ? "Do cache" : "Gerado agora");
+    $("pane-summary").classList.remove("loading");
     $("pane-summary").innerHTML = formatSummary(data.summary);
     renderBody(data.body || "");
     chatHistory = Array.isArray(data.chat) ? data.chat.slice() : [];
@@ -692,6 +713,7 @@ async function openPane(id, force) {
     setTab("resumo");
   } catch (err) {
     console.error("openPane falhou", err);
+    $("pane-summary").classList.remove("loading");
     const timedOut = err && err.name === "AbortError";
     $("pane-status").textContent = timedOut
       ? "Demorou demais pra responder (60s). Tente de novo."
@@ -765,6 +787,45 @@ async function loadAttachments() {
   const res = await fetch(`/api/threads/${paneId}/attachments`);
   const data = await res.json().catch(() => ({ files: [] }));
   renderAttachments(data.files || []);
+}
+
+// ── Anexos recebidos no e-mail (Gmail) ──
+function formatSize(bytes) {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes}B`;
+  return `${(bytes / 1024).toFixed(0)}KB`;
+}
+
+function renderGmailAttachments(files) {
+  const el = $("gmail-attach-list");
+  if (!files.length) {
+    el.innerHTML = "";
+    el.classList.add("hidden");
+    return;
+  }
+  el.classList.remove("hidden");
+  el.innerHTML = files
+    .map((f) => {
+      const url = `/api/threads/${paneId}/gmail-attachments/${encodeURIComponent(
+        f.message_id
+      )}/${encodeURIComponent(f.attachment_id)}?filename=${encodeURIComponent(f.filename)}`;
+      return `<span class="attach-chip gmail">
+        📎 ${escHtml(f.filename)} <span class="size">${formatSize(f.size)}</span>
+        <a href="${url}" target="_blank" rel="noopener" data-tooltip="Abrir em nova aba">Abrir</a>
+        <a href="${url}" download="${escHtml(f.filename)}" data-tooltip="Baixar">↓</a>
+      </span>`;
+    })
+    .join("");
+}
+
+async function loadGmailAttachments(id) {
+  try {
+    const res = await fetch(`/api/threads/${encodeURIComponent(id)}/gmail-attachments`);
+    const data = await res.json().catch(() => ({ files: [] }));
+    if (paneId === id) renderGmailAttachments(data.files || []);
+  } catch {
+    // silencioso: anexos sao um extra, nao trava o resto do painel
+  }
 }
 
 $("pane-attach").onclick = () => $("pane-file").click();
