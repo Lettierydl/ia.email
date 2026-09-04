@@ -237,18 +237,20 @@ def _ingest_thread(service, thread_id: str) -> None:
         snippet=snippet,
         me=ACCOUNT,
     )
+    sender_email = parse_email(from_header) or email.lower()
+    forced_marketing = result.is_marketing or store.is_blocked_sender(sender_email)
     store.upsert_thread(
         {
             "id": thread_id,
             "subject": subject,
-            "from_email": parse_email(from_header) or email.lower(),
+            "from_email": sender_email,
             "from_name": name or email,
             "snippet": snippet,
             "internal_date": internal,
             "is_unread": int(result.is_unread),
             "last_from_me": int(result.last_from_me),
             "is_automatic": int(result.is_automatic),
-            "is_marketing": int(result.is_marketing),
+            "is_marketing": int(forced_marketing),
             "needs_action_hint": int(result.needs_action_hint),
             "awaiting_reply": int(result.awaiting_reply),
             "conferido": 1,

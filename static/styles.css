@@ -268,6 +268,22 @@ a.card { display: block; text-decoration: none; color: inherit; }
 .quick-read svg { width: 14px; height: 14px; }
 .quick-read:hover { background: var(--green-soft); border-color: var(--green); color: var(--green); }
 .quick-read:disabled { opacity: .5; }
+.quick-not-interested {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.quick-not-interested svg { width: 14px; height: 14px; }
+.quick-not-interested:hover { background: var(--red-soft); border-color: var(--red); color: var(--red); }
+.quick-not-interested:disabled { opacity: .5; }
 .from { font-weight: 500; font-size: 14px; }
 .time { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .subject { margin: 2px 0; font-size: 14px; }

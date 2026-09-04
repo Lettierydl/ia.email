@@ -1,7 +1,7 @@
 services:
   radar:
     build: .
-    container_name: radar-confrapag
+    container_name: ia-email
     restart: unless-stopped
     ports:
       - "127.0.0.1:8765:8765"

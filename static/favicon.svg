@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="14" fill="#1a73e8"/>
-  <text x="32" y="40" font-family="'Google Sans', Roboto, Arial, sans-serif" font-size="26" font-weight="700" fill="#ffffff" text-anchor="middle">e</text>
-  <text x="32" y="54" font-family="'Google Sans', Roboto, Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="1" fill="#8ab4f8" text-anchor="middle">AI</text>
+  <rect x="8" y="16" width="40" height="28" rx="3" fill="#ffffff"/>
+  <path d="M9 17 28 31 47 17" fill="none" stroke="#1a73e8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M46 8.5 48.1 13.9 53.5 16 48.1 18.1 46 23.5 43.9 18.1 38.5 16 43.9 13.9Z" fill="#fbbc04"/>
 </svg>

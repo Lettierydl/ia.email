@@ -48,6 +48,14 @@ def init() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS blocked_senders (
+                email TEXT PRIMARY KEY,
+                created_at TEXT
+            )
+            """
+        )
         for col, typ in (
             ("summary", "TEXT"),
             ("draft", "TEXT"),
@@ -179,6 +187,7 @@ def save_ai(thread_id: str, **fields: Any) -> None:
         "capture_note",
         "capture_status",
         "chat_anchor_date",
+        "is_marketing",
     }
     sets = []
     values = []
@@ -228,6 +237,29 @@ def add_llm_usage(tokens: int) -> None:
 def llm_usage_today() -> int:
     key = f"llm_tokens_{datetime.now(timezone.utc).date().isoformat()}"
     return int(get_meta(key) or 0)
+
+
+def block_sender(email: str) -> None:
+    email = (email or "").strip().lower()
+    if not email:
+        return
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO blocked_senders(email, created_at) VALUES(?, ?) "
+            "ON CONFLICT(email) DO NOTHING",
+            (email, datetime.now(timezone.utc).isoformat()),
+        )
+
+
+def is_blocked_sender(email: str) -> bool:
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM blocked_senders WHERE email=?", (email,)
+        ).fetchone()
+    return row is not None
 
 
 def thread_count() -> int:
