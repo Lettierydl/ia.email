@@ -56,11 +56,20 @@ def init() -> None:
             ("fyi_only", "INTEGER"),
             ("capture_note", "TEXT"),
             ("capture_status", "TEXT"),
+            ("chat_anchor_date", "INTEGER"),
         ):
             try:
                 conn.execute(f"ALTER TABLE threads ADD COLUMN {col} {typ}")
             except sqlite3.OperationalError:
                 pass
+        # Threads de antes desse controle existir nao tem uma base de
+        # comparacao -- da um ponto de partida agora pra passar a detectar
+        # mensagem nova a partir daqui (nao reseta o que ja esta desatualizado
+        # hoje, so evita que fique nesse limbo pra sempre).
+        conn.execute(
+            "UPDATE threads SET chat_anchor_date = internal_date "
+            "WHERE chat_anchor_date IS NULL AND (summary IS NOT NULL AND summary != '')"
+        )
 
 
 def upsert_thread(row: dict[str, Any]) -> None:
@@ -169,6 +178,7 @@ def save_ai(thread_id: str, **fields: Any) -> None:
         "fyi_only",
         "capture_note",
         "capture_status",
+        "chat_anchor_date",
     }
     sets = []
     values = []
