@@ -4,6 +4,7 @@ let restoreHidden = false;
 let chatHistory = [];
 let currentTo = "";
 let canSend = false;
+let ACCOUNT_EMAIL = "";
 
 function tags(item) {
   const out = [];
@@ -139,6 +140,7 @@ function showBanner(text, show) {
 async function loadStatus() {
   const data = await (await fetch("/api/status")).json();
   $("account").textContent = data.account;
+  ACCOUNT_EMAIL = (data.account || "").toLowerCase();
   if (data.last_refresh) {
     $("updated").textContent = data.last_refresh;
   }
@@ -674,11 +676,13 @@ async function openPane(id, force) {
   $("pane-summary").classList.add("loading");
   $("pane-body").textContent = "";
   $("invite-card").classList.add("hidden");
+  $("pane-cc").classList.add("hidden");
   renderAttachments([]);
   lastGmailAttachments = { files: [], message_ids: [] };
   renderChat();
   loadAttachments();
   loadGmailAttachments(id);
+  loadRecipients(id);
   const q = force ? "?force=true" : "";
   const controller = new AbortController();
   const killer = setTimeout(() => controller.abort(), 60000);
@@ -850,6 +854,39 @@ async function loadGmailAttachments(id) {
     renderBodyAttachments(data);
   } catch {
     // silencioso: anexos sao um extra, nao trava o resto do painel
+  }
+}
+
+// ── Para / Cc (quem mais recebeu o e-mail) ──
+function fmtAddr(a) {
+  return a.name && a.name !== a.email ? `${a.name} <${a.email}>` : a.email;
+}
+
+function renderRecipients(data) {
+  const badge = $("pane-cc");
+  const to = (data && data.to) || [];
+  const cc = (data && data.cc) || [];
+  // Tira o proprio Leo da lista de "Para" pra so mostrar quem mais entrou.
+  const toOthers = to.filter((a) => (a.email || "").toLowerCase() !== ACCOUNT_EMAIL);
+  if (!toOthers.length && !cc.length) {
+    badge.classList.add("hidden");
+    return;
+  }
+  const lines = [];
+  if (toOthers.length) lines.push(`Para: ${toOthers.map(fmtAddr).join(", ")}`);
+  if (cc.length) lines.push(`Cc: ${cc.map(fmtAddr).join(", ")}`);
+  badge.dataset.tooltip = lines.join("\n");
+  $("pane-cc-count").textContent = toOthers.length + cc.length;
+  badge.classList.remove("hidden");
+}
+
+async function loadRecipients(id) {
+  try {
+    const res = await fetch(`/api/threads/${encodeURIComponent(id)}/recipients`);
+    const data = await res.json().catch(() => ({ to: [], cc: [] }));
+    if (paneId === id) renderRecipients(data);
+  } catch {
+    // silencioso: e um extra informativo, nao trava o resto do painel
   }
 }
 
