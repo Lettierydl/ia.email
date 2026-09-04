@@ -636,6 +636,9 @@ document.querySelectorAll(".rsvp-btn").forEach((btn) => {
           b.classList.toggle("active", b === btn)
         );
         $("invite-status").textContent = "Resposta enviada.";
+        fetch(`/api/threads/${paneId}/mark-read`, { method: "POST" }).then(() =>
+          kickPreload()
+        );
       } else {
         $("invite-status").textContent = data.detail || "Falha ao responder.";
       }
@@ -766,16 +769,38 @@ async function loadAttachments() {
 
 $("pane-attach").onclick = () => $("pane-file").click();
 
-$("pane-file").onchange = async () => {
-  if (!paneId || !$("pane-file").files.length) return;
-  for (const file of $("pane-file").files) {
+async function uploadFiles(files) {
+  if (!paneId || !files.length) return;
+  for (const file of files) {
     const form = new FormData();
     form.append("file", file);
     await fetch(`/api/threads/${paneId}/attachments`, { method: "POST", body: form });
   }
-  $("pane-file").value = "";
   await loadAttachments();
+}
+
+$("pane-file").onchange = async () => {
+  await uploadFiles([...$("pane-file").files]);
+  $("pane-file").value = "";
 };
+
+// Colar imagem (Ctrl+V) na caixa de instrução: como o e-mail sai em texto
+// puro, nao da pra embutir a imagem "no meio do texto" de verdade -- ela
+// vira anexo de verdade, igual ao botao de clipe.
+$("pane-instr").addEventListener("paste", async (e) => {
+  const items = [...(e.clipboardData ? e.clipboardData.items : [])];
+  const imageItems = items.filter((it) => it.type.startsWith("image/"));
+  if (!imageItems.length || !paneId) return;
+  e.preventDefault();
+  const files = imageItems.map((it, i) => {
+    const blob = it.getAsFile();
+    const ext = (it.type.split("/")[1] || "png").split("+")[0];
+    return new File([blob], `colado-${Date.now()}-${i}.${ext}`, { type: it.type });
+  });
+  $("pane-status").textContent = "Anexando imagem colada…";
+  await uploadFiles(files);
+  $("pane-status").textContent = "Imagem anexada. Descreva no texto se quer que ela seja citada na resposta.";
+});
 
 // ── Exportar contexto pra outra IA ──
 $("pane-export-ctx").onclick = async () => {
