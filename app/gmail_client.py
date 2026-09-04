@@ -396,9 +396,11 @@ def _collect_attachments(message_id: str, payload: dict[str, Any], out: list[dic
         _collect_attachments(message_id, part, out)
 
 
-def list_thread_attachments(thread_id: str) -> list[dict[str, Any]]:
+def list_thread_attachments(thread_id: str) -> dict[str, Any]:
     """Lista os anexos reais recebidos na thread (nao os que o Leo anexa pra
-    responder -- esses ficam em `attachments.py`, sao locais)."""
+    responder -- esses ficam em `attachments.py`, sao locais), junto com a
+    ordem das mensagens (mesma ordem/contagem de `get_thread_text`, pra dar
+    pra casar cada anexo com o bloco de texto certo no front)."""
     creds = load_credentials()
     if not creds:
         raise RuntimeError("Gmail nao autenticado.")
@@ -406,10 +408,13 @@ def list_thread_attachments(thread_id: str) -> list[dict[str, Any]]:
     raw = _execute(
         service.users().threads().get(userId="me", id=thread_id, format="full")
     )
-    out: list[dict[str, Any]] = []
+    files: list[dict[str, Any]] = []
+    message_ids: list[str] = []
     for message in raw.get("messages") or []:
-        _collect_attachments(message.get("id") or "", message.get("payload") or {}, out)
-    return out
+        msg_id = message.get("id") or ""
+        message_ids.append(msg_id)
+        _collect_attachments(msg_id, message.get("payload") or {}, files)
+    return {"files": files, "message_ids": message_ids}
 
 
 def get_attachment_bytes(thread_id: str, message_id: str, attachment_id: str) -> bytes:

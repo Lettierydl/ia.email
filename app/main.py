@@ -10,6 +10,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from googleapiclient.errors import HttpError
 
 from pydantic import BaseModel
 
@@ -377,7 +378,7 @@ def thread_send(thread_id: str, body: SendBody):
 @app.get("/api/threads/{thread_id}/gmail-attachments")
 def list_gmail_attachments(thread_id: str):
     try:
-        return {"files": gmail_client.list_thread_attachments(thread_id)}
+        return gmail_client.list_thread_attachments(thread_id)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -393,6 +394,8 @@ def download_gmail_attachment(
         data = gmail_client.get_attachment_bytes(thread_id, message_id, attachment_id)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
+    except HttpError as exc:
+        raise HTTPException(404, "Anexo não encontrado.") from exc
     ctype, _ = mimetypes.guess_type(filename)
     safe_name = re.sub(r'[\r\n"]', "_", filename)
     disposition = f"inline; filename=\"{safe_name}\"; filename*=UTF-8''{quote(filename)}"

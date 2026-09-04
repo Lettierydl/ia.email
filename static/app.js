@@ -391,7 +391,7 @@ function renderBody(body) {
     .map((block, i) => {
       const { from, date, text } = parseMessage(block);
       const last = i === blocks.length - 1;
-      return `<div class="msg-card ${last ? "open" : ""}">
+      return `<div class="msg-card ${last ? "open" : ""}" data-idx="${i}">
         <div class="msg-head">
           <span class="msg-from">${escHtml(from)}</span>
           <span class="msg-date">${escHtml(date)}</span>
@@ -403,6 +403,7 @@ function renderBody(body) {
   el.querySelectorAll(".msg-head").forEach((head) => {
     head.onclick = () => head.closest(".msg-card").classList.toggle("open");
   });
+  renderBodyAttachments(lastGmailAttachments);
 }
 
 function setTab(name) {
@@ -674,7 +675,7 @@ async function openPane(id, force) {
   $("pane-body").textContent = "";
   $("invite-card").classList.add("hidden");
   renderAttachments([]);
-  renderGmailAttachments([]);
+  lastGmailAttachments = { files: [], message_ids: [] };
   renderChat();
   loadAttachments();
   loadGmailAttachments(id);
@@ -790,39 +791,63 @@ async function loadAttachments() {
 }
 
 // ── Anexos recebidos no e-mail (Gmail) ──
+// Mostrados dentro do Texto completo, junto da mensagem que trouxe cada um
+// (imagem vira preview inline, o resto vira chip com Abrir/Baixar).
 function formatSize(bytes) {
   if (!bytes) return "";
   if (bytes < 1024) return `${bytes}B`;
   return `${(bytes / 1024).toFixed(0)}KB`;
 }
 
-function renderGmailAttachments(files) {
-  const el = $("gmail-attach-list");
-  if (!files.length) {
-    el.innerHTML = "";
-    el.classList.add("hidden");
-    return;
-  }
-  el.classList.remove("hidden");
-  el.innerHTML = files
-    .map((f) => {
-      const url = `/api/threads/${paneId}/gmail-attachments/${encodeURIComponent(
-        f.message_id
-      )}/${encodeURIComponent(f.attachment_id)}?filename=${encodeURIComponent(f.filename)}`;
-      return `<span class="attach-chip gmail">
-        📎 ${escHtml(f.filename)} <span class="size">${formatSize(f.size)}</span>
-        <a href="${url}" target="_blank" rel="noopener" data-tooltip="Abrir em nova aba">Abrir</a>
-        <a href="${url}" download="${escHtml(f.filename)}" data-tooltip="Baixar">↓</a>
-      </span>`;
-    })
-    .join("");
+let lastGmailAttachments = { files: [], message_ids: [] };
+
+function gmailAttachmentUrl(f) {
+  return `/api/threads/${paneId}/gmail-attachments/${encodeURIComponent(
+    f.message_id
+  )}/${encodeURIComponent(f.attachment_id)}?filename=${encodeURIComponent(f.filename)}`;
+}
+
+function renderBodyAttachments(data) {
+  const files = (data && data.files) || [];
+  const messageIds = (data && data.message_ids) || [];
+  document.querySelectorAll("#pane-body .msg-attachments").forEach((n) => n.remove());
+  if (!files.length) return;
+  const byMessage = {};
+  files.forEach((f) => {
+    (byMessage[f.message_id] = byMessage[f.message_id] || []).push(f);
+  });
+  document.querySelectorAll("#pane-body .msg-card").forEach((card) => {
+    const msgId = messageIds[Number(card.dataset.idx)];
+    const list = msgId && byMessage[msgId];
+    if (!list || !list.length) return;
+    const holder = document.createElement("div");
+    holder.className = "msg-attachments";
+    holder.innerHTML = list
+      .map((f) => {
+        const url = gmailAttachmentUrl(f);
+        if ((f.mime_type || "").startsWith("image/")) {
+          return `<a class="msg-inline-image" href="${url}" target="_blank" rel="noopener" data-tooltip="Abrir imagem original">
+            <img src="${url}" alt="${escHtml(f.filename)}" loading="lazy" />
+          </a>`;
+        }
+        return `<span class="attach-chip gmail">
+          📎 ${escHtml(f.filename)} <span class="size">${formatSize(f.size)}</span>
+          <a href="${url}" target="_blank" rel="noopener" data-tooltip="Abrir em nova aba">Abrir</a>
+          <a href="${url}" download="${escHtml(f.filename)}" data-tooltip="Baixar">↓</a>
+        </span>`;
+      })
+      .join("");
+    card.appendChild(holder);
+  });
 }
 
 async function loadGmailAttachments(id) {
   try {
     const res = await fetch(`/api/threads/${encodeURIComponent(id)}/gmail-attachments`);
-    const data = await res.json().catch(() => ({ files: [] }));
-    if (paneId === id) renderGmailAttachments(data.files || []);
+    const data = await res.json().catch(() => ({ files: [], message_ids: [] }));
+    if (paneId !== id) return;
+    lastGmailAttachments = data;
+    renderBodyAttachments(data);
   } catch {
     // silencioso: anexos sao um extra, nao trava o resto do painel
   }

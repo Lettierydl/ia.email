@@ -492,6 +492,27 @@ body.conversation .pane {
   border-top: 1px solid var(--line);
 }
 .msg-card.open .msg-text { display: block; }
+.msg-attachments {
+  display: none;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+.msg-card.open .msg-attachments { display: flex; }
+.msg-inline-image {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  line-height: 0;
+}
+.msg-inline-image img {
+  display: block;
+  max-width: 260px;
+  max-height: 220px;
+  object-fit: contain;
+}
 
 /* ── CHAT-STYLE DRAFT COMPOSE ── */
 .compose-area {
