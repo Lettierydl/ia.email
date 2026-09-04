@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from pydantic import BaseModel
 
-from . import assistant, attachments, gmail_client, llm, store
+from . import assistant, attachments, calendar_client, gmail_client, llm, store
 from .gmail_client import QuotaPartial
 from .preload import pick_preload
 from .config import ACCOUNT, ROOT, TZ
@@ -34,6 +34,10 @@ class DraftBody(BaseModel):
 
 class SendBody(BaseModel):
     text: str
+
+
+class RsvpBody(BaseModel):
+    response: str
 
 
 class PreloadBody(BaseModel):
@@ -74,6 +78,7 @@ def status():
         "cached": store.thread_count(),
         "can_mark_read": gmail_client.has_modify_scope(creds),
         "can_send": gmail_client.has_send_scope(creds),
+        "can_calendar": calendar_client.has_calendar_scope(creds),
         "now": datetime.now(TZ).strftime("%H:%M"),
         "llm_provider": llm.provider_label(),
         "llm_tokens_today": store.llm_usage_today(),
@@ -272,6 +277,78 @@ def thread_not_interested(thread_id: str):
     store.block_sender(email)
     store.save_ai(thread_id, is_marketing=1)
     return {"ok": True, "blocked": email}
+
+
+@app.get("/api/threads/{thread_id}/invite")
+def thread_invite(thread_id: str):
+    creds = gmail_client.load_credentials()
+    if not creds:
+        raise HTTPException(401, "Gmail não autenticado.")
+    try:
+        ics = gmail_client.get_invite_ics(thread_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not ics:
+        return {"is_invite": False}
+    info = calendar_client.parse_ics(ics)
+    start = calendar_client.parse_ics_datetime(info.get("dtstart"))
+    end = calendar_client.parse_ics_datetime(info.get("dtend")) or start
+    base = {
+        "is_invite": True,
+        "uid": info.get("uid"),
+        "summary": info.get("summary") or "",
+        "start": start.strftime("%H:%M") if start else "",
+        "end": end.strftime("%H:%M") if end else "",
+    }
+    if not start:
+        return base
+    if not calendar_client.has_calendar_scope(creds):
+        return {**base, "needs_calendar_scope": True}
+    try:
+        ctx = calendar_client.day_context(creds, start, end, info.get("uid"))
+    except Exception as exc:
+        return {**base, "calendar_error": str(exc)}
+    ctx["events"].append(
+        {
+            "summary": base["summary"] or "(sem título)",
+            "start": base["start"],
+            "end": base["end"],
+            "start_iso": start.isoformat(),
+            "end_iso": end.isoformat() if end else None,
+            "all_day": False,
+            "is_conflict": False,
+            "is_target": True,
+        }
+    )
+    return {**base, **ctx}
+
+
+@app.post("/api/threads/{thread_id}/invite/rsvp")
+def thread_invite_rsvp(thread_id: str, body: RsvpBody):
+    if body.response not in ("accepted", "declined", "tentative"):
+        raise HTTPException(400, "Resposta inválida.")
+    creds = gmail_client.load_credentials()
+    if not creds:
+        raise HTTPException(401, "Gmail não autenticado.")
+    if not calendar_client.has_calendar_scope(creds):
+        raise HTTPException(
+            400, "Reautorize o Gmail (Entrar no Gmail) para responder convites."
+        )
+    try:
+        ics = gmail_client.get_invite_ics(thread_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not ics:
+        raise HTTPException(400, "Não é um convite de calendário.")
+    info = calendar_client.parse_ics(ics)
+    uid = info.get("uid")
+    if not uid:
+        raise HTTPException(400, "Convite sem identificador (UID).")
+    try:
+        result = calendar_client.respond_to_invite(creds, uid, body.response, ACCOUNT)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, **result}
 
 
 @app.post("/api/threads/{thread_id}/send")

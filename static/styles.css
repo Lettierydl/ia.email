@@ -650,6 +650,96 @@ body.conversation .pane {
 
 .pane .muted { color: var(--muted); font-size: 13px; padding: 8px 0; }
 
+/* ── CALENDAR INVITE ── */
+.invite-card {
+  margin: 10px 0;
+  padding: 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.invite-title { font-size: 15px; margin-bottom: 2px; }
+.invite-time { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+.invite-conflicts {
+  background: var(--red-soft);
+  color: var(--red);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+.invite-conflicts strong { display: block; margin-bottom: 4px; }
+#invite-timeline-wrap {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.cal-hours {
+  position: relative;
+  width: 44px;
+  flex-shrink: 0;
+}
+.cal-hours .hour-label {
+  position: absolute;
+  right: 6px;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.cal-timeline {
+  position: relative;
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--line) 0,
+    var(--line) 1px,
+    transparent 1px,
+    transparent var(--hour-px, 40px)
+  );
+}
+.cal-event {
+  position: absolute;
+  box-sizing: border-box;
+  background: var(--blue);
+  color: #fff;
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 11px;
+  line-height: 1.25;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .5);
+}
+.cal-event-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-event-time { opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-event.target {
+  background: var(--card);
+  color: var(--blue-dark);
+  border: 2px solid var(--blue);
+  z-index: 2;
+}
+.cal-event.conflict:not(.target) { background: #d33b27; }
+.invite-actions { display: flex; gap: 8px; margin-bottom: 6px; }
+.rsvp-btn {
+  flex: 1;
+  padding: 8px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+}
+.rsvp-btn.rsvp-yes:hover, .rsvp-btn.rsvp-yes.active { background: var(--green-soft); border-color: var(--green); color: var(--green); }
+.rsvp-btn.rsvp-maybe:hover, .rsvp-btn.rsvp-maybe.active { background: var(--amber-soft); border-color: var(--amber); color: #9a6b00; }
+.rsvp-btn.rsvp-no:hover, .rsvp-btn.rsvp-no.active { background: var(--red-soft); border-color: var(--red); color: var(--red); }
+.rsvp-btn:disabled { opacity: .6; }
+
 /* ── CAPTURE SUGGESTION ── */
 .capture-card {
   margin: 10px 0;
@@ -720,7 +810,8 @@ body.conversation .pane {
   pointer-events: none;
 }
 .top-actions [data-tooltip]:hover::after,
-.pane-actions [data-tooltip]:hover::after {
+.pane-actions [data-tooltip]:hover::after,
+.card [data-tooltip]:hover::after {
   left: auto;
   right: 0;
 }

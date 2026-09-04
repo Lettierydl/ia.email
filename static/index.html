@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=25" />
+  <link rel="stylesheet" href="/static/styles.css?v=32" />
 </head>
 <body>
   <header class="top">
@@ -111,6 +111,23 @@
     <div class="pane-body-wrap">
       <div id="tab-resumo">
         <h2 class="split-label">Resumo</h2>
+
+        <div id="invite-card" class="invite-card hidden">
+          <p class="invite-title">📅 <strong id="invite-summary"></strong></p>
+          <p class="invite-time" id="invite-time"></p>
+          <div id="invite-conflicts" class="invite-conflicts hidden"></div>
+          <div id="invite-timeline-wrap">
+            <div id="invite-hours" class="cal-hours"></div>
+            <div id="invite-timeline" class="cal-timeline"></div>
+          </div>
+          <div id="invite-rsvp" class="invite-actions">
+            <button type="button" class="rsvp-btn rsvp-yes" data-response="accepted">Sim</button>
+            <button type="button" class="rsvp-btn rsvp-maybe" data-response="tentative">Talvez</button>
+            <button type="button" class="rsvp-btn rsvp-no" data-response="declined">Não</button>
+          </div>
+          <p id="invite-status" class="muted"></p>
+        </div>
+
         <p id="pane-status" class="muted"></p>
         <div id="pane-summary" class="box"></div>
 
@@ -177,6 +194,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=25"></script>
+  <script src="/static/app.js?v=32"></script>
 </body>
 </html>

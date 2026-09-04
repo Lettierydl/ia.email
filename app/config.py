@@ -34,6 +34,7 @@ CLIENT_SECRETS_PATH = DATA_DIR / "client-secrets.json"
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/calendar.events",
 ]
 REDIRECT_URI = f"http://{PUBLIC_HOST}:{PORT}/api/auth/callback"
 
