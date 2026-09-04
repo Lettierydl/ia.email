@@ -113,9 +113,36 @@ def _parse_json(raw: str) -> dict:
     }
 
 
+def _thread_moved_since_chat(row: dict) -> bool:
+    """True se chegou mensagem nova na thread depois da ultima vez que
+    resumo/chat foram gerados -- nesse caso o resumo/rascunho/conversa
+    antigos nao fazem mais sentido e precisam recomecar do zero."""
+    if not row:
+        return False
+    had_activity = bool(row.get("summary")) or bool(
+        row.get("chat_json") and row.get("chat_json") not in ("[]", "")
+    )
+    anchor = row.get("chat_anchor_date")
+    current = row.get("internal_date")
+    if not had_activity or anchor is None or not current:
+        return False
+    return int(current) > int(anchor)
+
+
 def analyze(thread_id: str, *, force: bool = False) -> dict:
     with _LOCK:
         row = store.get_thread(thread_id) or {}
+        if _thread_moved_since_chat(row):
+            store.save_ai(
+                thread_id,
+                summary="",
+                draft="",
+                chat_json="[]",
+                body_text="",
+                capture_note="",
+                capture_status="",
+            )
+            row = store.get_thread(thread_id) or {}
         body = _ensure_body(thread_id)
         if row.get("summary") and not force:
             if not _looks_verbatim(
@@ -187,6 +214,7 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
             chat_json=json.dumps(chat),
             needs_action_hint=1 if parsed["acao_leo"] else 0,
             fyi_only=1 if parsed["so_copia"] else 0,
+            chat_anchor_date=row.get("internal_date") or 0,
         )
         if parsed["nota_captura"]:
             save_kwargs["capture_note"] = parsed["nota_captura"]
@@ -226,7 +254,12 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
         if instruction:
             chat.append({"role": "user", "text": instruction})
         chat.append({"role": "ai", "text": text})
-        store.save_ai(thread_id, draft=text, chat_json=json.dumps(chat))
+        store.save_ai(
+            thread_id,
+            draft=text,
+            chat_json=json.dumps(chat),
+            chat_anchor_date=row.get("internal_date") or 0,
+        )
         return {
             "id": thread_id,
             "draft": text,

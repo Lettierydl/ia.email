@@ -275,7 +275,8 @@ def thread_send(thread_id: str, body: SendBody):
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, str(exc)) from exc
-    store.save_ai(thread_id, draft="")
+    row = store.get_thread(thread_id) or {}
+    store.save_ai(thread_id, draft="", chat_anchor_date=row.get("internal_date") or 0)
     for item in attachments.list_files(thread_id):
         attachments.delete_file(thread_id, item["name"])
     return {"ok": True, **result}
