@@ -171,6 +171,14 @@ async function loadStatus() {
       'Envio de e-mail ainda não autorizado. Clique em "Autorizar envio" para poder mandar respostas.',
       true
     );
+  } else if (!data.can_calendar) {
+    $("setup").classList.add("hidden");
+    $("btn-auth").textContent = "Autorizar calendário";
+    $("btn-auth").classList.remove("hidden");
+    showBanner(
+      'Calendário ainda não autorizado. Clique em "Autorizar calendário" pra ver conflitos e responder convites por aqui.',
+      true
+    );
   } else {
     $("setup").classList.add("hidden");
     $("btn-auth").textContent = "Entrar no Gmail";
@@ -484,6 +492,162 @@ $("capture-approve").onclick = async () => {
   }
 };
 
+// ── Convite de calendário ──
+function renderCalTimeline(allEvents) {
+  const wrap = $("invite-timeline");
+  const hoursEl = $("invite-hours");
+  // Eventos de dia inteiro nao entram na timeline por horario (mesma
+  // convencao do Google Calendar) -- a data "so dia" tambem nao tem fuso
+  // confiavel pra entrar na mesma escala dos eventos com hora.
+  const events = allEvents.filter((e) => !e.all_day);
+  if (!events.length) {
+    wrap.innerHTML = "";
+    hoursEl.innerHTML = "";
+    return;
+  }
+
+  const HOUR_PX = 56;
+  const items = events.map((e) => {
+    const start = new Date(e.start_iso).getTime();
+    const end = e.end_iso ? new Date(e.end_iso).getTime() : start + 30 * 60000;
+    return { ...e, startMs: start, endMs: Math.max(end, start + 15 * 60000) };
+  });
+
+  let minMs = Math.min(...items.map((i) => i.startMs));
+  let maxMs = Math.max(...items.map((i) => i.endMs));
+  const HOUR = 3600000;
+  minMs = Math.floor(minMs / HOUR) * HOUR - HOUR / 2;
+  maxMs = Math.ceil(maxMs / HOUR) * HOUR + HOUR / 2;
+  const totalHours = (maxMs - minMs) / HOUR;
+  wrap.style.setProperty("--hour-px", `${HOUR_PX}px`);
+  wrap.style.height = `${totalHours * HOUR_PX}px`;
+  hoursEl.style.height = `${totalHours * HOUR_PX}px`;
+
+  // Colunas pra eventos sobrepostos, igual timeline do Google.
+  const sorted = [...items].sort((a, b) => a.startMs - b.startMs);
+  const colEnds = [];
+  sorted.forEach((ev) => {
+    let placed = false;
+    for (let c = 0; c < colEnds.length; c++) {
+      if (colEnds[c] <= ev.startMs) {
+        ev.col = c;
+        colEnds[c] = ev.endMs;
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      ev.col = colEnds.length;
+      colEnds.push(ev.endMs);
+    }
+  });
+  const totalCols = colEnds.length || 1;
+
+  wrap.innerHTML = sorted
+    .map((ev) => {
+      const top = ((ev.startMs - minMs) / HOUR) * HOUR_PX;
+      const height = ((ev.endMs - ev.startMs) / HOUR) * HOUR_PX;
+      const left = (ev.col / totalCols) * 100;
+      const width = 100 / totalCols;
+      const cls = [
+        "cal-event",
+        ev.is_target ? "target" : "",
+        ev.is_conflict ? "conflict" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const timeLabel = ev.all_day ? "Dia inteiro" : `${ev.start}–${ev.end}`;
+      return `<div class="${cls}" style="top:${top}px;height:${Math.max(height, 20)}px;left:${left}%;width:calc(${width}% - 4px)">
+        <div class="cal-event-title">${escHtml(ev.summary)}</div>
+        <div class="cal-event-time">${timeLabel}</div>
+      </div>`;
+    })
+    .join("");
+
+  const hourLabels = [];
+  for (let t = minMs; t <= maxMs; t += HOUR) {
+    const top = ((t - minMs) / HOUR) * HOUR_PX;
+    const label = new Date(t).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    hourLabels.push(`<span class="hour-label" style="top:${top}px">${label}</span>`);
+  }
+  hoursEl.innerHTML = hourLabels.join("");
+
+  const target = sorted.find((ev) => ev.is_target);
+  if (target) {
+    const targetTop = ((target.startMs - minMs) / HOUR) * HOUR_PX;
+    const container = wrap.closest("#invite-timeline-wrap");
+    if (container) {
+      container.scrollTop = Math.max(targetTop - container.clientHeight / 2, 0);
+    }
+  }
+}
+
+async function loadInvite(id) {
+  try {
+    const res = await fetch(`/api/threads/${id}/invite`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.is_invite) {
+      $("invite-card").classList.add("hidden");
+      return;
+    }
+    $("invite-summary").textContent = data.summary || "Convite de calendário";
+    $("invite-time").textContent = data.start
+      ? `Hoje das ${data.start} às ${data.end || "?"}`
+      : "";
+
+    const conflictsEl = $("invite-conflicts");
+    if (data.conflicts && data.conflicts.length) {
+      conflictsEl.innerHTML =
+        `<strong>⚠️ Conflito com ${data.conflicts.length} evento(s):</strong>` +
+        data.conflicts.map((c) => `${c.start}–${c.end} ${escHtml(c.summary)}`).join("<br>");
+      conflictsEl.classList.remove("hidden");
+    } else {
+      conflictsEl.classList.add("hidden");
+    }
+
+    $("invite-rsvp").classList.toggle("hidden", !!data.needs_calendar_scope);
+    $("invite-status").textContent = data.needs_calendar_scope
+      ? "Reautorize o Gmail (Entrar no Gmail) pra ver conflitos e responder por aqui."
+      : data.calendar_error || "";
+    $("invite-card").dataset.uid = data.uid || "";
+    // Desesconde ANTES de montar a timeline: com display:none o container
+    // tem clientHeight/scrollHeight zerados e o auto-scroll pro horario do
+    // evento nao funciona.
+    $("invite-card").classList.remove("hidden");
+    renderCalTimeline(data.events || []);
+  } catch {
+    $("invite-card").classList.add("hidden");
+  }
+}
+
+document.querySelectorAll(".rsvp-btn").forEach((btn) => {
+  btn.onclick = async () => {
+    if (!paneId) return;
+    document.querySelectorAll(".rsvp-btn").forEach((b) => (b.disabled = true));
+    try {
+      const res = await fetch(`/api/threads/${paneId}/invite/rsvp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: btn.dataset.response }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        document.querySelectorAll(".rsvp-btn").forEach((b) =>
+          b.classList.toggle("active", b === btn)
+        );
+        $("invite-status").textContent = "Resposta enviada.";
+        fetch(`/api/threads/${paneId}/mark-read`, { method: "POST" }).then(() =>
+          kickPreload()
+        );
+      } else {
+        $("invite-status").textContent = data.detail || "Falha ao responder.";
+      }
+    } finally {
+      document.querySelectorAll(".rsvp-btn").forEach((b) => (b.disabled = false));
+    }
+  };
+});
+
 async function openPane(id, force) {
   paneId = id;
   chatHistory = [];
@@ -491,6 +655,7 @@ async function openPane(id, force) {
   $("pane-status").textContent = "Carregando…";
   $("pane-summary").textContent = "";
   $("pane-body").textContent = "";
+  $("invite-card").classList.add("hidden");
   renderAttachments([]);
   renderChat();
   loadAttachments();
@@ -522,6 +687,7 @@ async function openPane(id, force) {
     }
     renderChat();
     renderCaptureSuggestion(data.capture_note, data.capture_status);
+    loadInvite(id);
     if (data.subject) document.title = data.subject + " · IA.Email";
     setTab("resumo");
   } catch (err) {
@@ -603,16 +769,38 @@ async function loadAttachments() {
 
 $("pane-attach").onclick = () => $("pane-file").click();
 
-$("pane-file").onchange = async () => {
-  if (!paneId || !$("pane-file").files.length) return;
-  for (const file of $("pane-file").files) {
+async function uploadFiles(files) {
+  if (!paneId || !files.length) return;
+  for (const file of files) {
     const form = new FormData();
     form.append("file", file);
     await fetch(`/api/threads/${paneId}/attachments`, { method: "POST", body: form });
   }
-  $("pane-file").value = "";
   await loadAttachments();
+}
+
+$("pane-file").onchange = async () => {
+  await uploadFiles([...$("pane-file").files]);
+  $("pane-file").value = "";
 };
+
+// Colar imagem (Ctrl+V) na caixa de instrução: como o e-mail sai em texto
+// puro, nao da pra embutir a imagem "no meio do texto" de verdade -- ela
+// vira anexo de verdade, igual ao botao de clipe.
+$("pane-instr").addEventListener("paste", async (e) => {
+  const items = [...(e.clipboardData ? e.clipboardData.items : [])];
+  const imageItems = items.filter((it) => it.type.startsWith("image/"));
+  if (!imageItems.length || !paneId) return;
+  e.preventDefault();
+  const files = imageItems.map((it, i) => {
+    const blob = it.getAsFile();
+    const ext = (it.type.split("/")[1] || "png").split("+")[0];
+    return new File([blob], `colado-${Date.now()}-${i}.${ext}`, { type: it.type });
+  });
+  $("pane-status").textContent = "Anexando imagem colada…";
+  await uploadFiles(files);
+  $("pane-status").textContent = "Imagem anexada. Descreva no texto se quer que ela seja citada na resposta.";
+});
 
 // ── Exportar contexto pra outra IA ──
 $("pane-export-ctx").onclick = async () => {

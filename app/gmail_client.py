@@ -336,6 +336,49 @@ def _collect_text(payload: dict[str, Any], plain: list[str], html: list[str]) ->
         _collect_text(part, plain, html)
 
 
+def _collect_ics(payload: dict[str, Any], out: list[dict[str, str | None]]) -> None:
+    mime = (payload.get("mimeType") or "").lower()
+    if mime in ("text/calendar", "application/ics"):
+        body = payload.get("body") or {}
+        out.append({"data": body.get("data"), "attachment_id": body.get("attachmentId")})
+    for part in payload.get("parts") or []:
+        _collect_ics(part, out)
+
+
+def get_invite_ics(thread_id: str) -> str | None:
+    """Retorna o conteudo .ics (texto bruto) do convite de calendario
+    anexado a ultima mensagem da thread, se houver."""
+    creds = load_credentials()
+    if not creds:
+        raise RuntimeError("Gmail nao autenticado.")
+    service = _service(creds)
+    raw = _execute(
+        service.users().threads().get(userId="me", id=thread_id, format="full")
+    )
+    messages = raw.get("messages") or []
+    if not messages:
+        return None
+    last_message = messages[-1]
+    candidates: list[dict[str, str | None]] = []
+    _collect_ics(last_message.get("payload") or {}, candidates)
+    # Prefere text/calendar; qualquer um serve, pega o primeiro com conteudo.
+    for cand in candidates:
+        if cand.get("data"):
+            return _b64(cand["data"])
+    for cand in candidates:
+        if cand.get("attachment_id"):
+            attachment = _execute(
+                service.users()
+                .messages()
+                .attachments()
+                .get(userId="me", messageId=last_message["id"], id=cand["attachment_id"])
+            )
+            data = attachment.get("data")
+            if data:
+                return _b64(data)
+    return None
+
+
 def mark_threads_read(thread_ids: list[str]) -> list[str]:
     creds = load_credentials()
     if not creds:
