@@ -250,6 +250,20 @@ def thread_draft(thread_id: str, body: DraftBody):
         raise HTTPException(502, str(exc)) from exc
 
 
+@app.post("/api/threads/{thread_id}/chat/reset")
+def thread_chat_reset(thread_id: str):
+    row = store.get_thread(thread_id)
+    if not row:
+        raise HTTPException(404, "Thread não encontrada.")
+    store.save_ai(
+        thread_id,
+        chat_json="[]",
+        draft="",
+        chat_anchor_date=row.get("internal_date") or 0,
+    )
+    return {"ok": True}
+
+
 @app.post("/api/threads/{thread_id}/export-context")
 def thread_export_context(thread_id: str):
     try:

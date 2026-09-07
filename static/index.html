@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=43" />
+  <link rel="stylesheet" href="/static/styles.css?v=44" />
 </head>
 <body>
   <header class="top">
@@ -157,6 +157,10 @@
             <button type="button" id="pane-export-ctx" data-tooltip="Exportar contexto pra outra IA (Cursor/Claude/Codex)">
               <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
             </button>
+            <span class="sep"></span>
+            <button type="button" id="pane-chat-reset" data-tooltip="Limpar conversa e recomeçar do zero">
+              <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            </button>
           </div>
           <div id="attach-list" class="attach-list hidden"></div>
           <div id="chat-messages" class="chat-messages"></div>
@@ -214,6 +218,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=43"></script>
+  <script src="/static/app.js?v=44"></script>
 </body>
 </html>

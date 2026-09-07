@@ -1094,6 +1094,32 @@ $("pane-export-ctx").onclick = async () => {
   }
 };
 
+// Limpa a conversa do chat (rascunho + histórico) e recomeça do zero,
+// tanto na tela quanto no que fica salvo pro e-mail.
+$("pane-chat-reset").onclick = async () => {
+  if (!paneId) return;
+  const btn = $("pane-chat-reset");
+  btn.disabled = true;
+  try {
+    await fetch(`/api/threads/${paneId}/chat/reset`, { method: "POST" });
+    chatHistory = [
+      {
+        role: "ai",
+        text: "Sem sugestão automática pra este e-mail. Fale aqui embaixo para eu gerar a resposta.",
+        placeholder: true,
+      },
+    ];
+    renderChat();
+    $("pane-instr").value = "";
+    $("pane-instr").style.height = "auto";
+    clearAllAnnotations();
+    updateGenButtonState();
+    $("pane-status").textContent = "Conversa reiniciada.";
+  } finally {
+    btn.disabled = false;
+  }
+};
+
 function openSendModal() {
   const text = lastDraft();
   if (!paneId || !text) return;
@@ -1164,6 +1190,17 @@ function composedInstruction() {
   return free ? `${notes}\n\n${free}` : notes;
 }
 
+// O que aparece na bolha do chat fica "camuflado": a referência ao trecho
+// já está marcada no próprio texto (o numerozinho), então aqui só mostra
+// o que a pessoa realmente escreveu -- sem repetir a citação inteira.
+function visibleChatText() {
+  const free = $("pane-instr").value.trim();
+  if (free) return free;
+  const comments = annotations.map((a) => a.comment).filter(Boolean);
+  if (comments.length) return comments.join("\n");
+  return annotations.length > 1 ? "(anotações sem comentário)" : "(anotação sem comentário)";
+}
+
 // Auto-resize textarea + botão de gerar só ativa com texto de verdade
 $("pane-instr").addEventListener("input", function () {
   this.style.height = "auto";
@@ -1184,9 +1221,10 @@ $("pane-gen").onclick = async () => {
   const freeText = $("pane-instr").value.trim();
   if (!freeText && !annotations.length) return;
   const instruction = composedInstruction();
+  const visibleText = visibleChatText();
 
   chatHistory = chatHistory.filter((m) => !m.placeholder);
-  chatHistory.push({ role: "user", text: instruction });
+  chatHistory.push({ role: "user", text: visibleText });
   renderChat();
   $("pane-instr").value = "";
   $("pane-instr").style.height = "auto";
@@ -1358,7 +1396,6 @@ function wrapSelectionAsAnnotation(range) {
     renumberAnnotations();
     annotationChipUpdate();
     popup.dataset.annotId = String(id);
-    popup.dataset.isNew = "1";
     textarea.value = "";
     positionPopupNear(badge);
     popup.classList.remove("hidden");
@@ -1369,14 +1406,16 @@ function wrapSelectionAsAnnotation(range) {
     const annot = annotations.find((a) => a.id === id);
     if (!annot) return;
     popup.dataset.annotId = String(id);
-    popup.dataset.isNew = "";
     textarea.value = annot.comment;
     positionPopupNear(anchorEl);
     popup.classList.remove("hidden");
     textarea.focus();
   }
 
-  btn.onclick = () => {
+  btn.onclick = (e) => {
+    // sem isso, o mesmo clique borbulha até o document e o listener de
+    // "clicou fora" logo abaixo fecha o popup que acabou de abrir
+    e.stopPropagation();
     if (!pendingRange) return;
     const quote = pendingRange.toString().trim();
     window.getSelection().removeAllRanges();
@@ -1397,7 +1436,7 @@ function wrapSelectionAsAnnotation(range) {
 
   $("annot-cancel").onclick = () => {
     const id = Number(popup.dataset.annotId);
-    if (popup.dataset.isNew === "1") removeAnnotation(id);
+    removeAnnotation(id);
     closePopup();
   };
 
