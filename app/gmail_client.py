@@ -10,7 +10,7 @@ from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formataddr, parseaddr
+from email.utils import formataddr, getaddresses, parseaddr
 from pathlib import Path
 from typing import Any
 
@@ -480,6 +480,41 @@ def get_thread_text(thread_id: str) -> str:
             body = body[:8000] + "\n[cortado]"
         blocks.append(f"De: {who}\nData: {when}\n\n{body}")
     return "\n\n----\n\n".join(blocks)
+
+
+def _split_addresses(header_value: str) -> list[dict[str, str]]:
+    out = []
+    for name, addr in getaddresses([header_value or ""]):
+        if addr:
+            out.append({"name": name, "email": addr})
+    return out
+
+
+def get_recipients(thread_id: str) -> dict[str, list[dict[str, str]]]:
+    """Para/Cc da ultima mensagem da thread -- pra mostrar quem mais foi
+    colocado no e-mail, alem do Leo."""
+    creds = load_credentials()
+    if not creds:
+        raise RuntimeError("Gmail nao autenticado.")
+    raw = _execute(
+        _service(creds)
+        .users()
+        .threads()
+        .get(
+            userId="me",
+            id=thread_id,
+            format="metadata",
+            metadataHeaders=["To", "Cc"],
+        )
+    )
+    messages = raw.get("messages") or []
+    if not messages:
+        return {"to": [], "cc": []}
+    headers = _header_map(messages[-1].get("payload") or {})
+    return {
+        "to": _split_addresses(headers.get("to") or ""),
+        "cc": _split_addresses(headers.get("cc") or ""),
+    }
 
 
 def send_reply(thread_id: str, body_text: str) -> dict:

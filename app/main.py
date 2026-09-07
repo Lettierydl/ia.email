@@ -375,6 +375,14 @@ def thread_send(thread_id: str, body: SendBody):
     return {"ok": True, **result}
 
 
+@app.get("/api/threads/{thread_id}/recipients")
+def thread_recipients(thread_id: str):
+    try:
+        return gmail_client.get_recipients(thread_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @app.get("/api/threads/{thread_id}/gmail-attachments")
 def list_gmail_attachments(thread_id: str):
     try:
