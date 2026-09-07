@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import threading
 import time
 from datetime import datetime
+from html.parser import HTMLParser
 import mimetypes
 from email import encoders
 from email.mime.base import MIMEBase
@@ -322,6 +324,59 @@ def _b64(data: str) -> str:
     return base64.urlsafe_b64decode(data + pad).decode("utf-8", errors="replace")
 
 
+_BLOCK_TAGS = {"br", "p", "div", "tr", "li", "blockquote", "table", "h1", "h2", "h3", "h4", "h5", "h6"}
+
+
+class _HtmlTextExtractor(HTMLParser):
+    """Extrai texto legivel de um e-mail que so tem parte text/html (sem
+    text/plain) -- sem isso o corpo aparecia com as tags cruas na tela."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._skip = 0
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        if tag in ("script", "style"):
+            self._skip += 1
+        elif tag in _BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_startendtag(self, tag: str, attrs: list) -> None:
+        if tag in _BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("script", "style"):
+            self._skip = max(0, self._skip - 1)
+        elif tag in _BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip:
+            self.parts.append(data)
+
+
+def _html_to_text(raw: str) -> str:
+    extractor = _HtmlTextExtractor()
+    try:
+        extractor.feed(raw)
+    except Exception:
+        return re.sub(r"<[^>]+>", " ", raw).strip()
+    lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in "".join(extractor.parts).split("\n")]
+    out: list[str] = []
+    blank = False
+    for ln in lines:
+        if not ln:
+            if not blank:
+                out.append("")
+            blank = True
+        else:
+            out.append(ln)
+            blank = False
+    return "\n".join(out).strip()
+
+
 def _collect_text(payload: dict[str, Any], plain: list[str], html: list[str]) -> None:
     mime = payload.get("mimeType") or ""
     body = payload.get("body") or {}
@@ -475,7 +530,7 @@ def get_thread_text(thread_id: str) -> str:
         plain: list[str] = []
         html: list[str] = []
         _collect_text(message.get("payload") or {}, plain, html)
-        body = "\n".join(plain).strip() or "\n".join(html).strip()
+        body = "\n".join(plain).strip() or _html_to_text("\n".join(html))
         if len(body) > 8000:
             body = body[:8000] + "\n[cortado]"
         blocks.append(f"De: {who}\nData: {when}\n\n{body}")

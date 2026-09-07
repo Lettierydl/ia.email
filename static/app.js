@@ -426,7 +426,9 @@ function renderBody(body) {
       const { main, quoted } = splitQuoted(text);
       const last = i === blocks.length - 1;
       const quotedHtml = quoted
-        ? `<button type="button" class="quote-toggle" data-tooltip="Mostrar histórico citado">•••</button>
+        ? `<div class="quote-toggle-row">
+             <button type="button" class="quote-toggle">Ver texto completo</button>
+           </div>
            <div class="msg-quoted hidden">${escHtml(quoted)}</div>`
         : "";
       return `<div class="msg-card ${last ? "open" : ""}" data-idx="${i}">
@@ -442,7 +444,9 @@ function renderBody(body) {
   el.querySelectorAll(".quote-toggle").forEach((btn) => {
     btn.onclick = (e) => {
       e.stopPropagation();
-      btn.nextElementSibling.classList.toggle("hidden");
+      const quotedEl = btn.closest(".quote-toggle-row").nextElementSibling;
+      const nowHidden = quotedEl.classList.toggle("hidden");
+      btn.textContent = nowHidden ? "Ver texto completo" : "Ocultar texto citado";
     };
   });
   el.querySelectorAll(".msg-head").forEach((head) => {
