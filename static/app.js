@@ -382,6 +382,36 @@ function parseMessage(block) {
   return { from: m[1].trim(), date: formatDatePt(m[2].trim()), text: m[3].trim() };
 }
 
+// "Fulano" <fulano@x.com> -> {name, email}
+function parseFrom(raw) {
+  const m = raw.match(/^"?([^"<]*)"?\s*<([^>]+)>$/);
+  if (m) return { name: m[1].trim() || m[2].trim(), email: m[2].trim().toLowerCase() };
+  return { name: raw.trim(), email: raw.trim().toLowerCase() };
+}
+
+function initials(name) {
+  const parts = name.replace(/[<>"]/g, "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function avatarColor(seed) {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = seed.charCodeAt(i) + ((hash << 5) - hash);
+  return `hsl(${Math.abs(hash) % 360}, 55%, 42%)`;
+}
+
+// Separa o corpo da mensagem do histórico citado (Gmail sempre repete os
+// e-mails anteriores no final -- "Em ... escreveu:" seguido de linhas com
+// ">"), pra poder esconder isso atrás de um "..." como o próprio Gmail faz.
+const QUOTE_RE = /\n(?=>? ?(?:Em [\s\S]{0,160}?escreveu:|On [\s\S]{0,160}?wrote:))/;
+function splitQuoted(text) {
+  const m = text.match(QUOTE_RE);
+  if (!m || m.index === undefined) return { main: text, quoted: null };
+  return { main: text.slice(0, m.index).trimEnd(), quoted: text.slice(m.index).trim() };
+}
+
 function renderBody(body) {
   const blocks = splitMessages(body);
   const el = $("pane-body");
@@ -392,16 +422,29 @@ function renderBody(body) {
   el.innerHTML = blocks
     .map((block, i) => {
       const { from, date, text } = parseMessage(block);
+      const { name, email } = parseFrom(from);
+      const { main, quoted } = splitQuoted(text);
       const last = i === blocks.length - 1;
+      const quotedHtml = quoted
+        ? `<button type="button" class="quote-toggle" data-tooltip="Mostrar histórico citado">•••</button>
+           <div class="msg-quoted hidden">${escHtml(quoted)}</div>`
+        : "";
       return `<div class="msg-card ${last ? "open" : ""}" data-idx="${i}">
         <div class="msg-head">
+          <span class="avatar" style="background:${avatarColor(email || name)}">${escHtml(initials(name))}</span>
           <span class="msg-from">${escHtml(from)}</span>
           <span class="msg-date">${escHtml(date)}</span>
         </div>
-        <div class="msg-text">${escHtml(text)}</div>
+        <div class="msg-text">${escHtml(main)}${quotedHtml}</div>
       </div>`;
     })
     .join("");
+  el.querySelectorAll(".quote-toggle").forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      btn.nextElementSibling.classList.toggle("hidden");
+    };
+  });
   el.querySelectorAll(".msg-head").forEach((head) => {
     head.onclick = () => head.closest(".msg-card").classList.toggle("open");
   });
@@ -1062,6 +1105,72 @@ $("pane-gen").onclick = async () => {
     $("pane-gen").disabled = !$("pane-instr").value.trim();
   }
 };
+
+// ── Selecionar trecho do resumo/texto -> citar no chat ──
+// Igual ao "Adicionar ao chat" do Codex: seleciona um pedaço do e-mail e
+// manda como contexto direcionado, pra comentar em cima daquele trecho
+// específico em vez de reescrever tudo na mão.
+(function setupSelectToAdd() {
+  const toolbar = $("select-toolbar");
+  const btn = $("select-add-chat");
+  let pendingText = "";
+
+  function hideToolbar() {
+    toolbar.classList.add("hidden");
+    pendingText = "";
+  }
+
+  document.addEventListener("mouseup", () => {
+    setTimeout(() => {
+      const sel = window.getSelection();
+      const text = sel ? sel.toString().trim() : "";
+      if (!text || !paneId) {
+        hideToolbar();
+        return;
+      }
+      const areas = [$("pane-summary"), $("pane-body")];
+      const inArea = areas.some((el) => el && sel.anchorNode && el.contains(sel.anchorNode));
+      if (!inArea) {
+        hideToolbar();
+        return;
+      }
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      if (!rect.width && !rect.height) {
+        hideToolbar();
+        return;
+      }
+      pendingText = text.length > 600 ? `${text.slice(0, 600)}…` : text;
+      const left = Math.min(
+        Math.max(8, rect.left + rect.width / 2 - 90),
+        window.innerWidth - 220
+      );
+      toolbar.style.left = `${left}px`;
+      toolbar.style.top = `${Math.max(8, rect.top - 42)}px`;
+      toolbar.classList.remove("hidden");
+    }, 0);
+  });
+
+  document.addEventListener("mousedown", (e) => {
+    if (!toolbar.contains(e.target)) hideToolbar();
+  });
+  window.addEventListener("scroll", hideToolbar, true);
+  window.addEventListener("resize", hideToolbar);
+
+  btn.onclick = () => {
+    if (!pendingText) return;
+    const ta = $("pane-instr");
+    const quote = pendingText
+      .split("\n")
+      .map((l) => `> ${l}`)
+      .join("\n");
+    ta.value = ta.value.trim() ? `${ta.value}\n\n${quote}\n` : `${quote}\n`;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    window.getSelection().removeAllRanges();
+    hideToolbar();
+  };
+})();
 
 (async () => {
   const mailId = mailPathId();

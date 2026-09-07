@@ -476,14 +476,26 @@ body.conversation .pane {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  align-items: baseline;
+  align-items: center;
   padding: 10px 12px;
   cursor: pointer;
   background: #f8f9fa;
 }
 .msg-head:hover { background: #f1f3f4; }
-.msg-from { font-weight: 500; font-size: 13px; }
-.msg-date { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.avatar {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+.msg-from { font-weight: 500; font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-date { color: var(--muted); font-size: 12px; white-space: nowrap; flex-shrink: 0; }
 .msg-text {
   display: none;
   white-space: pre-wrap;
@@ -492,6 +504,28 @@ body.conversation .pane {
   border-top: 1px solid var(--line);
 }
 .msg-card.open .msg-text { display: block; }
+.quote-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 4px 0;
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+.quote-toggle:hover { background: #eef1f4; }
+.msg-quoted {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
 .msg-attachments {
   display: none;
   flex-wrap: wrap;
@@ -826,6 +860,26 @@ body.conversation .pane {
 }
 .modal-warning { font-size: 12px; color: var(--red); margin-bottom: 16px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ── SELECIONAR TEXTO -> ADICIONAR AO CHAT ── */
+.select-toolbar {
+  position: fixed;
+  z-index: 200;
+  background: #3c4043;
+  border-radius: 20px;
+  box-shadow: var(--shadow-md);
+}
+.select-toolbar button {
+  background: transparent;
+  border: 0;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.select-toolbar button:hover { background: rgba(255,255,255,.15); }
 
 /* ── TOOLTIP ── */
 [data-tooltip] { position: relative; }
