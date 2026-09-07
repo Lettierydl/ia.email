@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=42" />
+  <link rel="stylesheet" href="/static/styles.css?v=43" />
 </head>
 <body>
   <header class="top">
@@ -167,6 +167,7 @@
               Enviar e-mail
             </button>
           </div>
+          <button type="button" id="annot-chip" class="annot-chip hidden"></button>
           <div class="compose-input-row">
             <textarea id="pane-instr" rows="3" placeholder="Diga o que quer responder..."></textarea>
             <button type="button" id="pane-gen" class="send-btn" data-tooltip="Gerar rascunho" disabled>
@@ -201,6 +202,18 @@
     <button type="button" id="select-add-chat">💬 Adicionar ao chat</button>
   </div>
 
-  <script src="/static/app.js?v=42"></script>
+  <div id="annot-popup" class="annot-popup hidden">
+    <textarea id="annot-popup-textarea" rows="2" placeholder="Comente sobre o trecho selecionado..."></textarea>
+    <div class="annot-popup-actions">
+      <button type="button" id="annot-delete" class="icon-btn" data-tooltip="Excluir anotação">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+      </button>
+      <span class="sep"></span>
+      <button type="button" id="annot-cancel" class="ghost">Cancelar</button>
+      <button type="button" id="annot-save" class="primary">Salvar</button>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=43"></script>
 </body>
 </html>
