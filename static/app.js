@@ -575,6 +575,15 @@ function renderChat() {
     .join("");
   el.scrollTop = el.scrollHeight;
   updateSendBar();
+  updateChatResetState();
+}
+
+// Lixeira de reiniciar conversa só fica clicável quando há mesmo o que
+// limpar: conversa real, rascunho, texto digitado ou anotação pendente.
+function updateChatResetState() {
+  const hasChat = chatHistory.some((m) => !m.placeholder);
+  const hasTyped = $("pane-instr").value.trim().length > 0;
+  $("pane-chat-reset").disabled = !hasChat && !hasTyped && !annotations.length;
 }
 
 function lastDraft() {
@@ -820,6 +829,9 @@ async function openPane(id, force) {
   $("pane-instr").value = "";
   $("pane-instr").style.height = "auto";
   $("pane-gen").disabled = true;
+  annotations = [];
+  $("annot-chip").classList.add("hidden");
+  $("annot-popup").classList.add("hidden");
   renderAttachments([]);
   lastGmailAttachments = { files: [], message_ids: [] };
   renderChat();
@@ -1091,6 +1103,32 @@ $("pane-export-ctx").onclick = async () => {
   }
 };
 
+// Limpa a conversa do chat (rascunho + histórico) e recomeça do zero,
+// tanto na tela quanto no que fica salvo pro e-mail.
+$("pane-chat-reset").onclick = async () => {
+  if (!paneId) return;
+  const btn = $("pane-chat-reset");
+  btn.disabled = true;
+  try {
+    await fetch(`/api/threads/${paneId}/chat/reset`, { method: "POST" });
+    chatHistory = [
+      {
+        role: "ai",
+        text: "Sem sugestão automática pra este e-mail. Fale aqui embaixo para eu gerar a resposta.",
+        placeholder: true,
+      },
+    ];
+    renderChat();
+    $("pane-instr").value = "";
+    $("pane-instr").style.height = "auto";
+    clearAllAnnotations();
+    updateGenButtonState();
+    $("pane-status").textContent = "Conversa reiniciada.";
+  } finally {
+    updateChatResetState();
+  }
+};
+
 function openSendModal() {
   const text = lastDraft();
   if (!paneId || !text) return;
@@ -1146,11 +1184,38 @@ $("modal-confirm").onclick = async () => {
   }
 };
 
+// Botão de gerar ativa com texto na caixa OU com anotações pendentes
+// (dá pra mandar só anotação, sem escrever nada no campo livre).
+function updateGenButtonState() {
+  $("pane-gen").disabled = !$("pane-instr").value.trim() && !annotations.length;
+  updateChatResetState();
+}
+
+function composedInstruction() {
+  const free = $("pane-instr").value.trim();
+  if (!annotations.length) return free;
+  const notes = annotations
+    .map((a, i) => `[${i + 1}] Sobre "${a.quote}": ${a.comment || "(sem comentário)"}`)
+    .join("\n");
+  return free ? `${notes}\n\n${free}` : notes;
+}
+
+// O que aparece na bolha do chat fica "camuflado": a referência ao trecho
+// já está marcada no próprio texto (o numerozinho), então aqui só mostra
+// o que a pessoa realmente escreveu -- sem repetir a citação inteira.
+function visibleChatText() {
+  const free = $("pane-instr").value.trim();
+  if (free) return free;
+  const comments = annotations.map((a) => a.comment).filter(Boolean);
+  if (comments.length) return comments.join("\n");
+  return annotations.length > 1 ? "(anotações sem comentário)" : "(anotação sem comentário)";
+}
+
 // Auto-resize textarea + botão de gerar só ativa com texto de verdade
 $("pane-instr").addEventListener("input", function () {
   this.style.height = "auto";
   this.style.height = Math.min(this.scrollHeight, 280) + "px";
-  $("pane-gen").disabled = !this.value.trim();
+  updateGenButtonState();
 });
 
 // Send with Enter (Shift+Enter for newline)
@@ -1163,14 +1228,17 @@ $("pane-instr").addEventListener("keydown", (e) => {
 
 $("pane-gen").onclick = async () => {
   if (!paneId) return;
-  const instruction = $("pane-instr").value.trim();
-  if (!instruction) return;
+  const freeText = $("pane-instr").value.trim();
+  if (!freeText && !annotations.length) return;
+  const instruction = composedInstruction();
+  const visibleText = visibleChatText();
 
   chatHistory = chatHistory.filter((m) => !m.placeholder);
-  chatHistory.push({ role: "user", text: instruction });
+  chatHistory.push({ role: "user", text: visibleText });
   renderChat();
   $("pane-instr").value = "";
   $("pane-instr").style.height = "auto";
+  clearAllAnnotations();
 
   $("pane-status").textContent = "Gerando rascunho…";
   $("pane-gen").disabled = true; // esvaziou a caixa, então continua desabilitado no finally
@@ -1198,22 +1266,87 @@ $("pane-gen").onclick = async () => {
     }
     $("pane-status").textContent = "Rascunho gerado. Nada foi enviado.";
   } finally {
-    $("pane-gen").disabled = !$("pane-instr").value.trim();
+    updateGenButtonState();
   }
 };
 
-// ── Selecionar trecho do resumo/texto -> citar no chat ──
-// Igual ao "Adicionar ao chat" do Codex: seleciona um pedaço do e-mail e
-// manda como contexto direcionado, pra comentar em cima daquele trecho
-// específico em vez de reescrever tudo na mão.
-(function setupSelectToAdd() {
+// ── Selecionar trecho -> anotação ancorada no texto (igual ao Codex) ──
+// Seleciona um pedaço do resumo/thread, marca aquele trecho com um
+// número (badge azul) e abre uma caixinha ali do lado pra comentar em
+// cima daquele pedaço específico. As anotações viram contexto
+// direcionado quando o próximo rascunho é gerado no chat.
+let annotations = [];
+let annotationSeq = 0;
+
+function annotationChipUpdate() {
+  const chip = $("annot-chip");
+  if (!annotations.length) {
+    chip.classList.add("hidden");
+    updateGenButtonState();
+    return;
+  }
+  chip.textContent = `${annotations.length} anotaç${annotations.length > 1 ? "ões" : "ão"}`;
+  chip.classList.remove("hidden");
+  updateGenButtonState();
+}
+
+function unwrapAnnotationMark(annot) {
+  if (annot.mark && annot.mark.parentNode) {
+    const parent = annot.mark.parentNode;
+    while (annot.mark.firstChild) parent.insertBefore(annot.mark.firstChild, annot.mark);
+    parent.removeChild(annot.mark);
+    parent.normalize();
+  }
+  if (annot.badge && annot.badge.parentNode) annot.badge.remove();
+}
+
+function renumberAnnotations() {
+  annotations.forEach((a, i) => {
+    if (a.badge) a.badge.textContent = String(i + 1);
+  });
+}
+
+function removeAnnotation(id) {
+  const idx = annotations.findIndex((a) => a.id === id);
+  if (idx === -1) return;
+  const [annot] = annotations.splice(idx, 1);
+  unwrapAnnotationMark(annot);
+  renumberAnnotations();
+  annotationChipUpdate();
+}
+
+function clearAllAnnotations() {
+  annotations.forEach(unwrapAnnotationMark);
+  annotations = [];
+  annotationChipUpdate();
+}
+
+function wrapSelectionAsAnnotation(range) {
+  const mark = document.createElement("span");
+  mark.className = "annot-mark";
+  try {
+    range.surroundContents(mark);
+  } catch {
+    const frag = range.extractContents();
+    mark.appendChild(frag);
+    range.insertNode(mark);
+  }
+  const badge = document.createElement("sup");
+  badge.className = "annot-badge";
+  mark.insertAdjacentElement("afterend", badge);
+  return { mark, badge };
+}
+
+(function setupAnnotations() {
   const toolbar = $("select-toolbar");
   const btn = $("select-add-chat");
-  let pendingText = "";
+  const popup = $("annot-popup");
+  const textarea = $("annot-popup-textarea");
+  let pendingRange = null;
 
   function hideToolbar() {
     toolbar.classList.add("hidden");
-    pendingText = "";
+    pendingRange = null;
   }
 
   document.addEventListener("mouseup", () => {
@@ -1235,7 +1368,7 @@ $("pane-gen").onclick = async () => {
         hideToolbar();
         return;
       }
-      pendingText = text.length > 600 ? `${text.slice(0, 600)}…` : text;
+      pendingRange = sel.getRangeAt(0).cloneRange();
       const left = Math.min(
         Math.max(8, rect.left + rect.width / 2 - 90),
         window.innerWidth - 220
@@ -1252,19 +1385,87 @@ $("pane-gen").onclick = async () => {
   window.addEventListener("scroll", hideToolbar, true);
   window.addEventListener("resize", hideToolbar);
 
-  btn.onclick = () => {
-    if (!pendingText) return;
-    const ta = $("pane-instr");
-    const quote = pendingText
-      .split("\n")
-      .map((l) => `> ${l}`)
-      .join("\n");
-    ta.value = ta.value.trim() ? `${ta.value}\n\n${quote}\n` : `${quote}\n`;
-    ta.dispatchEvent(new Event("input", { bubbles: true }));
-    ta.focus();
-    ta.setSelectionRange(ta.value.length, ta.value.length);
+  function positionPopupNear(el) {
+    const rect = el.getBoundingClientRect();
+    const left = Math.min(Math.max(8, rect.left - 20), window.innerWidth - 300);
+    const top = Math.min(rect.bottom + 8, window.innerHeight - 140);
+    popup.style.left = `${left}px`;
+    popup.style.top = `${Math.max(8, top)}px`;
+  }
+
+  function closePopup() {
+    popup.classList.add("hidden");
+    popup.dataset.annotId = "";
+  }
+
+  function openPopupForNew(mark, badge, quote) {
+    const id = ++annotationSeq;
+    mark.dataset.annotId = String(id);
+    badge.dataset.annotId = String(id);
+    annotations.push({ id, quote, comment: "", mark, badge });
+    renumberAnnotations();
+    annotationChipUpdate();
+    popup.dataset.annotId = String(id);
+    textarea.value = "";
+    positionPopupNear(badge);
+    popup.classList.remove("hidden");
+    textarea.focus();
+  }
+
+  function openPopupForExisting(id, anchorEl) {
+    const annot = annotations.find((a) => a.id === id);
+    if (!annot) return;
+    popup.dataset.annotId = String(id);
+    textarea.value = annot.comment;
+    positionPopupNear(anchorEl);
+    popup.classList.remove("hidden");
+    textarea.focus();
+  }
+
+  btn.onclick = (e) => {
+    // sem isso, o mesmo clique borbulha até o document e o listener de
+    // "clicou fora" logo abaixo fecha o popup que acabou de abrir
+    e.stopPropagation();
+    if (!pendingRange) return;
+    const quote = pendingRange.toString().trim();
     window.getSelection().removeAllRanges();
+    const { mark, badge } = wrapSelectionAsAnnotation(pendingRange);
     hideToolbar();
+    openPopupForNew(mark, badge, quote.length > 600 ? `${quote.slice(0, 600)}…` : quote);
+  };
+
+  document.addEventListener("click", (e) => {
+    const anchorEl = e.target.closest(".annot-badge, .annot-mark");
+    if (anchorEl) {
+      const id = Number(anchorEl.dataset.annotId);
+      openPopupForExisting(id, anchorEl);
+      return;
+    }
+    if (!popup.contains(e.target)) closePopup();
+  });
+
+  $("annot-cancel").onclick = () => {
+    const id = Number(popup.dataset.annotId);
+    removeAnnotation(id);
+    closePopup();
+  };
+
+  $("annot-delete").onclick = () => {
+    const id = Number(popup.dataset.annotId);
+    removeAnnotation(id);
+    closePopup();
+  };
+
+  $("annot-save").onclick = () => {
+    const id = Number(popup.dataset.annotId);
+    const annot = annotations.find((a) => a.id === id);
+    if (annot) annot.comment = textarea.value.trim();
+    closePopup();
+  };
+
+  $("annot-chip").onclick = () => {
+    if (!annotations.length) return;
+    openPopupForExisting(annotations[annotations.length - 1].id, $("annot-chip"));
   };
 })();
 

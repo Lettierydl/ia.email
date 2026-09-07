@@ -580,6 +580,8 @@ body.conversation .pane {
   font-size: 16px;
 }
 .compose-toolbar button:hover { background: #e8eaed; }
+.compose-toolbar button:disabled { color: #c4c7cc; cursor: default; }
+.compose-toolbar button:disabled:hover { background: transparent; }
 .compose-toolbar .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
 .attach-list {
   display: flex;
@@ -882,6 +884,76 @@ body.conversation .pane {
   white-space: nowrap;
 }
 .select-toolbar button:hover { background: rgba(255,255,255,.15); }
+
+/* ── ANOTAÇÕES ANCORADAS NO TEXTO (Adicionar ao chat) ── */
+.annot-mark {
+  background: var(--blue-soft);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.annot-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--blue);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  font-style: normal;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: super;
+}
+.annot-chip {
+  display: inline-flex;
+  align-self: flex-start;
+  margin: 8px 12px 0;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--blue-soft);
+  color: var(--blue-dark);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.annot-popup {
+  position: fixed;
+  z-index: 210;
+  width: 280px;
+  background: var(--card);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--line);
+  padding: 10px;
+}
+.annot-popup textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+  min-height: 44px;
+}
+.annot-popup-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+.annot-popup-actions .icon-btn { margin-right: auto; }
+.annot-popup-actions .ghost,
+.annot-popup-actions .primary {
+  padding: 5px 12px;
+  font-size: 13px;
+}
 
 /* ── TOOLTIP ── */
 [data-tooltip] { position: relative; }
