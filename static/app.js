@@ -452,6 +452,7 @@ function updateSendBar() {
   const bar = $("send-bar");
   if (!draft) {
     bar.classList.add("hidden");
+    $("pane-send").disabled = true;
     return;
   }
   bar.classList.remove("hidden");
@@ -677,6 +678,9 @@ async function openPane(id, force) {
   $("pane-body").textContent = "";
   $("invite-card").classList.add("hidden");
   $("pane-cc").classList.add("hidden");
+  $("pane-instr").value = "";
+  $("pane-instr").style.height = "auto";
+  $("pane-gen").disabled = true;
   renderAttachments([]);
   lastGmailAttachments = { files: [], message_ids: [] };
   renderChat();
@@ -1003,10 +1007,11 @@ $("modal-confirm").onclick = async () => {
   }
 };
 
-// Auto-resize textarea
+// Auto-resize textarea + botão de gerar só ativa com texto de verdade
 $("pane-instr").addEventListener("input", function () {
   this.style.height = "auto";
   this.style.height = Math.min(this.scrollHeight, 280) + "px";
+  $("pane-gen").disabled = !this.value.trim();
 });
 
 // Send with Enter (Shift+Enter for newline)
@@ -1029,7 +1034,7 @@ $("pane-gen").onclick = async () => {
   $("pane-instr").style.height = "auto";
 
   $("pane-status").textContent = "Gerando rascunho…";
-  $("pane-gen").disabled = true;
+  $("pane-gen").disabled = true; // esvaziou a caixa, então continua desabilitado no finally
 
   try {
     const res = await fetch(`/api/threads/${paneId}/draft`, {
@@ -1054,7 +1059,7 @@ $("pane-gen").onclick = async () => {
     }
     $("pane-status").textContent = "Rascunho gerado. Nada foi enviado.";
   } finally {
-    $("pane-gen").disabled = false;
+    $("pane-gen").disabled = !$("pane-instr").value.trim();
   }
 };
 
