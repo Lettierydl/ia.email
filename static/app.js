@@ -575,6 +575,15 @@ function renderChat() {
     .join("");
   el.scrollTop = el.scrollHeight;
   updateSendBar();
+  updateChatResetState();
+}
+
+// Lixeira de reiniciar conversa só fica clicável quando há mesmo o que
+// limpar: conversa real, rascunho, texto digitado ou anotação pendente.
+function updateChatResetState() {
+  const hasChat = chatHistory.some((m) => !m.placeholder);
+  const hasTyped = $("pane-instr").value.trim().length > 0;
+  $("pane-chat-reset").disabled = !hasChat && !hasTyped && !annotations.length;
 }
 
 function lastDraft() {
@@ -1116,7 +1125,7 @@ $("pane-chat-reset").onclick = async () => {
     updateGenButtonState();
     $("pane-status").textContent = "Conversa reiniciada.";
   } finally {
-    btn.disabled = false;
+    updateChatResetState();
   }
 };
 
@@ -1179,6 +1188,7 @@ $("modal-confirm").onclick = async () => {
 // (dá pra mandar só anotação, sem escrever nada no campo livre).
 function updateGenButtonState() {
   $("pane-gen").disabled = !$("pane-instr").value.trim() && !annotations.length;
+  updateChatResetState();
 }
 
 function composedInstruction() {

@@ -580,6 +580,8 @@ body.conversation .pane {
   font-size: 16px;
 }
 .compose-toolbar button:hover { background: #e8eaed; }
+.compose-toolbar button:disabled { color: #c4c7cc; cursor: default; }
+.compose-toolbar button:disabled:hover { background: transparent; }
 .compose-toolbar .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
 .attach-list {
   display: flex;
