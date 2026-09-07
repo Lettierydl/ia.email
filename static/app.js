@@ -74,11 +74,29 @@ document.addEventListener("click", (e) => {
       .catch(() => {
         niBtn.disabled = false;
       });
+    return;
+  }
+  const emptyBtn = e.target.closest(".empty-refresh");
+  if (emptyBtn) {
+    emptyBtn.disabled = true;
+    emptyBtn.textContent = "Buscando…";
+    refresh().finally(() => {
+      emptyBtn.disabled = false;
+      emptyBtn.textContent = "Buscar mais e-mails";
+    });
   }
 });
 
 function renderList(id, items) {
-  $(id).innerHTML = items.map(card).join("");
+  const el = $(id);
+  if (!items.length) {
+    el.innerHTML = `<div class="empty-list">
+      <p>Nada aqui.</p>
+      <button type="button" class="ghost empty-refresh">Buscar mais e-mails</button>
+    </div>`;
+    return;
+  }
+  el.innerHTML = items.map(card).join("");
 }
 
 function qs() {
