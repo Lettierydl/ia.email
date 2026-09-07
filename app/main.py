@@ -14,7 +14,7 @@ from googleapiclient.errors import HttpError
 
 from pydantic import BaseModel
 
-from . import assistant, attachments, calendar_client, gmail_client, llm, store
+from . import assistant, attachments, calendar_client, gmail_client, llm, people_client, store
 from .gmail_client import QuotaPartial
 from .preload import pick_preload
 from .config import ACCOUNT, ROOT, TZ
@@ -83,6 +83,7 @@ def status():
         "can_mark_read": gmail_client.has_modify_scope(creds),
         "can_send": gmail_client.has_send_scope(creds),
         "can_calendar": calendar_client.has_calendar_scope(creds),
+        "can_people": people_client.has_people_scope(creds),
         "now": datetime.now(TZ).strftime("%H:%M"),
         "llm_provider": llm.provider_label(),
         "llm_tokens_today": store.llm_usage_today(),
@@ -373,6 +374,22 @@ def thread_send(thread_id: str, body: SendBody):
     for item in attachments.list_files(thread_id):
         attachments.delete_file(thread_id, item["name"])
     return {"ok": True, **result}
+
+
+@app.get("/api/avatar")
+def avatar_lookup(email: str = Query(...)):
+    creds = gmail_client.load_credentials()
+    if not creds or not people_client.has_people_scope(creds):
+        return {"photo_url": None}
+    resolved, cached_url = store.get_avatar(email)
+    if resolved:
+        return {"photo_url": cached_url}
+    try:
+        url = people_client.resolve_avatar(creds, email)
+    except Exception:
+        url = None
+    store.save_avatar(email, url)
+    return {"photo_url": url}
 
 
 @app.get("/api/threads/{thread_id}/recipients")

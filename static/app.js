@@ -181,6 +181,14 @@ async function loadStatus() {
       'Calendário ainda não autorizado. Clique em "Autorizar calendário" pra ver conflitos e responder convites por aqui.',
       true
     );
+  } else if (!data.can_people) {
+    $("setup").classList.add("hidden");
+    $("btn-auth").textContent = "Autorizar fotos de contato";
+    $("btn-auth").classList.remove("hidden");
+    showBanner(
+      'Fotos de contato ainda não autorizadas. Clique em "Autorizar fotos de contato" pra ver a foto de quem te manda e-mail (quando disponível).',
+      true
+    );
   } else {
     $("setup").classList.add("hidden");
     $("btn-auth").textContent = "Entrar no Gmail";
@@ -412,6 +420,43 @@ function splitQuoted(text) {
   return { main: text.slice(0, m.index).trimEnd(), quoted: text.slice(m.index).trim() };
 }
 
+// Vira links clicáveis. O Gmail embrulha todo link em texto puro num
+// redirect de rastreio (google.com/url?q=...) -- aqui a gente desembrulha
+// pra mostrar (e apontar) o link real, do jeito que aparece no Gmail.
+function linkify(text) {
+  const urlRe = /https?:\/\/[^\s<>"')]+/g;
+  let out = "";
+  let last = 0;
+  let m;
+  while ((m = urlRe.exec(text))) {
+    out += escHtml(text.slice(last, m.index));
+    let raw = m[0];
+    let trail = "";
+    const trailMatch = raw.match(/[.,;:!?]+$/);
+    if (trailMatch) {
+      trail = trailMatch[0];
+      raw = raw.slice(0, -trail.length);
+    }
+    let href = raw;
+    let display = raw;
+    if (/^https?:\/\/(www\.)?google\.com\/url\?/.test(raw)) {
+      try {
+        const real = new URL(raw).searchParams.get("q");
+        if (real) {
+          href = real;
+          display = real;
+        }
+      } catch {
+        // mantém raw se a URL vier malformada
+      }
+    }
+    out += `<a href="${escHtml(href)}" target="_blank" rel="noopener noreferrer">${escHtml(display)}</a>${escHtml(trail)}`;
+    last = m.index + m[0].length;
+  }
+  out += escHtml(text.slice(last));
+  return out;
+}
+
 function renderBody(body) {
   const blocks = splitMessages(body);
   const el = $("pane-body");
@@ -429,15 +474,15 @@ function renderBody(body) {
         ? `<div class="quote-toggle-row">
              <button type="button" class="quote-toggle">Ver texto completo</button>
            </div>
-           <div class="msg-quoted hidden">${escHtml(quoted)}</div>`
+           <div class="msg-quoted hidden">${linkify(quoted)}</div>`
         : "";
       return `<div class="msg-card ${last ? "open" : ""}" data-idx="${i}">
         <div class="msg-head">
-          <span class="avatar" style="background:${avatarColor(email || name)}">${escHtml(initials(name))}</span>
+          <span class="avatar" data-email="${escHtml(email)}" style="background:${avatarColor(email || name)}">${escHtml(initials(name))}</span>
           <span class="msg-from">${escHtml(from)}</span>
           <span class="msg-date">${escHtml(date)}</span>
         </div>
-        <div class="msg-text">${escHtml(main)}${quotedHtml}</div>
+        <div class="msg-text">${linkify(main)}${quotedHtml}</div>
       </div>`;
     })
     .join("");
@@ -453,6 +498,35 @@ function renderBody(body) {
     head.onclick = () => head.closest(".msg-card").classList.toggle("open");
   });
   renderBodyAttachments(lastGmailAttachments);
+  loadAvatarPhotos(el.querySelectorAll(".avatar"));
+}
+
+// Troca o avatar de iniciais pela foto real quando o Google People API
+// (contatos + diretório do Workspace) encontra uma. Silencioso se não
+// achar ou se a permissão ainda não foi concedida -- fica no fallback.
+function loadAvatarPhotos(avatarEls) {
+  const seen = new Set();
+  avatarEls.forEach((el) => {
+    const email = el.dataset.email;
+    if (!email || seen.has(email)) return;
+    seen.add(email);
+    fetch(`/api/avatar?email=${encodeURIComponent(email)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.photo_url) return;
+        document.querySelectorAll(`.avatar[data-email="${CSS.escape(email)}"]`).forEach((node) => {
+          const img = document.createElement("img");
+          img.src = data.photo_url;
+          img.alt = "";
+          img.referrerPolicy = "no-referrer";
+          img.onerror = () => img.remove();
+          node.textContent = "";
+          node.style.background = "transparent";
+          node.appendChild(img);
+        });
+      })
+      .catch(() => {});
+  });
 }
 
 function setTab(name) {

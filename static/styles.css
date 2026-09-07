@@ -493,7 +493,9 @@ body.conversation .pane {
   color: #fff;
   font-size: 11px;
   font-weight: 600;
+  overflow: hidden;
 }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
 .msg-from { font-weight: 500; font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg-date { color: var(--muted); font-size: 12px; white-space: nowrap; flex-shrink: 0; }
 .msg-text {
@@ -504,6 +506,7 @@ body.conversation .pane {
   border-top: 1px solid var(--line);
 }
 .msg-card.open .msg-text { display: block; }
+.msg-text a, .msg-quoted a { color: var(--blue); word-break: break-all; }
 .quote-toggle-row { margin-top: 10px; }
 .quote-toggle {
   display: inline-block;

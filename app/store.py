@@ -56,6 +56,15 @@ def init() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS avatar_cache (
+                email TEXT PRIMARY KEY,
+                photo_url TEXT,
+                resolved_at TEXT
+            )
+            """
+        )
         for col, typ in (
             ("summary", "TEXT"),
             ("draft", "TEXT"),
@@ -260,6 +269,34 @@ def is_blocked_sender(email: str) -> bool:
             "SELECT 1 FROM blocked_senders WHERE email=?", (email,)
         ).fetchone()
     return row is not None
+
+
+def get_avatar(email: str) -> tuple[bool, str | None]:
+    """(ja_resolvido, url). ja_resolvido=False significa que nunca foi
+    buscado -- url vazia (mas ja_resolvido=True) significa que foi
+    buscado e nao achou foto nenhuma (nao tenta de novo)."""
+    email = (email or "").strip().lower()
+    if not email:
+        return True, None
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT photo_url FROM avatar_cache WHERE email=?", (email,)
+        ).fetchone()
+    if row is None:
+        return False, None
+    return True, (row["photo_url"] or None)
+
+
+def save_avatar(email: str, photo_url: str | None) -> None:
+    email = (email or "").strip().lower()
+    if not email:
+        return
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO avatar_cache(email, photo_url, resolved_at) VALUES(?, ?, ?) "
+            "ON CONFLICT(email) DO UPDATE SET photo_url=excluded.photo_url, resolved_at=excluded.resolved_at",
+            (email, photo_url or "", datetime.now(timezone.utc).isoformat()),
+        )
 
 
 def thread_count() -> int:
