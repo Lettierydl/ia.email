@@ -20,4 +20,9 @@ services:
       - ./data:/app/data
       - ./app:/app/app
       - ./static:/app/static
+      # Learning Base inteira, so leitura -- usada pela base de contexto
+      # "geral" das Configuracoes. A pasta emails/ é montada de novo por
+      # cima, em leitura/escrita, pra manter os exports e o context.md
+      # funcionando (o mount mais especifico vence sobre o pai).
+      - "/Users/leo/Learning Base:/Users/leo/Learning Base:ro"
       - "/Users/leo/Learning Base/principal_agents/emails:/Users/leo/Learning Base/principal_agents/emails"

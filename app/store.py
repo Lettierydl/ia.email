@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from .config import DB_PATH, LEARNING_BASE_DEFAULT
+from .config import DB_PATH, LEARNING_BASE_DEFAULT, LEARNING_BASE_GLOBAL_DEFAULT
 
 
 def _connect() -> sqlite3.Connection:
@@ -312,6 +312,8 @@ def save_avatar(email: str, photo_url: str | None) -> None:
 DEFAULT_SETTINGS = {
     "context_enabled": False,
     "context_paths": [str(LEARNING_BASE_DEFAULT)],
+    "context_global_enabled": False,
+    "context_global_paths": [str(LEARNING_BASE_GLOBAL_DEFAULT)],
     "style_preset": "neutro",
     "style_custom": "",
     "preload_enabled": True,
@@ -360,6 +362,26 @@ def save_alias(alias: str, name: str, email: str) -> None:
 def delete_alias(alias: str) -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM aliases WHERE alias=?", ((alias or "").strip().lower(),))
+
+
+def search_senders(query: str, limit: int = 6) -> list[dict[str, str]]:
+    """Procura remetentes ja vistos no historico de e-mails que batem com
+    o texto digitado -- usado pra sugerir nome/e-mail ao cadastrar um
+    apelido, em vez do Leo ter que digitar o e-mail certinho na mao."""
+    needle = f"%{(query or '').strip()}%"
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT from_name, from_email, MAX(internal_date) AS last_seen, COUNT(*) AS n
+            FROM threads
+            WHERE (from_name LIKE ? OR from_email LIKE ?) AND from_email != ''
+            GROUP BY from_email
+            ORDER BY n DESC, last_seen DESC
+            LIMIT ?
+            """,
+            (needle, needle, limit),
+        ).fetchall()
+    return [{"name": r["from_name"] or "", "email": r["from_email"] or ""} for r in rows]
 
 
 def thread_count() -> int:

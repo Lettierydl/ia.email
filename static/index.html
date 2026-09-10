@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=47" />
+  <link rel="stylesheet" href="/static/styles.css?v=48" />
 </head>
 <body>
   <header class="top">
@@ -231,15 +231,27 @@
       </div>
 
       <section class="settings-section">
-        <h4>Base de contexto</h4>
-        <p class="settings-hint">Quando ligado, o chat lê arquivos dessas pastas (e subpastas) como conhecimento pessoal seu ao gerar rascunho ou responder pergunta.</p>
+        <h4>Base de contexto — e-mails</h4>
+        <p class="settings-hint">Quando ligado, o chat lê arquivos dessas pastas (e subpastas) como conhecimento pessoal seu ao gerar rascunho ou responder pergunta. Pensado pra contexto direcionado de e-mail/trabalho.</p>
         <label class="settings-toggle">
           <input type="checkbox" id="cfg-context-enabled" />
-          Ler a base de contexto
+          Ler a base de contexto (e-mails)
         </label>
         <textarea id="cfg-context-paths" rows="2" placeholder="Uma pasta por linha, ex.: /Users/leo/Learning Base/principal_agents/emails"></textarea>
         <button type="button" id="cfg-context-save" class="ghost">Salvar</button>
         <span id="cfg-context-status" class="settings-status"></span>
+      </section>
+
+      <section class="settings-section">
+        <h4>Base de contexto — geral</h4>
+        <p class="settings-hint">Uma segunda base, mais ampla (ex.: a Learning Base inteira), com conhecimento de sistemas/produto/processos -- pra dar mais propriedade técnica e automatizar respostas que dependem de contexto de negócio, não só do e-mail em si.</p>
+        <label class="settings-toggle">
+          <input type="checkbox" id="cfg-context-global-enabled" />
+          Ler a base de contexto (geral)
+        </label>
+        <textarea id="cfg-context-global-paths" rows="2" placeholder="Uma pasta por linha, ex.: /Users/leo/Learning Base"></textarea>
+        <button type="button" id="cfg-context-global-save" class="ghost">Salvar</button>
+        <span id="cfg-context-global-status" class="settings-status"></span>
       </section>
 
       <section class="settings-section">
@@ -274,7 +286,10 @@
         <p class="settings-hint">Ex.: "Paulo" → Paulo Lemes &lt;paulo.lemes@confrapag.com.br&gt;. O chat usa isso pra saber quem é quem quando você usar o apelido na instrução.</p>
         <div id="cfg-aliases-list" class="aliases-list"></div>
         <div class="alias-form">
-          <input type="text" id="cfg-alias-new-alias" placeholder="apelido" />
+          <div class="alias-field-wrap">
+            <input type="text" id="cfg-alias-new-alias" placeholder="apelido, ex.: joanderson" autocomplete="off" />
+            <div id="cfg-alias-suggestions" class="alias-suggestions hidden"></div>
+          </div>
           <input type="text" id="cfg-alias-new-name" placeholder="nome completo" />
           <input type="text" id="cfg-alias-new-email" placeholder="email@confrapag.com.br" />
           <button type="button" id="cfg-alias-add" class="ghost">Adicionar</button>
@@ -282,20 +297,29 @@
       </section>
 
       <section class="settings-section">
-        <h4>Arquivos em uso (base de contexto)</h4>
+        <h4>Arquivos em uso (base de contexto — e-mails)</h4>
         <button type="button" id="cfg-context-files-refresh" class="ghost">Atualizar lista</button>
         <div id="cfg-context-files-list" class="files-list"></div>
       </section>
 
       <section class="settings-section">
-        <h4>Arquivos gerados</h4>
-        <p class="settings-hint">Escopos de e-mail exportados e o arquivo de conhecimento acumulado. Exportações antigas podem ser apagadas.</p>
+        <h4>Arquivos em uso (base de contexto — geral)</h4>
+        <button type="button" id="cfg-context-global-files-refresh" class="ghost">Atualizar lista</button>
+        <div id="cfg-context-global-files-list" class="files-list"></div>
+      </section>
+
+      <section class="settings-section">
+        <div class="settings-row-header">
+          <h4>Arquivos gerados</h4>
+          <button type="button" id="cfg-generated-files-delete-all" class="ghost danger">Apagar todos</button>
+        </div>
+        <p class="settings-hint">Escopos de e-mail exportados e o arquivo de conhecimento acumulado. Exportações antigas podem ser apagadas, uma a uma ou todas de uma vez.</p>
         <div id="cfg-context-md-info" class="settings-hint"></div>
         <div id="cfg-generated-files-list" class="files-list"></div>
       </section>
     </div>
   </div>
 
-  <script src="/static/app.js?v=47"></script>
+  <script src="/static/app.js?v=48"></script>
 </body>
 </html>

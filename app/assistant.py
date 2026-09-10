@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 
 from . import context_base, gmail_client, llm, store
-from .config import CONTEXT_MD, EMAIL_EXPORT_DIR, EMAIL_EXPORT_RETENTION_DAYS
+from .config import CONTEXT_GLOBAL_MAX_CHARS, CONTEXT_MD, EMAIL_EXPORT_DIR, EMAIL_EXPORT_RETENTION_DAYS
 
 STYLE_PRESETS = {
     "formal": "Tom formal: frases completas, sem gírias, tratamento respeitoso, evite contrações informais.",
@@ -283,8 +283,18 @@ def _draft_extra_context(instruction: str) -> str:
         snippet, _used = context_base.build_context_snippet(settings.get("context_paths") or [])
         if snippet:
             blocks.append(
-                "Base de conhecimento pessoal do Leo (arquivos da Learning Base) -- "
+                "Base de conhecimento sobre e-mails/trabalho do Leo -- "
                 "cite fatos daqui só se forem realmente relevantes pra instrução:\n" + snippet
+            )
+    if settings.get("context_global_enabled"):
+        snippet, _used = context_base.build_context_snippet(
+            settings.get("context_global_paths") or [], max_chars=CONTEXT_GLOBAL_MAX_CHARS
+        )
+        if snippet:
+            blocks.append(
+                "Base de conhecimento geral do Leo (sistemas, produto, processos -- Learning Base "
+                "completa) -- use pra ter mais propriedade técnica e contexto de negócio, cite só o "
+                "que for realmente relevante:\n" + snippet
             )
     return "\n\n".join(blocks) + "\n\n" if blocks else ""
 

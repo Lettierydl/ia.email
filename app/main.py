@@ -51,6 +51,8 @@ class PreloadBody(BaseModel):
 class SettingsBody(BaseModel):
     context_enabled: Optional[bool] = None
     context_paths: Optional[List[str]] = None
+    context_global_enabled: Optional[bool] = None
+    context_global_paths: Optional[List[str]] = None
     style_preset: Optional[str] = None
     style_custom: Optional[str] = None
     preload_enabled: Optional[bool] = None
@@ -538,10 +540,18 @@ def remove_alias(alias: str):
     return {"aliases": store.list_aliases()}
 
 
+@app.get("/api/settings/alias-suggest")
+def alias_suggest(q: str = Query("")):
+    if len(q.strip()) < 2:
+        return {"suggestions": []}
+    return {"suggestions": store.search_senders(q)}
+
+
 @app.get("/api/settings/context-files")
-def settings_context_files():
+def settings_context_files(base: str = Query("email")):
     settings = store.get_settings()
-    files = context_base.list_context_files(settings.get("context_paths") or [])
+    key = "context_global_paths" if base == "global" else "context_paths"
+    files = context_base.list_context_files(settings.get(key) or [])
     return {"files": files}
 
 
@@ -568,6 +578,16 @@ def delete_generated_file(filename: str):
         raise HTTPException(404, "Arquivo não encontrado.")
     path.unlink()
     return {"ok": True}
+
+
+@app.delete("/api/settings/generated-files")
+def delete_all_generated_files():
+    removed = 0
+    if EMAIL_EXPORT_DIR.is_dir():
+        for path in EMAIL_EXPORT_DIR.glob("*.md"):
+            path.unlink()
+            removed += 1
+    return {"ok": True, "removed": removed}
 
 
 def _public(row: dict) -> dict:

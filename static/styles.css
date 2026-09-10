@@ -1077,6 +1077,43 @@ body.conversation .pane {
 .alias-row button:hover { color: var(--red); }
 .alias-form { display: flex; gap: 6px; flex-wrap: wrap; }
 .alias-form input { flex: 1; min-width: 120px; margin-bottom: 0; }
+.alias-field-wrap { position: relative; flex: 1; min-width: 120px; }
+.alias-field-wrap input { width: 100%; }
+.alias-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+  margin-top: 2px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.alias-suggestions button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.alias-suggestions button:hover { background: var(--bg); }
+.alias-suggestions .sugg-name { font-weight: 500; color: var(--ink); }
+.alias-suggestions .sugg-email { color: var(--muted); margin-left: 4px; }
+.settings-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.settings-row-header h4 { margin: 0; }
+.ghost.danger { color: var(--red); border-color: var(--red-soft); }
+.ghost.danger:hover { background: var(--red-soft); }
 .files-list { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; }
 .file-row {
   display: flex;

@@ -1538,6 +1538,8 @@ function wrapSelectionAsAnnotation(range) {
     const s = data.settings || {};
     $("cfg-context-enabled").checked = !!s.context_enabled;
     $("cfg-context-paths").value = (s.context_paths || []).join("\n");
+    $("cfg-context-global-enabled").checked = !!s.context_global_enabled;
+    $("cfg-context-global-paths").value = (s.context_global_paths || []).join("\n");
     $("cfg-style-preset").value = s.style_preset || "neutro";
     $("cfg-style-custom").value = s.style_custom || "";
     $("cfg-preload-enabled").checked = s.preload_enabled !== false;
@@ -1578,7 +1580,15 @@ function wrapSelectionAsAnnotation(range) {
   async function loadContextFiles() {
     const el = $("cfg-context-files-list");
     el.innerHTML = '<p class="files-empty">Carregando…</p>';
-    const res = await fetch("/api/settings/context-files");
+    const res = await fetch("/api/settings/context-files?base=email");
+    const data = await res.json().catch(() => ({ files: [] }));
+    renderFiles(el, data.files || [], { deletable: false });
+  }
+
+  async function loadContextGlobalFiles() {
+    const el = $("cfg-context-global-files-list");
+    el.innerHTML = '<p class="files-empty">Carregando…</p>';
+    const res = await fetch("/api/settings/context-files?base=global");
     const data = await res.json().catch(() => ({ files: [] }));
     renderFiles(el, data.files || [], { deletable: false });
   }
@@ -1598,9 +1608,11 @@ function wrapSelectionAsAnnotation(range) {
   async function openSettingsModal() {
     $("settings-modal").classList.remove("hidden");
     $("cfg-context-status").textContent = "";
+    $("cfg-context-global-status").textContent = "";
     $("cfg-style-status").textContent = "";
     await loadSettingsForm();
     loadContextFiles();
+    loadContextGlobalFiles();
     loadGeneratedFiles();
   }
 
@@ -1622,6 +1634,23 @@ function wrapSelectionAsAnnotation(range) {
     });
     $("cfg-context-status").textContent = "Salvo.";
     loadContextFiles();
+  };
+
+  $("cfg-context-global-save").onclick = async () => {
+    const paths = $("cfg-context-global-paths")
+      .value.split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        context_global_enabled: $("cfg-context-global-enabled").checked,
+        context_global_paths: paths,
+      }),
+    });
+    $("cfg-context-global-status").textContent = "Salvo.";
+    loadContextGlobalFiles();
   };
 
   $("cfg-style-save").onclick = async () => {
@@ -1671,6 +1700,67 @@ function wrapSelectionAsAnnotation(range) {
   };
 
   $("cfg-context-files-refresh").onclick = loadContextFiles;
+  $("cfg-context-global-files-refresh").onclick = loadContextGlobalFiles;
+
+  $("cfg-generated-files-delete-all").onclick = async () => {
+    const btn = $("cfg-generated-files-delete-all");
+    btn.disabled = true;
+    try {
+      await fetch("/api/settings/generated-files", { method: "DELETE" });
+      loadGeneratedFiles();
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  // Sugestao de remetente ao digitar o apelido: procura no historico de
+  // e-mails quem bate com o texto, pra nao precisar digitar o e-mail na
+  // mao (e nao errar).
+  let aliasSuggestTimer = null;
+  $("cfg-alias-new-alias").addEventListener("input", function () {
+    clearTimeout(aliasSuggestTimer);
+    const q = this.value.trim();
+    const box = $("cfg-alias-suggestions");
+    if (q.length < 2) {
+      box.classList.add("hidden");
+      box.innerHTML = "";
+      return;
+    }
+    aliasSuggestTimer = setTimeout(async () => {
+      const res = await fetch(`/api/settings/alias-suggest?q=${encodeURIComponent(q)}`);
+      const data = await res.json().catch(() => ({ suggestions: [] }));
+      const suggestions = data.suggestions || [];
+      if (!suggestions.length) {
+        box.classList.add("hidden");
+        box.innerHTML = "";
+        return;
+      }
+      box.innerHTML = suggestions
+        .map(
+          (s, i) => `<button type="button" data-sugg="${i}">
+            <span class="sugg-name">${escHtml(s.name || s.email)}</span>
+            <span class="sugg-email">${escHtml(s.email)}</span>
+          </button>`
+        )
+        .join("");
+      box.querySelectorAll("[data-sugg]").forEach((btn) => {
+        btn.onclick = () => {
+          const s = suggestions[Number(btn.dataset.sugg)];
+          $("cfg-alias-new-name").value = s.name || "";
+          $("cfg-alias-new-email").value = s.email || "";
+          box.classList.add("hidden");
+          box.innerHTML = "";
+        };
+      });
+      box.classList.remove("hidden");
+    }, 250);
+  });
+  document.addEventListener("mousedown", (e) => {
+    const box = $("cfg-alias-suggestions");
+    if (!box.contains(e.target) && e.target.id !== "cfg-alias-new-alias") {
+      box.classList.add("hidden");
+    }
+  });
 })();
 
 (async () => {
