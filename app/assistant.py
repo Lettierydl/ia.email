@@ -6,8 +6,14 @@ import threading
 import time
 from datetime import datetime
 
-from . import gmail_client, llm, store
+from . import context_base, gmail_client, llm, store
 from .config import CONTEXT_MD, EMAIL_EXPORT_DIR, EMAIL_EXPORT_RETENTION_DAYS
+
+STYLE_PRESETS = {
+    "formal": "Tom formal: frases completas, sem gírias, tratamento respeitoso, evite contrações informais.",
+    "neutro": "Tom neutro e direto (padrão já usado hoje).",
+    "direto": "Tom direto e mais informal: frases curtas, vai direto ao ponto.",
+}
 
 _LOCK = threading.Lock()
 
@@ -249,6 +255,54 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
         }
 
 
+def _style_instructions(settings: dict) -> str:
+    preset = STYLE_PRESETS.get(settings.get("style_preset") or "neutro", STYLE_PRESETS["neutro"])
+    custom = (settings.get("style_custom") or "").strip()
+    return f"{preset}\nInstrução extra de estilo do Leo: {custom}" if custom else preset
+
+
+def _alias_glossary() -> str:
+    aliases = store.list_aliases()
+    lines = [
+        f'- "{a["alias"]}" = {a["name"]} <{a["email"]}>'
+        for a in aliases
+        if a.get("name") or a.get("email")
+    ]
+    if not lines:
+        return ""
+    return "Apelidos que o Leo usa pra se referir a pessoas (resolva assim quando aparecer na instrução):\n" + "\n".join(lines)
+
+
+def _draft_extra_context(instruction: str) -> str:
+    settings = store.get_settings()
+    blocks = [f"Estilo de escrita pedido:\n{_style_instructions(settings)}"]
+    glossary = _alias_glossary()
+    if glossary:
+        blocks.append(glossary)
+    if settings.get("context_enabled"):
+        snippet, _used = context_base.build_context_snippet(settings.get("context_paths") or [])
+        if snippet:
+            blocks.append(
+                "Base de conhecimento pessoal do Leo (arquivos da Learning Base) -- "
+                "cite fatos daqui só se forem realmente relevantes pra instrução:\n" + snippet
+            )
+    return "\n\n".join(blocks) + "\n\n" if blocks else ""
+
+
+def _parse_draft_response(raw: str) -> tuple[str, str]:
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            kind = data.get("kind")
+            text = str(data.get("text") or "").strip()
+            if kind in ("draft", "answer") and text:
+                return kind, text
+        except json.JSONDecodeError:
+            pass
+    return "draft", raw.strip()
+
+
 def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
     with _LOCK:
         body = _ensure_body(thread_id)
@@ -256,26 +310,36 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
         previous = row.get("draft") or ""
         if not llm.has_key():
             raise RuntimeError("Falta chave de LLM (Claude/Gemini/OpenRouter) para gerar rascunho.")
-        text = llm.complete(
-            "Escreva só o corpo do e-mail de resposta (sem assunto, sem markdown).\n"
+        raw = llm.complete(
+            'Responda em JSON: {"kind": "draft" ou "answer", "text": "..."}.\n'
+            'Use kind="draft" quando a instrução pede pra redigir/ajustar a resposta ao remetente -- '
+            "text deve ser só o corpo do e-mail (sem assunto, sem markdown).\n"
+            'Use kind="answer" quando a instrução é uma pergunta ou pedido de explicação sobre a '
+            "thread (ex.: \"quanto foi cobrado?\", \"isso já foi resolvido?\") -- text é uma resposta "
+            "direta em português, curta, sem virar e-mail.\n\n"
+            f"{_draft_extra_context(instruction)}"
             f"Instrução do Leo: {instruction or '(gerar a partir do contexto)'}\n"
             f"Ajuste pedido: {comment or '(nenhum)'}\n"
             f"Rascunho anterior:\n{previous or '(nenhum)'}\n\n"
             f"Assunto: {row.get('subject')}\n\nThread:\n{body[:12000]}"
         )
+        kind, text = _parse_draft_response(raw)
+
         chat = _load_chat(row)
         if instruction:
             chat.append({"role": "user", "text": instruction})
-        chat.append({"role": "ai", "text": text})
-        store.save_ai(
-            thread_id,
-            draft=text,
-            chat_json=json.dumps(chat),
-            chat_anchor_date=row.get("internal_date") or 0,
-        )
+        chat.append({"role": "ai", "text": text, "kind": kind})
+
+        save_fields: dict = {
+            "chat_json": json.dumps(chat),
+            "chat_anchor_date": row.get("internal_date") or 0,
+        }
+        if kind == "draft":
+            save_fields["draft"] = text
+        store.save_ai(thread_id, **save_fields)
         return {
             "id": thread_id,
-            "draft": text,
+            "draft": text if kind == "draft" else (row.get("draft") or ""),
             "chat": chat,
             "summary": row.get("summary") or "",
         }

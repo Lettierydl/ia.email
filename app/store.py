@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from .config import DB_PATH
+from .config import DB_PATH, LEARNING_BASE_DEFAULT
 
 
 def _connect() -> sqlite3.Connection:
@@ -62,6 +62,16 @@ def init() -> None:
                 email TEXT PRIMARY KEY,
                 photo_url TEXT,
                 resolved_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS aliases (
+                alias TEXT PRIMARY KEY,
+                name TEXT,
+                email TEXT,
+                created_at TEXT
             )
             """
         )
@@ -297,6 +307,57 @@ def save_avatar(email: str, photo_url: str | None) -> None:
             "ON CONFLICT(email) DO UPDATE SET photo_url=excluded.photo_url, resolved_at=excluded.resolved_at",
             (email, photo_url or "", datetime.now(timezone.utc).isoformat()),
         )
+
+
+DEFAULT_SETTINGS = {
+    "context_enabled": False,
+    "context_paths": [str(LEARNING_BASE_DEFAULT)],
+    "style_preset": "neutro",
+    "style_custom": "",
+}
+
+
+def get_settings() -> dict[str, Any]:
+    raw = get_meta("settings_json")
+    if not raw:
+        return dict(DEFAULT_SETTINGS)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return dict(DEFAULT_SETTINGS)
+    merged = dict(DEFAULT_SETTINGS)
+    merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
+    return merged
+
+
+def save_settings(**fields: Any) -> dict[str, Any]:
+    current = get_settings()
+    current.update({k: v for k, v in fields.items() if k in DEFAULT_SETTINGS})
+    set_meta("settings_json", json.dumps(current))
+    return current
+
+
+def list_aliases() -> list[dict[str, str]]:
+    with _connect() as conn:
+        rows = conn.execute("SELECT alias, name, email FROM aliases ORDER BY alias").fetchall()
+    return [dict(row) for row in rows]
+
+
+def save_alias(alias: str, name: str, email: str) -> None:
+    alias = (alias or "").strip().lower()
+    if not alias:
+        return
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO aliases(alias, name, email, created_at) VALUES(?, ?, ?, ?) "
+            "ON CONFLICT(alias) DO UPDATE SET name=excluded.name, email=excluded.email",
+            (alias, (name or "").strip(), (email or "").strip().lower(), datetime.now(timezone.utc).isoformat()),
+        )
+
+
+def delete_alias(alias: str) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM aliases WHERE alias=?", ((alias or "").strip().lower(),))
 
 
 def thread_count() -> int:

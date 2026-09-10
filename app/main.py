@@ -14,10 +14,10 @@ from googleapiclient.errors import HttpError
 
 from pydantic import BaseModel
 
-from . import assistant, attachments, calendar_client, gmail_client, llm, people_client, store
+from . import assistant, attachments, calendar_client, context_base, gmail_client, llm, people_client, store
 from .gmail_client import QuotaPartial
 from .preload import pick_preload
-from .config import ACCOUNT, ROOT, TZ
+from .config import ACCOUNT, CONTEXT_MD, EMAIL_EXPORT_DIR, ROOT, TZ
 
 STATIC = ROOT / "static"
 
@@ -46,6 +46,19 @@ class RsvpBody(BaseModel):
 
 class PreloadBody(BaseModel):
     ids: List[str]
+
+
+class SettingsBody(BaseModel):
+    context_enabled: Optional[bool] = None
+    context_paths: Optional[List[str]] = None
+    style_preset: Optional[str] = None
+    style_custom: Optional[str] = None
+
+
+class AliasBody(BaseModel):
+    alias: str
+    name: str = ""
+    email: str = ""
 
 
 def _index():
@@ -485,6 +498,69 @@ def preload(body: PreloadBody):
             results.append({"id": thread_id, "ok": False, "error": str(exc)})
             break
     return {"ids": ids, "results": results}
+
+
+# ── Configurações: base de contexto, estilo, apelidos, arquivos ──
+@app.get("/api/settings")
+def get_settings():
+    return {"settings": store.get_settings(), "aliases": store.list_aliases()}
+
+
+@app.post("/api/settings")
+def update_settings(body: SettingsBody):
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    return {"settings": store.save_settings(**fields)}
+
+
+@app.get("/api/settings/aliases")
+def list_aliases():
+    return {"aliases": store.list_aliases()}
+
+
+@app.post("/api/settings/aliases")
+def upsert_alias(body: AliasBody):
+    if not body.alias.strip():
+        raise HTTPException(400, "Apelido não pode ser vazio.")
+    store.save_alias(body.alias, body.name, body.email)
+    return {"aliases": store.list_aliases()}
+
+
+@app.delete("/api/settings/aliases/{alias}")
+def remove_alias(alias: str):
+    store.delete_alias(alias)
+    return {"aliases": store.list_aliases()}
+
+
+@app.get("/api/settings/context-files")
+def settings_context_files():
+    settings = store.get_settings()
+    files = context_base.list_context_files(settings.get("context_paths") or [])
+    return {"files": files}
+
+
+@app.get("/api/settings/generated-files")
+def settings_generated_files():
+    exports = []
+    if EMAIL_EXPORT_DIR.is_dir():
+        for path in sorted(EMAIL_EXPORT_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+            stat = path.stat()
+            exports.append({"name": path.name, "size": stat.st_size, "modified_at": stat.st_mtime})
+    context_md = None
+    if CONTEXT_MD.is_file():
+        stat = CONTEXT_MD.stat()
+        context_md = {"path": str(CONTEXT_MD), "size": stat.st_size, "modified_at": stat.st_mtime}
+    return {"exports": exports, "context_md": context_md}
+
+
+@app.delete("/api/settings/generated-files/{filename}")
+def delete_generated_file(filename: str):
+    if "/" in filename or "\\" in filename or filename in (".", ".."):
+        raise HTTPException(400, "Nome de arquivo inválido.")
+    path = (EMAIL_EXPORT_DIR / filename).resolve()
+    if EMAIL_EXPORT_DIR.resolve() not in path.parents or not path.is_file():
+        raise HTTPException(404, "Arquivo não encontrado.")
+    path.unlink()
+    return {"ok": True}
 
 
 def _public(row: dict) -> dict:

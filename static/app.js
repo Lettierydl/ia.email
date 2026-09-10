@@ -570,6 +570,9 @@ function renderChat() {
       if (msg.placeholder) {
         return `<div class="chat-msg ai muted-msg">${escHtml(msg.text)}</div>`;
       }
+      if (msg.kind === "answer") {
+        return `<div class="chat-msg ai answer"><div class="draft-label">Resposta</div>${escHtml(msg.text)}</div>`;
+      }
       return `<div class="chat-msg ai"><div class="draft-label">Rascunho</div>${escHtml(msg.text)}</div>`;
     })
     .join("");
@@ -588,8 +591,11 @@ function updateChatResetState() {
 
 function lastDraft() {
   for (let i = chatHistory.length - 1; i >= 0; i--) {
-    if (chatHistory[i].role === "ai" && !chatHistory[i].placeholder) {
-      return chatHistory[i].text;
+    const m = chatHistory[i];
+    // kind ausente = mensagem antiga (de antes dessa distinção existir),
+    // trata como rascunho pra não quebrar conversas já salvas.
+    if (m.role === "ai" && !m.placeholder && m.kind !== "answer") {
+      return m.text;
     }
   }
   return "";
@@ -1467,6 +1473,177 @@ function wrapSelectionAsAnnotation(range) {
     if (!annotations.length) return;
     openPopupForExisting(annotations[annotations.length - 1].id, $("annot-chip"));
   };
+})();
+
+// ── Configurações: base de contexto, estilo, apelidos, arquivos ──
+(function setupSettings() {
+  function formatBytes(n) {
+    if (!n) return "0B";
+    if (n < 1024) return `${n}B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)}KB`;
+    return `${(n / 1024 / 1024).toFixed(1)}MB`;
+  }
+
+  function formatWhen(tsSeconds) {
+    if (!tsSeconds) return "";
+    return new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(tsSeconds * 1000));
+  }
+
+  function renderAliases(aliases) {
+    const el = $("cfg-aliases-list");
+    if (!aliases.length) {
+      el.innerHTML = '<p class="files-empty">Nenhum apelido cadastrado ainda.</p>';
+      return;
+    }
+    el.innerHTML = aliases
+      .map(
+        (a) => `<div class="alias-row" data-alias="${escHtml(a.alias)}">
+          <span class="alias-tag">${escHtml(a.alias)}</span>
+          <span class="alias-detail">${escHtml(a.name)}${a.email ? ` &lt;${escHtml(a.email)}&gt;` : ""}</span>
+          <button type="button" data-remove-alias="${escHtml(a.alias)}" data-tooltip="Excluir">×</button>
+        </div>`
+      )
+      .join("");
+    el.querySelectorAll("[data-remove-alias]").forEach((btn) => {
+      btn.onclick = async () => {
+        await fetch(`/api/settings/aliases/${encodeURIComponent(btn.dataset.removeAlias)}`, {
+          method: "DELETE",
+        });
+        loadAliases();
+      };
+    });
+  }
+
+  async function loadAliases() {
+    const res = await fetch("/api/settings/aliases");
+    const data = await res.json().catch(() => ({ aliases: [] }));
+    renderAliases(data.aliases || []);
+  }
+
+  async function loadSettingsForm() {
+    const res = await fetch("/api/settings");
+    const data = await res.json().catch(() => ({}));
+    const s = data.settings || {};
+    $("cfg-context-enabled").checked = !!s.context_enabled;
+    $("cfg-context-paths").value = (s.context_paths || []).join("\n");
+    $("cfg-style-preset").value = s.style_preset || "neutro";
+    $("cfg-style-custom").value = s.style_custom || "";
+    renderAliases(data.aliases || []);
+  }
+
+  function renderFiles(el, files, opts) {
+    if (!files.length) {
+      el.innerHTML = '<p class="files-empty">Nada aqui.</p>';
+      return;
+    }
+    el.innerHTML = files
+      .map((f) => {
+        const label = f.path || f.name;
+        const delBtn = opts && opts.deletable
+          ? `<button type="button" data-del-file="${escHtml(f.name)}" data-tooltip="Apagar">🗑</button>`
+          : "";
+        return `<div class="file-row">
+          <span class="file-path" data-tooltip="${escHtml(label)}">${escHtml(label)}</span>
+          <span class="file-meta">${formatBytes(f.size)} · ${formatWhen(f.modified_at)}</span>
+          ${delBtn}
+        </div>`;
+      })
+      .join("");
+    if (opts && opts.deletable) {
+      el.querySelectorAll("[data-del-file]").forEach((btn) => {
+        btn.onclick = async () => {
+          await fetch(`/api/settings/generated-files/${encodeURIComponent(btn.dataset.delFile)}`, {
+            method: "DELETE",
+          });
+          loadGeneratedFiles();
+        };
+      });
+    }
+  }
+
+  async function loadContextFiles() {
+    const el = $("cfg-context-files-list");
+    el.innerHTML = '<p class="files-empty">Carregando…</p>';
+    const res = await fetch("/api/settings/context-files");
+    const data = await res.json().catch(() => ({ files: [] }));
+    renderFiles(el, data.files || [], { deletable: false });
+  }
+
+  async function loadGeneratedFiles() {
+    const res = await fetch("/api/settings/generated-files");
+    const data = await res.json().catch(() => ({ exports: [], context_md: null }));
+    renderFiles($("cfg-generated-files-list"), data.exports || [], { deletable: true });
+    const info = $("cfg-context-md-info");
+    if (data.context_md) {
+      info.textContent = `context.md (conhecimento acumulado, não apagável por aqui): ${data.context_md.path} — ${formatBytes(data.context_md.size)}`;
+    } else {
+      info.textContent = "context.md ainda não existe.";
+    }
+  }
+
+  async function openSettingsModal() {
+    $("settings-modal").classList.remove("hidden");
+    $("cfg-context-status").textContent = "";
+    $("cfg-style-status").textContent = "";
+    await loadSettingsForm();
+    loadContextFiles();
+    loadGeneratedFiles();
+  }
+
+  $("btn-settings").onclick = openSettingsModal;
+  $("settings-close").onclick = () => $("settings-modal").classList.add("hidden");
+  $("settings-modal").addEventListener("click", (e) => {
+    if (e.target.id === "settings-modal") $("settings-modal").classList.add("hidden");
+  });
+
+  $("cfg-context-save").onclick = async () => {
+    const paths = $("cfg-context-paths")
+      .value.split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context_enabled: $("cfg-context-enabled").checked, context_paths: paths }),
+    });
+    $("cfg-context-status").textContent = "Salvo.";
+    loadContextFiles();
+  };
+
+  $("cfg-style-save").onclick = async () => {
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        style_preset: $("cfg-style-preset").value,
+        style_custom: $("cfg-style-custom").value.trim(),
+      }),
+    });
+    $("cfg-style-status").textContent = "Salvo.";
+  };
+
+  $("cfg-alias-add").onclick = async () => {
+    const alias = $("cfg-alias-new-alias").value.trim();
+    const name = $("cfg-alias-new-name").value.trim();
+    const email = $("cfg-alias-new-email").value.trim();
+    if (!alias) return;
+    await fetch("/api/settings/aliases", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ alias, name, email }),
+    });
+    $("cfg-alias-new-alias").value = "";
+    $("cfg-alias-new-name").value = "";
+    $("cfg-alias-new-email").value = "";
+    loadAliases();
+  };
+
+  $("cfg-context-files-refresh").onclick = loadContextFiles;
 })();
 
 (async () => {

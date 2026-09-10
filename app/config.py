@@ -54,6 +54,12 @@ EMAIL_EXPORT_DIR = Path(
 )
 EMAIL_EXPORT_RETENTION_DAYS = 7
 
+# Pasta sugerida por padrao na tela de configuracoes pra base de contexto
+# (fica desligado ate o Leo ligar explicitamente -- so um ponto de partida).
+LEARNING_BASE_DEFAULT = Path("/Users/leo/Learning Base/principal_agents/emails")
+CONTEXT_MAX_CHARS = 20000
+CONTEXT_MAX_FILES_LISTED = 300
+
 HOME_CLIENT_SECRETS = Path.home() / ".config" / "mind-matson" / "gmail-oauth.keys.json"
 
 
