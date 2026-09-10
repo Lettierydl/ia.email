@@ -38,6 +38,7 @@ class DraftBody(BaseModel):
 
 class SendBody(BaseModel):
     text: str
+    cc: str = ""
 
 
 class RsvpBody(BaseModel):
@@ -395,7 +396,7 @@ def thread_send(thread_id: str, body: SendBody):
     if not text:
         raise HTTPException(400, "Texto vazio.")
     try:
-        result = gmail_client.send_reply(thread_id, text)
+        result = gmail_client.send_reply(thread_id, text, cc=body.cc)
         gmail_client.mark_threads_read([thread_id])
         gmail_client.refresh_thread(thread_id)
     except RuntimeError as exc:

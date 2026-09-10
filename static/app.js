@@ -7,6 +7,8 @@ let canSend = false;
 let ACCOUNT_EMAIL = "";
 let PRELOAD_ENABLED = true;
 let PRELOAD_COUNT = 2;
+let pendingCc = []; // e-mails confirmados pra copiar, vindos do "adicione fulano" no chat
+let lastRecipients = { to: [], cc: [] };
 
 function tags(item) {
   const out = [];
@@ -567,22 +569,78 @@ function mailPathId() {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+// Quando a instrução pede pra "adicionar fulano", o backend tenta achar
+// o e-mail real (apelido cadastrado ou histórico de remetentes). Resolvido
+// sozinho -> já entra em pendingCc. Ambíguo -> a pessoa escolhe qual
+// "fulano" é (renderCcResolution cria os botões); não achado -> só avisa.
+function addPendingCc(email) {
+  const e = (email || "").trim().toLowerCase();
+  if (e && !pendingCc.includes(e)) pendingCc.push(e);
+}
+
+function applyCcResolution(msg) {
+  if (!msg || !Array.isArray(msg.cc_resolution)) return;
+  msg.cc_resolution.forEach((entry) => {
+    if (entry.status === "resolved" && entry.candidates && entry.candidates[0]) {
+      entry.chosen = entry.candidates[0].email;
+      addPendingCc(entry.chosen);
+    }
+  });
+}
+
+function renderCcResolution(msg, msgIdx) {
+  if (!Array.isArray(msg.cc_resolution) || !msg.cc_resolution.length) return "";
+  const rows = msg.cc_resolution
+    .map((entry, ccIdx) => {
+      if (entry.chosen) {
+        return `<div class="cc-resolution-row done">✓ Copiar: ${escHtml(entry.chosen)}</div>`;
+      }
+      if (entry.status === "not_found") {
+        return `<div class="cc-resolution-row muted">Não achei e-mail pra "${escHtml(entry.query)}" — adicione manualmente no Cc ao enviar.</div>`;
+      }
+      // ambiguous: mostra as opções pra escolher
+      const opts = entry.candidates
+        .map(
+          (c) =>
+            `<button type="button" data-cc-pick="${msgIdx}:${ccIdx}" data-cc-email="${escHtml(c.email)}">${escHtml(c.name || c.email)} &lt;${escHtml(c.email)}&gt;</button>`
+        )
+        .join("");
+      return `<div class="cc-resolution-row">
+        <span class="cc-resolution-q">Quem é "${escHtml(entry.query)}"?</span>
+        <div class="cc-resolution-opts">${opts}<button type="button" data-cc-pick="${msgIdx}:${ccIdx}" data-cc-email="">nenhum desses</button></div>
+      </div>`;
+    })
+    .join("");
+  return `<div class="cc-resolution">${rows}</div>`;
+}
+
 function renderChat() {
   const el = $("chat-messages");
   el.innerHTML = chatHistory
-    .map((msg) => {
+    .map((msg, idx) => {
       if (msg.role === "user") {
         return `<div class="chat-msg user">${escHtml(msg.text)}</div>`;
       }
       if (msg.placeholder) {
         return `<div class="chat-msg ai muted-msg">${escHtml(msg.text)}</div>`;
       }
+      const ccHtml = renderCcResolution(msg, idx);
       if (msg.kind === "answer") {
-        return `<div class="chat-msg ai answer"><div class="draft-label">Resposta</div>${escHtml(msg.text)}</div>`;
+        return `<div class="chat-msg ai answer"><div class="draft-label">Resposta</div>${escHtml(msg.text)}${ccHtml}</div>`;
       }
-      return `<div class="chat-msg ai"><div class="draft-label">Rascunho</div>${escHtml(msg.text)}</div>`;
+      return `<div class="chat-msg ai"><div class="draft-label">Rascunho</div>${escHtml(msg.text)}${ccHtml}</div>`;
     })
     .join("");
+  el.querySelectorAll("[data-cc-pick]").forEach((btn) => {
+    btn.onclick = () => {
+      const [msgIdx, ccIdx] = btn.dataset.ccPick.split(":").map(Number);
+      const entry = chatHistory[msgIdx] && chatHistory[msgIdx].cc_resolution[ccIdx];
+      if (!entry) return;
+      entry.chosen = btn.dataset.ccEmail || "(nenhum)";
+      if (btn.dataset.ccEmail) addPendingCc(btn.dataset.ccEmail);
+      renderChat();
+    };
+  });
   el.scrollTop = el.scrollHeight;
   updateSendBar();
   updateChatResetState();
@@ -845,6 +903,8 @@ async function openPane(id, force) {
   annotations = [];
   $("annot-chip").classList.add("hidden");
   $("annot-popup").classList.add("hidden");
+  pendingCc = [];
+  lastRecipients = { to: [], cc: [] };
   renderAttachments([]);
   lastGmailAttachments = { files: [], message_ids: [] };
   renderChat();
@@ -1031,6 +1091,7 @@ function fmtAddr(a) {
 }
 
 function renderRecipients(data) {
+  lastRecipients = { to: (data && data.to) || [], cc: (data && data.cc) || [] };
   const badge = $("pane-cc");
   const to = (data && data.to) || [];
   const cc = (data && data.cc) || [];
@@ -1135,6 +1196,7 @@ $("pane-chat-reset").onclick = async () => {
     $("pane-instr").value = "";
     $("pane-instr").style.height = "auto";
     clearAllAnnotations();
+    pendingCc = [];
     updateGenButtonState();
     $("pane-status").textContent = "Conversa reiniciada.";
   } finally {
@@ -1142,11 +1204,34 @@ $("pane-chat-reset").onclick = async () => {
   }
 };
 
+// Sugestao "responder a todos": quem mais estava em Para/Cc na ultima
+// mensagem, tirando o proprio Leo e quem ja vai no Para principal --
+// somada ao que foi confirmado no chat via "adicione fulano".
+function defaultCcSuggestion() {
+  const seen = new Set([ACCOUNT_EMAIL, (currentTo || "").toLowerCase()]);
+  const out = [];
+  [...lastRecipients.to, ...lastRecipients.cc].forEach((a) => {
+    const email = (a.email || "").toLowerCase();
+    if (email && !seen.has(email)) {
+      seen.add(email);
+      out.push(email);
+    }
+  });
+  pendingCc.forEach((email) => {
+    if (!seen.has(email)) {
+      seen.add(email);
+      out.push(email);
+    }
+  });
+  return out.join(", ");
+}
+
 function openSendModal() {
   const text = lastDraft();
   if (!paneId || !text) return;
   const subject = $("pane-subject").textContent || "(sem assunto)";
   $("modal-to").textContent = currentTo;
+  $("modal-cc").value = defaultCcSuggestion();
   $("modal-subject").textContent = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
   $("modal-preview").textContent = text;
   $("send-modal").classList.remove("hidden");
@@ -1171,7 +1256,7 @@ $("modal-confirm").onclick = async () => {
     const res = await fetch(`/api/threads/${paneId}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, cc: $("modal-cc").value.trim() }),
     });
     const data = await res.json().catch(() => ({}));
     closeSendModal();
@@ -1179,9 +1264,10 @@ $("modal-confirm").onclick = async () => {
       $("pane-status").textContent = data.detail || "Falha ao enviar.";
       return;
     }
-    $("pane-status").textContent = `Enviado para ${data.to}.`;
+    $("pane-status").textContent = data.cc ? `Enviado para ${data.to} (Cc: ${data.cc}).` : `Enviado para ${data.to}.`;
     $("send-bar").classList.add("hidden");
     renderAttachments([]);
+    pendingCc = [];
     kickPreload();
     if (mailPathId()) {
       setTimeout(() => (window.location.href = "/"), 900);
@@ -1196,6 +1282,65 @@ $("modal-confirm").onclick = async () => {
     $("modal-confirm").textContent = "Enviar agora";
   }
 };
+
+// Autocomplete de e-mail no campo Cc do modal de envio, baseado no
+// histórico de remetentes -- mesma ideia do apelido nas Configurações,
+// mas aqui funciona por segmento (o campo aceita vários e-mails
+// separados por vírgula).
+(function setupCcAutocomplete() {
+  const input = $("modal-cc");
+  const box = $("modal-cc-suggestions");
+  let timer = null;
+
+  function currentSegment() {
+    const parts = input.value.split(",");
+    return { parts, last: parts[parts.length - 1].trim() };
+  }
+
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    const { last } = currentSegment();
+    if (last.length < 2) {
+      box.classList.add("hidden");
+      box.innerHTML = "";
+      return;
+    }
+    timer = setTimeout(async () => {
+      const res = await fetch(`/api/settings/alias-suggest?q=${encodeURIComponent(last)}`);
+      const data = await res.json().catch(() => ({ suggestions: [] }));
+      const suggestions = data.suggestions || [];
+      if (!suggestions.length) {
+        box.classList.add("hidden");
+        box.innerHTML = "";
+        return;
+      }
+      box.innerHTML = suggestions
+        .map(
+          (s, i) => `<button type="button" data-sugg="${i}">
+            <span class="sugg-name">${escHtml(s.name || s.email)}</span>
+            <span class="sugg-email">${escHtml(s.email)}</span>
+          </button>`
+        )
+        .join("");
+      box.querySelectorAll("[data-sugg]").forEach((btn) => {
+        btn.onclick = () => {
+          const s = suggestions[Number(btn.dataset.sugg)];
+          const { parts } = currentSegment();
+          parts[parts.length - 1] = ` ${s.email}`;
+          input.value = parts.join(",").replace(/^,\s*/, "").trim() + ", ";
+          box.classList.add("hidden");
+          box.innerHTML = "";
+          input.focus();
+        };
+      });
+      box.classList.remove("hidden");
+    }, 250);
+  });
+
+  document.addEventListener("mousedown", (e) => {
+    if (!box.contains(e.target) && e.target !== input) box.classList.add("hidden");
+  });
+})();
 
 // Botão de gerar ativa com texto na caixa OU com anotações pendentes
 // (dá pra mandar só anotação, sem escrever nada no campo livre).
@@ -1272,6 +1417,7 @@ $("pane-gen").onclick = async () => {
     }
     if (Array.isArray(data.chat) && data.chat.length) {
       chatHistory = data.chat.slice();
+      applyCcResolution(chatHistory[chatHistory.length - 1]);
       renderChat();
     } else if (data.draft) {
       chatHistory.push({ role: "ai", text: data.draft });

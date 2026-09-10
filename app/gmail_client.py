@@ -572,7 +572,7 @@ def get_recipients(thread_id: str) -> dict[str, list[dict[str, str]]]:
     }
 
 
-def send_reply(thread_id: str, body_text: str) -> dict:
+def send_reply(thread_id: str, body_text: str, cc: str = "") -> dict:
     creds = load_credentials()
     if not creds:
         raise RuntimeError("Gmail nao autenticado.")
@@ -614,6 +614,11 @@ def send_reply(thread_id: str, body_text: str) -> dict:
     else:
         msg = MIMEText(body_text)
     msg["To"] = to_addr
+    cc_clean = ", ".join(
+        addr for addr in (a.strip() for a in (cc or "").split(",")) if addr and addr.lower() != to_addr.lower()
+    )
+    if cc_clean:
+        msg["Cc"] = cc_clean
     msg["From"] = formataddr(("Lettiery D'Lamare", ACCOUNT))
     msg["Subject"] = subject
     if message_id:
@@ -626,4 +631,4 @@ def send_reply(thread_id: str, body_text: str) -> dict:
         .messages()
         .send(userId="me", body={"raw": raw_bytes, "threadId": thread_id})
     )
-    return {"id": sent.get("id"), "to": to_addr, "subject": subject}
+    return {"id": sent.get("id"), "to": to_addr, "cc": cc_clean, "subject": subject}

@@ -299,18 +299,52 @@ def _draft_extra_context(instruction: str) -> str:
     return "\n\n".join(blocks) + "\n\n" if blocks else ""
 
 
-def _parse_draft_response(raw: str) -> tuple[str, str]:
+def _parse_draft_response(raw: str) -> tuple[str, str, list[str]]:
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if match:
         try:
             data = json.loads(match.group(0))
             kind = data.get("kind")
             text = str(data.get("text") or "").strip()
+            cc_names = [str(n).strip() for n in (data.get("cc_names") or []) if str(n).strip()]
             if kind in ("draft", "answer") and text:
-                return kind, text
+                return kind, text, cc_names
         except json.JSONDecodeError:
             pass
-    return "draft", raw.strip()
+    return "draft", raw.strip(), []
+
+
+def _resolve_cc_names(names: list[str]) -> list[dict]:
+    """Pra cada nome/apelido que a instrução pediu pra copiar no e-mail,
+    tenta achar um e-mail real: primeiro nos apelidos cadastrados, depois
+    no histórico de remetentes. Se achar mais de um, devolve as opções
+    pra pessoa escolher em vez de adivinhar errado."""
+    if not names:
+        return []
+    aliases = {a["alias"].lower(): a for a in store.list_aliases()}
+    results = []
+    for raw_name in names:
+        name = (raw_name or "").strip()
+        if not name:
+            continue
+        alias_hit = aliases.get(name.lower())
+        if alias_hit and alias_hit.get("email"):
+            results.append(
+                {
+                    "query": name,
+                    "status": "resolved",
+                    "candidates": [{"name": alias_hit.get("name") or name, "email": alias_hit["email"]}],
+                }
+            )
+            continue
+        candidates = store.search_senders(name, limit=5)
+        if len(candidates) == 1:
+            results.append({"query": name, "status": "resolved", "candidates": candidates})
+        elif len(candidates) > 1:
+            results.append({"query": name, "status": "ambiguous", "candidates": candidates})
+        else:
+            results.append({"query": name, "status": "not_found", "candidates": []})
+    return results
 
 
 def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
@@ -321,24 +355,33 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
         if not llm.has_key():
             raise RuntimeError("Falta chave de LLM (Claude/Gemini/OpenRouter) para gerar rascunho.")
         raw = llm.complete(
-            'Responda em JSON: {"kind": "draft" ou "answer", "text": "..."}.\n'
+            'Responda em JSON: {"kind": "draft" ou "answer", "text": "...", "cc_names": [...]}.\n'
             'Use kind="draft" quando a instrução pede pra redigir/ajustar a resposta ao remetente -- '
             "text deve ser só o corpo do e-mail (sem assunto, sem markdown).\n"
             'Use kind="answer" quando a instrução é uma pergunta ou pedido de explicação sobre a '
             "thread (ex.: \"quanto foi cobrado?\", \"isso já foi resolvido?\") -- text é uma resposta "
-            "direta em português, curta, sem virar e-mail.\n\n"
+            "direta em português, curta, sem virar e-mail.\n"
+            "cc_names: se a instrução pedir pra adicionar, copiar, incluir ou envolver alguém no "
+            "e-mail (Cc), liste cada nome/apelido mencionado como uma string nesse array (pode ser "
+            "mais de um nome). NÃO invente e-mail, NÃO escreva e-mail nesse campo, só o nome como o "
+            "Leo escreveu. Não inclua o próprio Leo. Array vazio se ninguém foi pedido pra ser "
+            "adicionado.\n\n"
             f"{_draft_extra_context(instruction)}"
             f"Instrução do Leo: {instruction or '(gerar a partir do contexto)'}\n"
             f"Ajuste pedido: {comment or '(nenhum)'}\n"
             f"Rascunho anterior:\n{previous or '(nenhum)'}\n\n"
             f"Assunto: {row.get('subject')}\n\nThread:\n{body[:12000]}"
         )
-        kind, text = _parse_draft_response(raw)
+        kind, text, cc_names = _parse_draft_response(raw)
+        cc_resolution = _resolve_cc_names(cc_names)
 
         chat = _load_chat(row)
         if instruction:
             chat.append({"role": "user", "text": instruction})
-        chat.append({"role": "ai", "text": text, "kind": kind})
+        ai_msg: dict = {"role": "ai", "text": text, "kind": kind}
+        if cc_resolution:
+            ai_msg["cc_resolution"] = cc_resolution
+        chat.append(ai_msg)
 
         save_fields: dict = {
             "chat_json": json.dumps(chat),
