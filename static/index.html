@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=46" />
+  <link rel="stylesheet" href="/static/styles.css?v=47" />
 </head>
 <body>
   <header class="top">
@@ -243,6 +243,21 @@
       </section>
 
       <section class="settings-section">
+        <h4>Preload de resumo</h4>
+        <p class="settings-hint">Ao abrir a caixa, o app gera o resumo dos primeiros/últimos e-mails de cada lista automaticamente, pra abrir instantâneo. E-mails do meio da lista continuam gerando na hora que você abre.</p>
+        <label class="settings-toggle">
+          <input type="checkbox" id="cfg-preload-enabled" />
+          Pré-carregar resumos automaticamente
+        </label>
+        <label class="settings-toggle" style="gap:6px">
+          Quantos por ponta de cada lista:
+          <input type="number" id="cfg-preload-count" min="1" max="20" style="width:60px" />
+        </label>
+        <button type="button" id="cfg-preload-save" class="ghost">Salvar</button>
+        <span id="cfg-preload-status" class="settings-status"></span>
+      </section>
+
+      <section class="settings-section">
         <h4>Estilo do texto</h4>
         <select id="cfg-style-preset">
           <option value="neutro">Neutro (padrão)</option>
@@ -281,6 +296,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=46"></script>
+  <script src="/static/app.js?v=47"></script>
 </body>
 </html>

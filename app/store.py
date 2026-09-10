@@ -314,6 +314,8 @@ DEFAULT_SETTINGS = {
     "context_paths": [str(LEARNING_BASE_DEFAULT)],
     "style_preset": "neutro",
     "style_custom": "",
+    "preload_enabled": True,
+    "preload_count": 2,
 }
 
 

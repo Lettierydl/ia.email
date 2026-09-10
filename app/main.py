@@ -53,6 +53,8 @@ class SettingsBody(BaseModel):
     context_paths: Optional[List[str]] = None
     style_preset: Optional[str] = None
     style_custom: Optional[str] = None
+    preload_enabled: Optional[bool] = None
+    preload_count: Optional[int] = None
 
 
 class AliasBody(BaseModel):
@@ -100,6 +102,8 @@ def status():
         "now": datetime.now(TZ).strftime("%H:%M"),
         "llm_provider": llm.provider_label(),
         "llm_tokens_today": store.llm_usage_today(),
+        "preload_enabled": store.get_settings().get("preload_enabled", True),
+        "preload_count": store.get_settings().get("preload_count", 2),
     }
 
 
@@ -481,7 +485,10 @@ def delete_attachment(thread_id: str, filename: str):
 
 @app.post("/api/preload")
 def preload(body: PreloadBody):
-    ids = pick_preload(body.ids)
+    settings = store.get_settings()
+    if not settings.get("preload_enabled", True):
+        return {"ids": [], "results": []}
+    ids = pick_preload(body.ids, settings.get("preload_count") or 2)
     results = []
     for thread_id in ids:
         try:

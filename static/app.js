@@ -5,6 +5,8 @@ let chatHistory = [];
 let currentTo = "";
 let canSend = false;
 let ACCOUNT_EMAIL = "";
+let PRELOAD_ENABLED = true;
+let PRELOAD_COUNT = 2;
 
 function tags(item) {
   const out = [];
@@ -159,6 +161,8 @@ async function loadStatus() {
   const data = await (await fetch("/api/status")).json();
   $("account").textContent = data.account;
   ACCOUNT_EMAIL = (data.account || "").toLowerCase();
+  PRELOAD_ENABLED = data.preload_enabled !== false;
+  PRELOAD_COUNT = data.preload_count || 2;
   if (data.last_refresh) {
     $("updated").textContent = data.last_refresh;
   }
@@ -318,16 +322,18 @@ let paneId = null;
 let preloadBusy = false;
 
 function pickPreload(ids) {
-  if (ids.length <= 4) return ids;
-  const picked = [...ids.slice(0, 2), ...ids.slice(-2)];
+  const n = Math.max(1, PRELOAD_COUNT);
+  if (ids.length <= n * 2) return ids;
+  const picked = [...ids.slice(0, n), ...ids.slice(-n)];
   return [...new Set(picked)];
 }
 
-// 2 primeiros + 2 ultimos de CADA secao (nao lidos, aguardando, automaticos,
+// N primeiros + N ultimos de CADA secao (nao lidos, aguardando, automaticos,
 // promocoes) -- antes so cobria "nao lidos", entao abrir um card de outra
-// secao caia sempre no caminho lento (gerar resumo na hora).
+// secao caia sempre no caminho lento (gerar resumo na hora). N e se liga/
+// desliga em Configurações.
 async function preloadEnds(...sections) {
-  if (document.hidden || preloadBusy) return;
+  if (!PRELOAD_ENABLED || document.hidden || preloadBusy) return;
   const batches = [];
   for (const list of sections) {
     if (!list || !list.length) continue;
@@ -361,6 +367,7 @@ async function preloadEnds(...sections) {
 // marcar como lido), pra dar um tempo de vantagem ao backend em vez de
 // so comecar depois que a proxima pagina termina de carregar.
 async function kickPreload() {
+  if (!PRELOAD_ENABLED) return;
   try {
     const res = await fetch(`/api/radar${qs()}`);
     const data = await res.json();
@@ -1533,6 +1540,8 @@ function wrapSelectionAsAnnotation(range) {
     $("cfg-context-paths").value = (s.context_paths || []).join("\n");
     $("cfg-style-preset").value = s.style_preset || "neutro";
     $("cfg-style-custom").value = s.style_custom || "";
+    $("cfg-preload-enabled").checked = s.preload_enabled !== false;
+    $("cfg-preload-count").value = s.preload_count || 2;
     renderAliases(data.aliases || []);
   }
 
@@ -1625,6 +1634,24 @@ function wrapSelectionAsAnnotation(range) {
       }),
     });
     $("cfg-style-status").textContent = "Salvo.";
+  };
+
+  $("cfg-preload-save").onclick = async () => {
+    const count = Math.max(1, parseInt($("cfg-preload-count").value, 10) || 2);
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        preload_enabled: $("cfg-preload-enabled").checked,
+        preload_count: count,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data.settings) {
+      PRELOAD_ENABLED = data.settings.preload_enabled !== false;
+      PRELOAD_COUNT = data.settings.preload_count || 2;
+    }
+    $("cfg-preload-status").textContent = "Salvo.";
   };
 
   $("cfg-alias-add").onclick = async () => {
