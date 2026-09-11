@@ -1,5 +1,15 @@
 const $ = (id) => document.getElementById(id);
 
+// Navegação aqui é troca de página de verdade (/ e /mail/<id>), não SPA --
+// o navegador tenta restaurar o scroll sozinho, mas a lista é montada via
+// fetch depois do load, então a restauração automática roda cedo demais e
+// perde a posição. Guardamos e reaplicamos na mão.
+if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+const LIST_SCROLL_KEY = "ia_email_list_scroll";
+window.addEventListener("pagehide", () => {
+  if (!mailPathId()) sessionStorage.setItem(LIST_SCROLL_KEY, String(window.scrollY));
+});
+
 let restoreHidden = false;
 let chatHistory = [];
 let currentTo = "";
@@ -831,7 +841,7 @@ async function loadInvite(id) {
     }
     $("invite-summary").textContent = data.summary || "Convite de calendário";
     $("invite-time").textContent = data.start
-      ? `Hoje das ${data.start} às ${data.end || "?"}`
+      ? `${data.day_label || "Hoje"} das ${data.start} às ${data.end || "?"}`
       : "";
 
     const conflictsEl = $("invite-conflicts");
@@ -1920,6 +1930,8 @@ function wrapSelectionAsAnnotation(range) {
     return;
   }
   await loadRadar();
+  const savedScroll = sessionStorage.getItem(LIST_SCROLL_KEY);
+  if (savedScroll) window.scrollTo(0, parseInt(savedScroll, 10));
   if (status.authenticated && !status.last_refresh && !status.cached) {
     refresh(false);
   }

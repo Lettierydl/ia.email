@@ -338,6 +338,8 @@ def thread_invite(thread_id: str):
         "summary": info.get("summary") or "",
         "start": start.strftime("%H:%M") if start else "",
         "end": end.strftime("%H:%M") if end else "",
+        "start_iso": start.isoformat() if start else None,
+        "day_label": calendar_client.day_label(start) if start else "",
     }
     if not start:
         return base

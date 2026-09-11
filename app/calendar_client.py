@@ -27,6 +27,23 @@ def _service(creds: Credentials):
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 
+def day_label(start: datetime) -> str:
+    # Convites sem fuso na ICS chegam "naive" -- assume o fuso local do app
+    # pra comparar com hoje em vez de comparar contra UTC.
+    ref = start if start.tzinfo else start.replace(tzinfo=TZ)
+    today = datetime.now(TZ).date()
+    ref_date = ref.astimezone(TZ).date()
+    diff = (ref_date - today).days
+    if diff == 0:
+        return "Hoje"
+    if diff == 1:
+        return "Amanhã"
+    if diff == -1:
+        return "Ontem"
+    weekday = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"][ref_date.weekday()]
+    return f"{ref_date.strftime('%d/%m')} ({weekday})"
+
+
 def parse_ics(text: str) -> dict[str, str | None]:
     # DTSTART/DTEND tambem aparecem dentro de VTIMEZONE (fuso horario, nao o
     # evento em si) -- restringe a busca ao bloco VEVENT pra nao pegar a
