@@ -128,7 +128,6 @@ function qs() {
 
 let lastAutoIds = [];
 let lastUnreadAllIds = [];
-let lastRawBody = "";
 
 async function loadRadar(opts) {
   const options = opts || {};
@@ -976,7 +975,6 @@ async function openPane(id, force) {
     $("pane-status").textContent = data.warning || (data.cached ? "Do cache" : "Gerado agora");
     $("pane-summary").classList.remove("loading");
     $("pane-summary").innerHTML = formatSummary(data.summary);
-    lastRawBody = data.body || "";
     renderBody(data.body || "");
     chatHistory = Array.isArray(data.chat) ? data.chat.slice() : [];
     if (!chatHistory.length && !data.warning) {
@@ -1003,11 +1001,11 @@ async function openPane(id, force) {
   }
 }
 
-// ── Popup "ver e-mail original" (hover no ícone de olho) ──
+// ── Popup "ver e-mail original" (hover no ícone de olho da lista) ──
 // Mostra a última mensagem da thread crua, sem passar pelo resumo da IA --
-// útil pra conferir rápido sem trocar de aba, tanto na lista quanto no
-// cabeçalho do e-mail aberto. O popup fica fora do #pane (que some com
-// display:none na tela de lista) pra funcionar dos dois lugares.
+// útil pra conferir rápido sem abrir o e-mail. O popup rola por dentro
+// (thread longa) e fica aberto enquanto o mouse estiver nele ou no ícone --
+// só fecha de vez (com um pequeno atraso) quando sai dos dois.
 function buildOriginalPopupContent(subject, body) {
   const blocks = splitMessages(body);
   if (!blocks.length) return `<div class="original-popup-body">Sem conteúdo pra mostrar.</div>`;
@@ -1049,16 +1047,6 @@ function hideOriginalPopup() {
   $("original-email-popup").classList.add("hidden");
 }
 
-// Ícone no cabeçalho do e-mail aberto: já tem o corpo cru carregado.
-(function setupPaneOriginalPopup() {
-  const btn = $("pane-view-original");
-  btn.addEventListener("mouseenter", () => {
-    if (!paneId) return;
-    showOriginalPopup(btn, $("pane-subject").textContent || "", lastRawBody);
-  });
-  btn.addEventListener("mouseleave", hideOriginalPopup);
-})();
-
 // Ícones da lista: um por card, recriados a cada renderList -- delegação de
 // evento com mouseover/mouseout (que borbulham, ao contrário de
 // mouseenter/mouseleave) evita ter que religar listener em cada render.
@@ -1066,10 +1054,28 @@ function hideOriginalPopup() {
 (function setupListOriginalPopup() {
   const cache = {};
   let hoveredId = null;
+  let hideTimer = null;
+
+  function cancelHide() {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  }
+
+  function scheduleHide() {
+    cancelHide();
+    hideTimer = setTimeout(() => {
+      hoveredId = null;
+      hideOriginalPopup();
+    }, 200);
+  }
 
   document.addEventListener("mouseover", (e) => {
     const btn = e.target.closest(".quick-view-original");
-    if (!btn || hoveredId === btn.dataset.id) return;
+    if (!btn) return;
+    cancelHide();
+    if (hoveredId === btn.dataset.id) return;
     hoveredId = btn.dataset.id;
     const id = btn.dataset.id;
     if (cache[id]) {
@@ -1091,9 +1097,16 @@ function hideOriginalPopup() {
   document.addEventListener("mouseout", (e) => {
     const btn = e.target.closest(".quick-view-original");
     if (!btn || btn.contains(e.relatedTarget)) return;
-    if (hoveredId !== btn.dataset.id) return;
-    hoveredId = null;
-    hideOriginalPopup();
+    scheduleHide();
+  });
+
+  // Segura o popup aberto enquanto o mouse estiver nele (pra dar tempo de
+  // rolar o conteúdo) e fecha ao sair dele de vez.
+  const popup = $("original-email-popup");
+  popup.addEventListener("mouseover", cancelHide);
+  popup.addEventListener("mouseout", (e) => {
+    if (popup.contains(e.relatedTarget)) return;
+    scheduleHide();
   });
 })();
 
