@@ -123,6 +123,7 @@ function qs() {
 }
 
 let lastAutoIds = [];
+let lastUnreadAllIds = [];
 
 async function loadRadar(opts) {
   const options = opts || {};
@@ -147,6 +148,11 @@ async function loadRadar(opts) {
     renderList("promotions", data.promotions || []);
 
     lastAutoIds = data.automatic.map((item) => item.id);
+    lastUnreadAllIds = [...data.unread, ...data.automatic, ...(data.promotions || [])]
+      .filter((item) => item.is_unread)
+      .map((item) => item.id);
+    $("n-mark-all").textContent = lastUnreadAllIds.length;
+    $("btn-mark-all-read").disabled = lastUnreadAllIds.length === 0;
     const autoSection = $("btn-auto-read").closest("article");
     if (data.automatic.length === 0 && autoSection) {
       autoSection.style.display = "none";
@@ -306,6 +312,31 @@ $("btn-hidden").onclick = () => {
   restoreHidden = !restoreHidden;
   $("btn-hidden").classList.toggle("active", restoreHidden);
   loadRadar();
+};
+
+$("btn-mark-all-read").onclick = async () => {
+  if (!lastUnreadAllIds.length) return;
+  const proceed = window.confirm(
+    `Marcar ${lastUnreadAllIds.length} e-mail(s) não lido(s) como lido no Gmail?`
+  );
+  if (!proceed) return;
+  const btn = $("btn-mark-all-read");
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.textContent = "Marcando…";
+  try {
+    const res = await fetch("/api/mark-read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: lastUnreadAllIds }),
+    });
+    btn.innerHTML = original;
+    if (res.ok) {
+      await loadRadar({ preload: false });
+    }
+  } finally {
+    btn.disabled = lastUnreadAllIds.length === 0;
+  }
 };
 
 // ── Mark all automatics as read ──
@@ -1236,6 +1267,16 @@ function defaultCcSuggestion() {
   return out.join(", ");
 }
 
+// Se o texto fala em "anexo"/"anexei"/"segue em anexo" mas não tem
+// nenhum arquivo de verdade anexado na resposta, é quase sempre esquecimento.
+function draftMentionsAttachment(text) {
+  return /anex/i.test(text || "");
+}
+
+function currentAttachmentCount() {
+  return $("attach-list").querySelectorAll(".attach-chip").length;
+}
+
 function openSendModal() {
   const text = lastDraft();
   if (!paneId || !text) return;
@@ -1244,6 +1285,10 @@ function openSendModal() {
   $("modal-cc").value = defaultCcSuggestion();
   $("modal-subject").textContent = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
   $("modal-preview").textContent = text;
+  $("modal-attach-warning").classList.toggle(
+    "hidden",
+    !(draftMentionsAttachment(text) && currentAttachmentCount() === 0)
+  );
   $("send-modal").classList.remove("hidden");
 }
 
@@ -1260,6 +1305,12 @@ $("send-modal").onclick = (e) => {
 $("modal-confirm").onclick = async () => {
   const text = lastDraft();
   if (!paneId || !text) return;
+  if (draftMentionsAttachment(text) && currentAttachmentCount() === 0) {
+    const proceed = window.confirm(
+      "O texto menciona anexo, mas nenhum arquivo foi anexado a essa resposta. Enviar mesmo assim?"
+    );
+    if (!proceed) return;
+  }
   $("modal-confirm").disabled = true;
   $("modal-confirm").textContent = "Enviando…";
   try {

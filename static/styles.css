@@ -894,6 +894,13 @@ body.conversation .pane {
   overflow-y: auto;
 }
 .modal-warning { font-size: 12px; color: var(--red); margin-bottom: 16px; }
+.modal-warning.attach {
+  color: #9a6b00;
+  background: var(--amber-soft);
+  border: 1px solid var(--amber);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* ── SELECIONAR TEXTO -> ADICIONAR AO CHAT ── */

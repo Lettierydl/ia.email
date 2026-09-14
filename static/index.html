@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=51" />
+  <link rel="stylesheet" href="/static/styles.css?v=52" />
 </head>
 <body>
   <header class="top">
@@ -59,6 +59,9 @@
     <input id="q" type="search" placeholder="Buscar por remetente ou assunto" />
     <label><input type="checkbox" id="acao" /> só ação minha</label>
     <button type="button" id="btn-hidden" class="ghost">Restaurar ocultos (0)</button>
+    <button type="button" id="btn-mark-all-read" class="ghost" data-tooltip="Marca todos os e-mails não lidos como lidos no Gmail">
+      Marcar tudo como lido (<span id="n-mark-all">0</span>)
+    </button>
   </section>
 
   <details id="waiting-menu" class="menu">
@@ -204,6 +207,9 @@
       </p>
       <p class="modal-row"><strong>Assunto:</strong> <span id="modal-subject"></span></p>
       <div id="modal-preview" class="modal-preview"></div>
+      <p id="modal-attach-warning" class="modal-warning attach hidden">
+        ⚠️ O texto menciona anexo, mas nenhum arquivo foi anexado a essa resposta.
+      </p>
       <p class="modal-warning">Essa ação é definitiva — o e-mail sai imediatamente e não pode ser desfeito.</p>
       <div class="modal-actions">
         <button type="button" id="modal-cancel" class="ghost">Cancelar</button>
@@ -327,6 +333,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=51"></script>
+  <script src="/static/app.js?v=52"></script>
 </body>
 </html>
