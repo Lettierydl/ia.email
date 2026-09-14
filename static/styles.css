@@ -252,6 +252,21 @@ a.card { display: block; text-decoration: none; color: inherit; }
 .card:only-child { border-radius: var(--radius); }
 .card:hover { background: #f2f6fc; }
 .card header { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.quick-view-original {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.quick-view-original svg { width: 14px; height: 14px; }
+.quick-view-original:hover { background: var(--blue-soft); border-color: var(--blue); color: var(--blue); }
 .quick-read {
   background: transparent;
   border: 1px solid var(--line);

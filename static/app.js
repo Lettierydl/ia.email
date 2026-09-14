@@ -37,6 +37,9 @@ function tags(item) {
 
 function card(item) {
   const href = `/mail/${encodeURIComponent(item.id)}`;
+  const viewOriginal = `<button type="button" class="quick-view-original" data-id="${item.id}" data-tooltip="Ver e-mail original">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8a3 3 0 100 6 3 3 0 000-6z"/></svg>
+      </button>`;
   const quickRead = item.fyi_only
     ? `<button type="button" class="quick-read" data-id="${item.id}" data-tooltip="Marcar como lido (só cópia, sem ação)">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
@@ -51,6 +54,7 @@ function card(item) {
     <header>
       <span class="from">${item.from_email || item.from_name}</span>
       <span class="time">${item.time}</span>
+      ${viewOriginal}
       ${quickRead}
       ${notInterested}
     </header>
@@ -1001,42 +1005,104 @@ async function openPane(id, force) {
 
 // ── Popup "ver e-mail original" (hover no ícone de olho) ──
 // Mostra a última mensagem da thread crua, sem passar pelo resumo da IA --
-// útil pra conferir rápido sem trocar de aba.
-(function setupOriginalEmailPopup() {
-  const btn = $("pane-view-original");
+// útil pra conferir rápido sem trocar de aba, tanto na lista quanto no
+// cabeçalho do e-mail aberto. O popup fica fora do #pane (que some com
+// display:none na tela de lista) pra funcionar dos dois lugares.
+function buildOriginalPopupContent(subject, body) {
+  const blocks = splitMessages(body);
+  if (!blocks.length) return `<div class="original-popup-body">Sem conteúdo pra mostrar.</div>`;
+  const { from, date, text } = parseMessage(blocks[blocks.length - 1]);
+  const { name, email } = parseFrom(from || "");
+  return `
+    <div class="original-popup-head">
+      <div><span class="label">De</span>${escHtml(name)}${email && email !== name ? ` &lt;${escHtml(email)}&gt;` : ""}</div>
+      ${date ? `<div><span class="label">Data</span>${escHtml(date)}</div>` : ""}
+      ${subject ? `<div><span class="label">Assunto</span>${escHtml(subject)}</div>` : ""}
+    </div>
+    <div class="original-popup-body">${escHtml(text || "(sem texto)")}</div>
+  `;
+}
+
+function positionOriginalPopup(anchorEl) {
   const popup = $("original-email-popup");
+  const rect = anchorEl.getBoundingClientRect();
+  popup.style.top = `${rect.bottom + 6}px`;
+  const left = Math.min(rect.right - popup.offsetWidth, window.innerWidth - popup.offsetWidth - 12);
+  popup.style.left = `${Math.max(left, 12)}px`;
+}
 
-  function buildContent() {
-    const blocks = splitMessages(lastRawBody);
-    if (!blocks.length) return `<div class="original-popup-body">Sem conteúdo pra mostrar.</div>`;
-    const { from, date, text } = parseMessage(blocks[blocks.length - 1]);
-    const { name, email } = parseFrom(from || "");
-    const subject = $("pane-subject").textContent || "";
-    return `
-      <div class="original-popup-head">
-        <div><span class="label">De</span>${escHtml(name)}${email && email !== name ? ` &lt;${escHtml(email)}&gt;` : ""}</div>
-        ${date ? `<div><span class="label">Data</span>${escHtml(date)}</div>` : ""}
-        ${subject ? `<div><span class="label">Assunto</span>${escHtml(subject)}</div>` : ""}
-      </div>
-      <div class="original-popup-body">${escHtml(text || "(sem texto)")}</div>
-    `;
-  }
+function showOriginalPopupLoading(anchorEl) {
+  const popup = $("original-email-popup");
+  popup.innerHTML = `<div class="original-popup-body">Carregando…</div>`;
+  popup.classList.remove("hidden");
+  positionOriginalPopup(anchorEl);
+}
 
-  function position() {
-    const rect = btn.getBoundingClientRect();
-    popup.style.top = `${rect.bottom + 6}px`;
-    const left = Math.min(rect.right - popup.offsetWidth, window.innerWidth - popup.offsetWidth - 12);
-    popup.style.left = `${Math.max(left, 12)}px`;
-  }
+function showOriginalPopup(anchorEl, subject, body) {
+  const popup = $("original-email-popup");
+  popup.innerHTML = buildOriginalPopupContent(subject, body);
+  popup.classList.remove("hidden");
+  positionOriginalPopup(anchorEl);
+}
 
+function hideOriginalPopup() {
+  $("original-email-popup").classList.add("hidden");
+}
+
+// Ícone no cabeçalho do e-mail aberto: já tem o corpo cru carregado.
+(function setupPaneOriginalPopup() {
+  const btn = $("pane-view-original");
   btn.addEventListener("mouseenter", () => {
     if (!paneId) return;
-    popup.innerHTML = buildContent();
-    popup.classList.remove("hidden");
-    position();
+    showOriginalPopup(btn, $("pane-subject").textContent || "", lastRawBody);
   });
-  btn.addEventListener("mouseleave", () => popup.classList.add("hidden"));
+  btn.addEventListener("mouseleave", hideOriginalPopup);
 })();
+
+// Ícones da lista: um por card, recriados a cada renderList -- delegação de
+// evento com mouseover/mouseout (que borbulham, ao contrário de
+// mouseenter/mouseleave) evita ter que religar listener em cada render.
+// Busca o corpo sob demanda e guarda em cache por thread_id.
+(function setupListOriginalPopup() {
+  const cache = {};
+  let hoveredId = null;
+
+  document.addEventListener("mouseover", (e) => {
+    const btn = e.target.closest(".quick-view-original");
+    if (!btn || hoveredId === btn.dataset.id) return;
+    hoveredId = btn.dataset.id;
+    const id = btn.dataset.id;
+    if (cache[id]) {
+      showOriginalPopup(btn, cache[id].subject, cache[id].body);
+      return;
+    }
+    showOriginalPopupLoading(btn);
+    fetch(`/api/threads/${encodeURIComponent(id)}/original-preview`)
+      .then((res) => res.json())
+      .then((data) => {
+        cache[id] = data;
+        if (hoveredId === id) showOriginalPopup(btn, data.subject, data.body);
+      })
+      .catch(() => {
+        if (hoveredId === id) hideOriginalPopup();
+      });
+  });
+
+  document.addEventListener("mouseout", (e) => {
+    const btn = e.target.closest(".quick-view-original");
+    if (!btn || btn.contains(e.relatedTarget)) return;
+    if (hoveredId !== btn.dataset.id) return;
+    hoveredId = null;
+    hideOriginalPopup();
+  });
+})();
+
+document.addEventListener("click", (e) => {
+  if (e.target.closest(".quick-view-original")) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+});
 
 document.querySelectorAll(".tab").forEach((btn) => {
   btn.onclick = () => setTab(btn.dataset.tab);

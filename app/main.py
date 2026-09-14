@@ -260,6 +260,26 @@ def thread_detail(thread_id: str, force: bool = Query(False)):
         raise HTTPException(502, str(exc)) from exc
 
 
+@app.get("/api/threads/{thread_id}/original-preview")
+def thread_original_preview(thread_id: str):
+    # So o corpo cru (do cache local ou do Gmail), sem passar pelo resumo da
+    # IA -- usado no ícone de olho da lista pra pré-visualizar em hover sem
+    # gastar chamada de LLM.
+    row = store.get_thread(thread_id)
+    if not row:
+        raise HTTPException(404, "Thread não encontrada.")
+    try:
+        body = assistant._ensure_body(thread_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "subject": row.get("subject") or "",
+        "from_email": row.get("from_email") or "",
+        "from_name": row.get("from_name") or "",
+        "body": body,
+    }
+
+
 @app.post("/api/threads/{thread_id}/draft")
 def thread_draft(thread_id: str, body: DraftBody):
     try:
