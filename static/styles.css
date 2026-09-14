@@ -252,6 +252,8 @@ a.card { display: block; text-decoration: none; color: inherit; }
 .card:only-child { border-radius: var(--radius); }
 .card:hover { background: #f2f6fc; }
 .card header { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.card-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.card-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .quick-view-original {
   background: transparent;
   border: 1px solid var(--line);

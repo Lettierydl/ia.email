@@ -53,10 +53,14 @@ function card(item) {
   return `<a class="card${item.fyi_only ? " fyi" : ""}" href="${href}" data-id="${item.id}">
     <header>
       <span class="from">${item.from_email || item.from_name}</span>
-      <span class="time">${item.time}</span>
-      ${viewOriginal}
-      ${quickRead}
-      ${notInterested}
+      <span class="card-right">
+        <span class="time">${item.time}</span>
+        <span class="card-actions">
+          ${viewOriginal}
+          ${quickRead}
+          ${notInterested}
+        </span>
+      </span>
     </header>
     <div class="subject">${item.subject}</div>
     <div class="snippet">${item.snippet || ""}</div>
