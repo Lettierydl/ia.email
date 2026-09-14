@@ -124,6 +124,7 @@ function qs() {
 
 let lastAutoIds = [];
 let lastUnreadAllIds = [];
+let lastRawBody = "";
 
 async function loadRadar(opts) {
   const options = opts || {};
@@ -971,6 +972,7 @@ async function openPane(id, force) {
     $("pane-status").textContent = data.warning || (data.cached ? "Do cache" : "Gerado agora");
     $("pane-summary").classList.remove("loading");
     $("pane-summary").innerHTML = formatSummary(data.summary);
+    lastRawBody = data.body || "";
     renderBody(data.body || "");
     chatHistory = Array.isArray(data.chat) ? data.chat.slice() : [];
     if (!chatHistory.length && !data.warning) {
@@ -996,6 +998,45 @@ async function openPane(id, force) {
     clearTimeout(killer);
   }
 }
+
+// ── Popup "ver e-mail original" (hover no ícone de olho) ──
+// Mostra a última mensagem da thread crua, sem passar pelo resumo da IA --
+// útil pra conferir rápido sem trocar de aba.
+(function setupOriginalEmailPopup() {
+  const btn = $("pane-view-original");
+  const popup = $("original-email-popup");
+
+  function buildContent() {
+    const blocks = splitMessages(lastRawBody);
+    if (!blocks.length) return `<div class="original-popup-body">Sem conteúdo pra mostrar.</div>`;
+    const { from, date, text } = parseMessage(blocks[blocks.length - 1]);
+    const { name, email } = parseFrom(from || "");
+    const subject = $("pane-subject").textContent || "";
+    return `
+      <div class="original-popup-head">
+        <div><span class="label">De</span>${escHtml(name)}${email && email !== name ? ` &lt;${escHtml(email)}&gt;` : ""}</div>
+        ${date ? `<div><span class="label">Data</span>${escHtml(date)}</div>` : ""}
+        ${subject ? `<div><span class="label">Assunto</span>${escHtml(subject)}</div>` : ""}
+      </div>
+      <div class="original-popup-body">${escHtml(text || "(sem texto)")}</div>
+    `;
+  }
+
+  function position() {
+    const rect = btn.getBoundingClientRect();
+    popup.style.top = `${rect.bottom + 6}px`;
+    const left = Math.min(rect.right - popup.offsetWidth, window.innerWidth - popup.offsetWidth - 12);
+    popup.style.left = `${Math.max(left, 12)}px`;
+  }
+
+  btn.addEventListener("mouseenter", () => {
+    if (!paneId) return;
+    popup.innerHTML = buildContent();
+    popup.classList.remove("hidden");
+    position();
+  });
+  btn.addEventListener("mouseleave", () => popup.classList.add("hidden"));
+})();
 
 document.querySelectorAll(".tab").forEach((btn) => {
   btn.onclick = () => setTab(btn.dataset.tab);

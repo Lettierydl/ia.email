@@ -993,6 +993,30 @@ body.conversation .pane {
   font-size: 13px;
 }
 
+/* ── POPUP: E-MAIL ORIGINAL ── */
+.original-popup {
+  position: fixed;
+  z-index: 210;
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--card);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+  font-size: 13px;
+}
+.original-popup-head {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+}
+.original-popup-head div { margin-bottom: 2px; }
+.original-popup-head .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; margin-right: 4px; }
+.original-popup-body { white-space: pre-wrap; color: var(--ink); line-height: 1.45; }
+
 /* ── TOOLTIP ── */
 [data-tooltip] { position: relative; }
 [data-tooltip]:hover::after {
