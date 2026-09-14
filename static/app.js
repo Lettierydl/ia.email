@@ -959,6 +959,21 @@ async function openPane(id, force) {
   loadAttachments();
   loadGmailAttachments(id);
   loadRecipients(id);
+
+  // Corpo cru primeiro (sem LLM, rápido) pra já mostrar o e-mail completo
+  // na tela enquanto o resumo (mais lento) ainda carrega por baixo.
+  fetch(`/api/threads/${encodeURIComponent(id)}/original-preview`)
+    .then((res) => res.json())
+    .then((data) => {
+      if (paneId !== id) return;
+      $("pane-subject").textContent = data.subject || "";
+      $("pane-from").textContent = data.from_email || "";
+      currentTo = data.from_email || "";
+      renderBody(data.body || "");
+      if (data.subject) document.title = data.subject + " · IA.Email";
+    })
+    .catch(() => {});
+
   const q = force ? "?force=true" : "";
   const controller = new AbortController();
   const killer = setTimeout(() => controller.abort(), 60000);

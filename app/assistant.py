@@ -15,7 +15,23 @@ STYLE_PRESETS = {
     "direto": "Tom direto e mais informal: frases curtas, vai direto ao ponto.",
 }
 
-_LOCK = threading.Lock()
+_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(thread_id: str) -> threading.Lock:
+    """Lock por thread, não um lock global -- gerar resumo/rascunho de um
+    e-mail (chamada de LLM, pode levar vários segundos) não pode travar a
+    leitura de outro e-mail já em cache só porque os dois passam por
+    analyze()/draft(). O global aqui era o motivo do app parecer travado
+    durante o preload de fundo."""
+    with _LOCKS_GUARD:
+        lock = _LOCKS.get(thread_id)
+        if lock is None:
+            lock = threading.Lock()
+            _LOCKS[thread_id] = lock
+        return lock
+
 
 SUMARIO_SYSTEM = """Você resume e-mails para Leo (TI/Confrapag). Português do Brasil.
 Nunca copie o e-mail. Nunca cole URL do Gmail (google.com/url).
@@ -145,7 +161,7 @@ def _thread_moved_since_chat(row: dict) -> bool:
 
 
 def analyze(thread_id: str, *, force: bool = False) -> dict:
-    with _LOCK:
+    with _lock_for(thread_id):
         row = store.get_thread(thread_id) or {}
         if _thread_moved_since_chat(row):
             store.save_ai(
@@ -363,7 +379,7 @@ def _resolve_cc_names(names: list[str]) -> list[dict]:
 
 
 def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
-    with _LOCK:
+    with _lock_for(thread_id):
         row = store.get_thread(thread_id) or {}
         chat = _load_chat(row)
 
@@ -470,7 +486,7 @@ def _cleanup_old_exports() -> None:
 
 
 def export_context(thread_id: str) -> dict:
-    with _LOCK:
+    with _lock_for(thread_id):
         row = store.get_thread(thread_id) or {}
         if not row:
             raise RuntimeError("Thread não está no radar. Atualize a lista.")
@@ -507,7 +523,7 @@ def export_context(thread_id: str) -> dict:
 
 
 def approve_capture(thread_id: str) -> dict:
-    with _LOCK:
+    with _lock_for(thread_id):
         row = store.get_thread(thread_id) or {}
         note = (row.get("capture_note") or "").strip()
         if not note:
@@ -525,6 +541,6 @@ def approve_capture(thread_id: str) -> dict:
 
 
 def dismiss_capture(thread_id: str) -> dict:
-    with _LOCK:
+    with _lock_for(thread_id):
         store.save_ai(thread_id, capture_status="dismissed")
         return {"ok": True}
