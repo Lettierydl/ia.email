@@ -314,6 +314,21 @@ def _parse_draft_response(raw: str) -> tuple[str, str, list[str]]:
     return "draft", raw.strip(), []
 
 
+_EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+
+
+def _pending_cc_query(chat: list[dict]) -> str | None:
+    """Olha a última mensagem da IA que pediu resolução de Cc: se sobrou
+    exatamente um nome sem achar e-mail (not_found/ambiguous), devolve esse
+    nome -- é o que a próxima mensagem do Leo provavelmente está resolvendo.
+    Mais de um pendente ao mesmo tempo é ambíguo demais pra adivinhar."""
+    for msg in reversed(chat):
+        if msg.get("role") == "ai" and msg.get("cc_resolution"):
+            pending = [r for r in msg["cc_resolution"] if r.get("status") in ("not_found", "ambiguous")]
+            return pending[0]["query"] if len(pending) == 1 else None
+    return None
+
+
 def _resolve_cc_names(names: list[str]) -> list[dict]:
     """Pra cada nome/apelido que a instrução pediu pra copiar no e-mail,
     tenta achar um e-mail real: primeiro nos apelidos cadastrados, depois
@@ -349,8 +364,48 @@ def _resolve_cc_names(names: list[str]) -> list[dict]:
 
 def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
     with _LOCK:
-        body = _ensure_body(thread_id)
         row = store.get_thread(thread_id) or {}
+        chat = _load_chat(row)
+
+        # Atalho: Leo respondeu com o e-mail de alguém que ficou sem resolver
+        # ("o email é fulano@x.com") -- resolve na hora, sem chamar a IA de
+        # novo, e já salva como apelido pra não perguntar de novo da próxima
+        # vez. Isso é o "aprendizado" que faltava: sem isso, cada instrução
+        # ia pra IA sem contexto de que estava respondendo uma pendência de Cc.
+        email_match = _EMAIL_RE.search(instruction or "")
+        pending_query = _pending_cc_query(chat) if email_match else None
+        if email_match and pending_query:
+            email = email_match.group(0).lower()
+            store.save_alias(alias=pending_query, name=pending_query, email=email)
+            if instruction:
+                chat.append({"role": "user", "text": instruction})
+            ai_msg = {
+                "role": "ai",
+                "text": f'Beleza, salvei "{pending_query}" = {email} como apelido -- da próxima vez '
+                f"resolvo direto. Vou copiar esse e-mail nessa resposta.",
+                "kind": "answer",
+                "cc_resolution": [
+                    {
+                        "query": pending_query,
+                        "status": "resolved",
+                        "candidates": [{"name": pending_query, "email": email}],
+                    }
+                ],
+            }
+            chat.append(ai_msg)
+            store.save_ai(
+                thread_id,
+                chat_json=json.dumps(chat),
+                chat_anchor_date=row.get("internal_date") or 0,
+            )
+            return {
+                "id": thread_id,
+                "draft": row.get("draft") or "",
+                "chat": chat,
+                "summary": row.get("summary") or "",
+            }
+
+        body = _ensure_body(thread_id)
         previous = row.get("draft") or ""
         if not llm.has_key():
             raise RuntimeError("Falta chave de LLM (Claude/Gemini/OpenRouter) para gerar rascunho.")
@@ -375,7 +430,6 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
         kind, text, cc_names = _parse_draft_response(raw)
         cc_resolution = _resolve_cc_names(cc_names)
 
-        chat = _load_chat(row)
         if instruction:
             chat.append({"role": "user", "text": instruction})
         ai_msg: dict = {"role": "ai", "text": text, "kind": kind}
