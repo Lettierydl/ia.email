@@ -40,11 +40,10 @@ function card(item) {
   const viewOriginal = `<button type="button" class="quick-view-original" data-id="${item.id}" data-tooltip="Ver e-mail original">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8a3 3 0 100 6 3 3 0 000-6z"/></svg>
       </button>`;
-  const quickRead = item.fyi_only
-    ? `<button type="button" class="quick-read" data-id="${item.id}" data-tooltip="Marcar como lido (só cópia, sem ação)">
+  const quickReadTooltip = item.fyi_only ? "Marcar como lido (só cópia, sem ação)" : "Marcar como lido";
+  const quickRead = `<button type="button" class="quick-read" data-id="${item.id}" data-tooltip="${quickReadTooltip}">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
-      </button>`
-    : "";
+      </button>`;
   const notInterested = item.is_marketing
     ? `<button type="button" class="quick-not-interested" data-id="${item.id}" data-tooltip="Não tenho interesse (remetente vai pra Promoções sempre)">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.41 0 8 3.59 8 8 0 1.85-.63 3.55-1.69 4.9z"/></svg>
