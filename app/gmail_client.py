@@ -263,7 +263,7 @@ def _ingest_thread(service, thread_id: str) -> None:
     )
 
 
-def refresh(recent: int = 25, unread: int = 20) -> dict[str, int]:
+def refresh(recent: int = 50, unread: int = 200) -> dict[str, int]:
     creds = load_credentials()
     if not creds:
         raise RuntimeError("Gmail nao autenticado.")
