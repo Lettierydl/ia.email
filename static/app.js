@@ -1046,7 +1046,16 @@ function buildOriginalPopupContent(subject, body) {
 function positionOriginalPopup(anchorEl) {
   const popup = $("original-email-popup");
   const rect = anchorEl.getBoundingClientRect();
-  popup.style.top = `${rect.bottom + 6}px`;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const spaceAbove = rect.top;
+  // Perto do fim da lista não cabe embaixo -- abre pra cima em vez de
+  // cortar o popup na borda da tela.
+  let top =
+    spaceBelow >= popup.offsetHeight + 12 || spaceBelow >= spaceAbove
+      ? rect.bottom + 6
+      : rect.top - popup.offsetHeight - 6;
+  top = Math.max(12, Math.min(top, window.innerHeight - popup.offsetHeight - 12));
+  popup.style.top = `${top}px`;
   const left = Math.min(rect.right - popup.offsetWidth, window.innerWidth - popup.offsetWidth - 12);
   popup.style.left = `${Math.max(left, 12)}px`;
 }
