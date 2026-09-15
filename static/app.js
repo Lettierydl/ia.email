@@ -941,8 +941,17 @@ document.querySelectorAll(".rsvp-btn").forEach((btn) => {
   };
 });
 
+// Gmail usa o mesmo thread_id que a API já devolve pra montar o link direto
+// da conversa -- authuser garante que abre na conta certa mesmo se o
+// navegador tiver várias contas Google logadas.
+function gmailThreadUrl(id) {
+  const authuser = ACCOUNT_EMAIL ? `?authuser=${encodeURIComponent(ACCOUNT_EMAIL)}` : "";
+  return `https://mail.google.com/mail/${authuser}#all/${encodeURIComponent(id)}`;
+}
+
 async function openPane(id, force) {
   paneId = id;
+  $("pane-open-gmail").href = gmailThreadUrl(id);
   chatHistory = [];
   $("pane").classList.remove("hidden");
   $("pane-status").textContent = "Carregando…";
