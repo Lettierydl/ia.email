@@ -9,6 +9,13 @@ from datetime import datetime
 from . import context_base, gmail_client, llm, store
 from .config import CONTEXT_GLOBAL_MAX_CHARS, CONTEXT_MD, EMAIL_EXPORT_DIR, EMAIL_EXPORT_RETENTION_DAYS
 
+# Pasta-mãe de todas as categorias de captura (cada uma com README.md
+# descrevendo o assunto + context.md pra acumular fatos, mesmo padrão que
+# CONTEXT_MD já usava só pra "emails"). Derivado de CONTEXT_MD pra não
+# duplicar o caminho em dois lugares.
+CAPTURE_CATEGORIES_DIR = CONTEXT_MD.parent.parent
+CAPTURE_FALLBACK_CATEGORY = CONTEXT_MD.parent.name
+
 STYLE_PRESETS = {
     "formal": "Tom formal: frases completas, sem gírias, tratamento respeitoso, evite contrações informais.",
     "neutro": "Tom neutro e direto (padrão já usado hoje).",
@@ -539,6 +546,60 @@ def export_context(thread_id: str) -> dict:
         return {"path": str(export_path), "prompt": prompt}
 
 
+def _capture_categories() -> dict[str, str]:
+    """Cada subpasta de CAPTURE_CATEGORIES_DIR que já segue o padrão
+    README.md + context.md vira uma categoria candidata -- a descrição
+    vem do primeiro parágrafo do README (é o que já explica pra que serve
+    cada uma: financas, demandas-projetos, performance-ti etc)."""
+    out: dict[str, str] = {}
+    if not CAPTURE_CATEGORIES_DIR.is_dir():
+        return out
+    for child in sorted(CAPTURE_CATEGORIES_DIR.iterdir()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        # Só entram pastas que já seguem o padrão (têm context.md de
+        # verdade) -- skins/, viagens/, projetos-pequenos/ usam outra
+        # estrutura (subpasta por item) e não devem ganhar um context.md
+        # novo só porque a IA achou que o assunto combinava.
+        if not (child / "context.md").exists():
+            continue
+        readme = child / "README.md"
+        desc = ""
+        if readme.exists():
+            for line in readme.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    desc = line
+                    break
+        out[child.name] = desc
+    return out
+
+
+def _pick_capture_category(note: str, subject: str) -> str:
+    """Pergunta pra IA em qual categoria da Learning Base esse fato
+    capturado encaixa melhor, em vez de sempre jogar tudo em emails/
+    (que era só o contexto de e-mail, não o lugar certo pra regra de
+    negócio, decisão de produto etc). Cai em CAPTURE_FALLBACK_CATEGORY
+    se a resposta não bater com nenhuma categoria real ou não tiver LLM."""
+    categories = _capture_categories()
+    if not categories or not llm.has_key():
+        return CAPTURE_FALLBACK_CATEGORY
+    menu = "\n".join(f"- {name}: {desc}" for name, desc in categories.items())
+    try:
+        raw = llm.complete(
+            "Escolha em qual das categorias abaixo esse fato capturado de um e-mail deve ser "
+            "guardado. Responda APENAS o nome exato de uma categoria da lista, nada mais.\n\n"
+            f"Categorias:\n{menu}\n\n"
+            f"Assunto do e-mail: {subject}\n"
+            f"Fato capturado: {note}",
+            system=llm.SYSTEM,
+        )
+    except Exception:
+        return CAPTURE_FALLBACK_CATEGORY
+    choice = raw.strip().strip('"').strip("'").splitlines()[0].strip() if raw.strip() else ""
+    return choice if choice in categories else CAPTURE_FALLBACK_CATEGORY
+
+
 def approve_capture(thread_id: str) -> dict:
     with _lock_for(thread_id):
         row = store.get_thread(thread_id) or {}
@@ -546,15 +607,17 @@ def approve_capture(thread_id: str) -> dict:
         if not note:
             raise RuntimeError("Essa thread não tem nota de captura pendente.")
         subject = row.get("subject") or "(sem assunto)"
+        category = _pick_capture_category(note, subject)
+        target = CAPTURE_CATEGORIES_DIR / category / "context.md"
         entry = (
             f"\n\n## Captura do Radar — {datetime.now().strftime('%d/%m/%Y')} — {subject}\n"
             f"{note}\n"
         )
-        CONTEXT_MD.parent.mkdir(parents=True, exist_ok=True)
-        with CONTEXT_MD.open("a", encoding="utf-8") as fh:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
             fh.write(entry)
         store.save_ai(thread_id, capture_status="approved")
-        return {"ok": True, "path": str(CONTEXT_MD)}
+        return {"ok": True, "path": str(target), "category": category}
 
 
 def dismiss_capture(thread_id: str) -> dict:

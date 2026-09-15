@@ -21,8 +21,12 @@ services:
       - ./app:/app/app
       - ./static:/app/static
       # Learning Base inteira, so leitura -- usada pela base de contexto
-      # "geral" das Configuracoes. A pasta emails/ é montada de novo por
-      # cima, em leitura/escrita, pra manter os exports e o context.md
-      # funcionando (o mount mais especifico vence sobre o pai).
+      # "geral" das Configuracoes. principal_agents/ e montada de novo por
+      # cima, em leitura/escrita: e' onde "Guardar no cerebro" escreve,
+      # escolhendo a categoria certa (financas, demandas-projetos, emails
+      # etc) em vez de sempre em emails/ (o mount mais especifico vence
+      # sobre o pai). lb-company/ e lb-personal/ continuam so leitura --
+      # sao vaults com convenc-o-es proprias, fora do escopo de escrita
+      # automatica deste app.
       - "/Users/leo/Learning Base:/Users/leo/Learning Base:ro"
-      - "/Users/leo/Learning Base/principal_agents/emails:/Users/leo/Learning Base/principal_agents/emails"
+      - "/Users/leo/Learning Base/principal_agents:/Users/leo/Learning Base/principal_agents"

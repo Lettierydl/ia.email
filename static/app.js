@@ -774,7 +774,9 @@ $("capture-approve").onclick = async () => {
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
       $("capture-suggestion").classList.add("hidden");
-      $("pane-status").textContent = `Guardado no cérebro (${data.path}).`;
+      $("pane-status").textContent = data.category
+        ? `Guardado no cérebro, categoria "${data.category}" (${data.path}).`
+        : `Guardado no cérebro (${data.path}).`;
     } else {
       $("pane-status").textContent = data.detail || "Falha ao guardar.";
     }
