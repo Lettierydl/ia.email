@@ -254,7 +254,7 @@ a.card { display: block; text-decoration: none; color: inherit; }
 /* Linha única no estilo Gmail: remetente | assunto — trecho, tudo truncado
    numa linha só, com hora e ícones fixos à direita. */
 .row-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.from {
+.row-main .from {
   flex: 0 0 auto;
   width: clamp(110px, 16vw, 200px);
   overflow: hidden;
@@ -264,7 +264,7 @@ a.card { display: block; text-decoration: none; color: inherit; }
   font-size: 14px;
   color: var(--ink);
 }
-.card.unread .from { font-weight: 700; }
+.card.unread .row-main .from { font-weight: 700; }
 .subject-line {
   flex: 1 1 auto;
   min-width: 0;
