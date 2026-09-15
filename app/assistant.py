@@ -144,6 +144,23 @@ def _parse_json(raw: str) -> dict:
     }
 
 
+def _recent_body(body: str, max_chars: int = 20000) -> str:
+    """Corta pelo INÍCIO (mensagens mais antigas), não pelo fim. O pedido
+    de verdade quase sempre está na mensagem mais recente, no fim da
+    thread (é como o Gmail ordena) -- cortar pelo fim jogava fora
+    justamente a parte que pede algo do Leo em threads longas, fazendo o
+    resumo dizer "nenhuma ação" quando na real tinha um pedido direto lá
+    embaixo que nunca chegou a ser lido pela IA."""
+    if len(body) <= max_chars:
+        return body
+    tail = body[-max_chars:]
+    sep = "\n\n----\n\n"
+    sep_idx = tail.find(sep)
+    if sep_idx != -1:
+        tail = tail[sep_idx + len(sep):]
+    return "[...thread truncada, mensagens mais antigas omitidas...]\n\n" + tail
+
+
 def _thread_moved_since_chat(row: dict) -> bool:
     """True se chegou mensagem nova na thread depois da ultima vez que
     resumo/chat foram gerados -- nesse caso o resumo/rascunho/conversa
@@ -226,7 +243,7 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
             "so_copia=true se Leo só está em cópia/FYI, sem nada pra fazer (ver regra no system).\n"
             "nota_captura só se houver fato durável pra guardar (ver regra no system).\n"
             "eh_propaganda só pra e-mail comercial de terceiros (ver regra no system).\n\n"
-            f"Assunto: {subject}\n\n{body[:12000]}",
+            f"Assunto: {subject}\n\n{_recent_body(body)}",
             system=llm.SYSTEM + "\n" + SUMARIO_SYSTEM,
         )
         parsed = _parse_json(raw)
@@ -441,7 +458,7 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
             f"Instrução do Leo: {instruction or '(gerar a partir do contexto)'}\n"
             f"Ajuste pedido: {comment or '(nenhum)'}\n"
             f"Rascunho anterior:\n{previous or '(nenhum)'}\n\n"
-            f"Assunto: {row.get('subject')}\n\nThread:\n{body[:12000]}"
+            f"Assunto: {row.get('subject')}\n\nThread:\n{_recent_body(body)}"
         )
         kind, text, cc_names = _parse_draft_response(raw)
         cc_resolution = _resolve_cc_names(cc_names)
