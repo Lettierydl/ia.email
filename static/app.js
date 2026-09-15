@@ -149,6 +149,7 @@ async function loadRadar(opts) {
     $("c-waiting").textContent = data.waiting.length;
     $("c-auto").textContent = data.automatic.length;
     $("c-promotions").textContent = (data.promotions || []).length;
+    $("c-sent").textContent = (data.sent || []).length;
     $("btn-hidden").textContent = `Restaurar ocultos (${data.hidden})`;
     if (data.last_refresh) {
       $("updated").textContent = data.last_refresh;
@@ -157,6 +158,7 @@ async function loadRadar(opts) {
     renderList("waiting", data.waiting);
     renderList("automatic", data.automatic);
     renderList("promotions", data.promotions || []);
+    renderList("sent", data.sent || []);
 
     lastAutoIds = data.automatic.map((item) => item.id);
     lastUnreadAllIds = [...data.unread, ...data.automatic, ...(data.promotions || [])]

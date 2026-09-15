@@ -84,6 +84,7 @@ def init() -> None:
             ("capture_note", "TEXT"),
             ("capture_status", "TEXT"),
             ("chat_anchor_date", "INTEGER"),
+            ("sent_via_app_at", "INTEGER"),
         ):
             try:
                 conn.execute(f"ALTER TABLE threads ADD COLUMN {col} {typ}")
@@ -161,6 +162,16 @@ def list_visible(*, include_hidden: bool = False) -> list[dict[str, Any]]:
     return [dict(item) for item in rows]
 
 
+def list_recent_sent(limit: int = 20) -> list[dict[str, Any]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM threads WHERE sent_via_app_at IS NOT NULL "
+            "ORDER BY sent_via_app_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(item) for item in rows]
+
+
 def hidden_count() -> int:
     with _connect() as conn:
         row = conn.execute(
@@ -207,6 +218,7 @@ def save_ai(thread_id: str, **fields: Any) -> None:
         "capture_status",
         "chat_anchor_date",
         "is_marketing",
+        "sent_via_app_at",
     }
     sets = []
     values = []

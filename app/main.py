@@ -209,6 +209,14 @@ def radar(
 
     unanswered = len(unread) + len(waiting)
     action = sum(1 for item in unread + waiting if item["needs_action_hint"])
+
+    sent = []
+    for row in store.list_recent_sent(limit=20):
+        hay = f"{row['from_email']} {row['from_name']} {row['subject']}".lower()
+        if needle and needle not in hay:
+            continue
+        sent.append(_public(row, use_sent_time=True))
+
     return {
         "account": ACCOUNT,
         "last_refresh": store.get_meta("last_refresh"),
@@ -219,6 +227,7 @@ def radar(
         "waiting": waiting,
         "promotions": promotions,
         "automatic": automatic,
+        "sent": sent,
     }
 
 
@@ -426,7 +435,12 @@ def thread_send(thread_id: str, body: SendBody):
     except Exception as exc:
         raise HTTPException(502, str(exc)) from exc
     row = store.get_thread(thread_id) or {}
-    store.save_ai(thread_id, draft="", chat_anchor_date=row.get("internal_date") or 0)
+    store.save_ai(
+        thread_id,
+        draft="",
+        chat_anchor_date=row.get("internal_date") or 0,
+        sent_via_app_at=int(datetime.now().timestamp() * 1000),
+    )
     for item in attachments.list_files(thread_id):
         attachments.delete_file(thread_id, item["name"])
     return {"ok": True, **result}
@@ -613,8 +627,9 @@ def delete_all_generated_files():
     return {"ok": True, "removed": removed}
 
 
-def _public(row: dict) -> dict:
-    ts = int(row["internal_date"] or 0) / 1000
+def _public(row: dict, *, use_sent_time: bool = False) -> dict:
+    ts_field = "sent_via_app_at" if use_sent_time else "internal_date"
+    ts = int(row.get(ts_field) or 0) / 1000
     dt = datetime.fromtimestamp(ts, TZ) if ts else None
     when = dt.strftime("%d/%m %H:%M") if dt else ""
     return {
