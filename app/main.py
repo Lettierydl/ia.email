@@ -406,7 +406,7 @@ def thread_invite_rsvp(thread_id: str, body: RsvpBody):
     if not uid:
         raise HTTPException(400, "Convite sem identificador (UID).")
     try:
-        result = calendar_client.respond_to_invite(creds, uid, body.response, ACCOUNT)
+        result = calendar_client.respond_to_invite(creds, uid, body.response, ACCOUNT, ics_info=info)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"ok": True, **result}
