@@ -408,7 +408,7 @@ body.conversation .pane {
   body.conversation .pane-header { padding: 20px 8px 16px; }
   body.conversation .tabs { display: none; }
   body.conversation .pane-body-wrap {
-    padding: 0 8px 32px;
+    padding: 24px 8px 32px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 32px;

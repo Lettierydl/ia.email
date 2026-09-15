@@ -1739,7 +1739,7 @@ function wrapSelectionAsAnnotation(range) {
         hideToolbar();
         return;
       }
-      const areas = [$("pane-summary"), $("pane-body")];
+      const areas = [$("pane-summary"), $("pane-body"), $("chat-messages")];
       const inArea = areas.some((el) => el && sel.anchorNode && el.contains(sel.anchorNode));
       if (!inArea) {
         hideToolbar();
