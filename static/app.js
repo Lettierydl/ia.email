@@ -134,6 +134,7 @@ function qs() {
 }
 
 let lastAutoIds = [];
+let lastPromoUnreadIds = [];
 let lastUnreadAllIds = [];
 
 async function loadRadar(opts) {
@@ -161,17 +162,14 @@ async function loadRadar(opts) {
     renderList("sent", data.sent || []);
 
     lastAutoIds = data.automatic.map((item) => item.id);
+    lastPromoUnreadIds = (data.promotions || []).filter((item) => item.is_unread).map((item) => item.id);
     lastUnreadAllIds = [...data.unread, ...data.automatic, ...(data.promotions || [])]
       .filter((item) => item.is_unread)
       .map((item) => item.id);
     $("n-mark-all").textContent = lastUnreadAllIds.length;
     $("btn-mark-all-read").disabled = lastUnreadAllIds.length === 0;
-    const autoSection = $("btn-auto-read").closest("article");
-    if (data.automatic.length === 0 && autoSection) {
-      autoSection.style.display = "none";
-    } else if (autoSection) {
-      autoSection.style.display = "";
-    }
+    $("btn-auto-read").disabled = lastAutoIds.length === 0;
+    $("btn-promo-read").disabled = lastPromoUnreadIds.length === 0;
 
     if (options.preload !== false && !document.hidden) {
       preloadEnds(data.unread, data.waiting, data.automatic, data.promotions || []);
@@ -314,9 +312,23 @@ $("setup").onsubmit = async (event) => {
 $("btn-refresh").onclick = () => refresh(false);
 $("q").addEventListener("input", () => loadRadar());
 $("acao").onchange = () => loadRadar();
-$("m-unanswered").onclick = () => {
-  $("waiting-menu").open = !$("waiting-menu").open;
-};
+// Abas da caixa (Não lidos/Aguardando/Automáticos/Promoções/Enviados) --
+// só uma lista visível por vez, igual às abas do Gmail.
+function switchListTab(name) {
+  document.querySelectorAll(".mail-tab").forEach((btn) => {
+    btn.classList.toggle("on", btn.dataset.listTab === name);
+  });
+  document.querySelectorAll("[data-list-panel]").forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.listPanel !== name);
+  });
+  $("btn-auto-read").classList.toggle("hidden", name !== "automatic");
+  $("btn-promo-read").classList.toggle("hidden", name !== "promotions");
+}
+document.querySelectorAll(".mail-tab").forEach((btn) => {
+  btn.onclick = () => switchListTab(btn.dataset.listTab);
+});
+
+$("m-unanswered").onclick = () => switchListTab("waiting");
 $("m-action").onclick = () => {
   $("acao").checked = !$("acao").checked;
   loadRadar();
@@ -369,6 +381,27 @@ $("btn-auto-read").onclick = async () => {
   } finally {
     $("btn-auto-read").disabled = false;
     $("btn-auto-read").innerHTML =
+      '<svg style="width:16px;height:16px;vertical-align:middle;margin-right:2px" viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg> Marcar lidos';
+  }
+};
+
+// ── Mark all promotions as read ──
+$("btn-promo-read").onclick = async () => {
+  if (!lastPromoUnreadIds.length) return;
+  $("btn-promo-read").disabled = true;
+  $("btn-promo-read").textContent = "Marcando…";
+  try {
+    const res = await fetch("/api/mark-read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: lastPromoUnreadIds }),
+    });
+    if (res.ok) {
+      await loadRadar({ preload: false });
+    }
+  } finally {
+    $("btn-promo-read").disabled = false;
+    $("btn-promo-read").innerHTML =
       '<svg style="width:16px;height:16px;vertical-align:middle;margin-right:2px" viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg> Marcar lidos';
   }
 };

@@ -203,34 +203,38 @@ button {
 .controls .ghost { font-size: 13px; padding: 6px 12px; }
 
 /* ── BOARD ── */
-.board article { margin-top: 16px; }
-.board h2 {
+.board article { margin-top: 0; }
+
+/* ── ABAS DA CAIXA (estilo Gmail: Principal/Promoções/etc, uma lista por vez) ── */
+.mail-tabs {
   display: flex;
-  gap: 8px;
-  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 0;
+}
+.mail-tab {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 10px 14px;
   font-size: 14px;
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: .03em;
   color: var(--muted);
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
 }
-.board h2 span {
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 400;
-}
-.auto-header {
+.mail-tab span { color: inherit; font-weight: 400; opacity: .8; }
+.mail-tab:hover { color: var(--blue); }
+.mail-tab.on { color: var(--blue); border-bottom-color: var(--blue); font-weight: 600; }
+.mail-tab-actions {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  justify-content: flex-end;
+  padding: 8px 0;
 }
-.auto-actions {
-  display: flex;
-  gap: 6px;
-}
-.auto-actions button {
+.mail-tab-actions button {
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 16px;
@@ -344,26 +348,6 @@ a.card { display: block; text-decoration: none; color: inherit; }
 .card.fyi:hover { opacity: 1; }
 .card.fyi .subject-text { font-weight: 400; }
 
-/* ── WAITING MENU ── */
-.menu {
-  margin: 0 0 12px;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 0 12px;
-}
-.menu summary {
-  cursor: pointer;
-  font-weight: 500;
-  font-size: 14px;
-  padding: 10px 0;
-  list-style: none;
-  color: var(--muted);
-}
-.menu summary::-webkit-details-marker { display: none; }
-.menu summary::after { content: " ▾"; font-weight: 400; }
-.menu[open] summary::after { content: " ▴"; }
-.menu .list { margin-top: 4px; padding-bottom: 8px; }
 
 .empty-list {
   display: flex;
@@ -393,7 +377,8 @@ a.card { display: block; text-decoration: none; color: inherit; }
 .back svg { width: 18px; height: 18px; }
 body.conversation .metrics,
 body.conversation .controls,
-body.conversation .menu,
+body.conversation .mail-tabs,
+body.conversation .mail-tab-actions,
 body.conversation .board { display: none; }
 body.conversation { max-width: 1600px; }
 body.conversation .pane {

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=67" />
+  <link rel="stylesheet" href="/static/styles.css?v=68" />
 </head>
 <body>
   <header class="top">
@@ -64,37 +64,40 @@
     </button>
   </section>
 
-  <details id="waiting-menu" class="menu">
-    <summary>Aguardando resposta <span id="c-waiting">0</span></summary>
-    <div id="waiting" class="list"></div>
-  </details>
+  <div class="mail-tabs">
+    <button type="button" class="mail-tab on" data-list-tab="unread">Não lidos <span id="c-unread">0</span></button>
+    <button type="button" class="mail-tab" data-list-tab="waiting">Aguardando resposta <span id="c-waiting">0</span></button>
+    <button type="button" class="mail-tab" data-list-tab="automatic">Automáticos <span id="c-auto">0</span></button>
+    <button type="button" class="mail-tab" data-list-tab="promotions">Promoções <span id="c-promotions">0</span></button>
+    <button type="button" class="mail-tab" data-list-tab="sent">Enviados <span id="c-sent">0</span></button>
+  </div>
 
-  <details id="promotions-menu" class="menu">
-    <summary>Promoções <span id="c-promotions">0</span></summary>
-    <div id="promotions" class="list"></div>
-  </details>
-
-  <details id="sent-menu" class="menu">
-    <summary>Últimos enviados pela ferramenta <span id="c-sent">0</span></summary>
-    <div id="sent" class="list"></div>
-  </details>
+  <div class="mail-tab-actions">
+    <button type="button" id="btn-auto-read" class="ghost hidden" data-tooltip="Marcar todos automáticos como lidos no Gmail">
+      <svg style="width:16px;height:16px;vertical-align:middle;margin-right:2px" viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
+      Marcar lidos
+    </button>
+    <button type="button" id="btn-promo-read" class="ghost hidden" data-tooltip="Marcar todas as promoções não lidas como lidas no Gmail">
+      <svg style="width:16px;height:16px;vertical-align:middle;margin-right:2px" viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
+      Marcar lidos
+    </button>
+  </div>
 
   <section class="board">
-    <article>
-      <h2>Não lidos <span id="c-unread">0</span></h2>
+    <article data-list-panel="unread">
       <div id="unread" class="list"></div>
     </article>
-    <article>
-      <div class="auto-header">
-        <h2>Automáticos <span id="c-auto">0</span></h2>
-        <div class="auto-actions">
-          <button type="button" id="btn-auto-read" class="ghost" data-tooltip="Marcar todos automáticos como lidos no Gmail">
-            <svg style="width:16px;height:16px;vertical-align:middle;margin-right:2px" viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
-            Marcar lidos
-          </button>
-        </div>
-      </div>
+    <article data-list-panel="waiting" class="hidden">
+      <div id="waiting" class="list"></div>
+    </article>
+    <article data-list-panel="automatic" class="hidden">
       <div id="automatic" class="list"></div>
+    </article>
+    <article data-list-panel="promotions" class="hidden">
+      <div id="promotions" class="list"></div>
+    </article>
+    <article data-list-panel="sent" class="hidden">
+      <div id="sent" class="list"></div>
     </article>
   </section>
 
@@ -343,6 +346,6 @@
 
   <div id="original-email-popup" class="original-popup hidden"></div>
 
-  <script src="/static/app.js?v=67"></script>
+  <script src="/static/app.js?v=68"></script>
 </body>
 </html>
