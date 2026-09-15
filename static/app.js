@@ -49,9 +49,15 @@ function card(item) {
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.41 0 8 3.59 8 8 0 1.85-.63 3.55-1.69 4.9z"/></svg>
       </button>`
     : "";
-  return `<a class="card${item.fyi_only ? " fyi" : ""}" href="${href}" data-id="${item.id}">
-    <header>
-      <span class="from">${item.from_email || item.from_name}</span>
+  const from = escHtml(item.from_email || item.from_name || "");
+  const subject = escHtml(item.subject || "(sem assunto)");
+  const snippet = escHtml(item.snippet || "");
+  return `<a class="card${item.fyi_only ? " fyi" : ""}${item.is_unread ? " unread" : ""}" href="${href}" data-id="${item.id}">
+    <div class="row-main">
+      <span class="from" title="${from}">${from}</span>
+      <span class="subject-line">
+        <span class="subject-text">${subject}</span>${snippet ? ` <span class="snippet-text">— ${snippet}</span>` : ""}
+      </span>
       <span class="card-right">
         <span class="time">${item.time}</span>
         <span class="card-actions">
@@ -60,9 +66,7 @@ function card(item) {
           ${notInterested}
         </span>
       </span>
-    </header>
-    <div class="subject">${item.subject}</div>
-    <div class="snippet">${item.snippet || ""}</div>
+    </div>
     <div class="tags">${tags(item)}</div>
   </a>`;
 }

@@ -243,7 +243,7 @@ a.card { display: block; text-decoration: none; color: inherit; }
   border: 1px solid transparent;
   border-bottom: 1px solid var(--line);
   border-radius: 0;
-  padding: 8px 16px;
+  padding: 9px 16px;
   cursor: pointer;
   transition: background .1s;
 }
@@ -251,7 +251,31 @@ a.card { display: block; text-decoration: none; color: inherit; }
 .card:last-child { border-radius: 0 0 var(--radius) var(--radius); border-bottom: 1px solid var(--line); }
 .card:only-child { border-radius: var(--radius); }
 .card:hover { background: #f2f6fc; }
-.card header { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+/* Linha única no estilo Gmail: remetente | assunto — trecho, tudo truncado
+   numa linha só, com hora e ícones fixos à direita. */
+.row-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.from {
+  flex: 0 0 auto;
+  width: clamp(110px, 16vw, 200px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  font-size: 14px;
+  color: var(--ink);
+}
+.card.unread .from { font-weight: 700; }
+.subject-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.subject-text { font-weight: 400; }
+.card.unread .subject-text { font-weight: 700; color: var(--ink); }
+.snippet-text { color: var(--muted); font-weight: 400; }
 .card-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .card-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .quick-view-original {
@@ -301,10 +325,7 @@ a.card { display: block; text-decoration: none; color: inherit; }
 .quick-not-interested svg { width: 14px; height: 14px; }
 .quick-not-interested:hover { background: var(--red-soft); border-color: var(--red); color: var(--red); }
 .quick-not-interested:disabled { opacity: .5; }
-.from { font-weight: 500; font-size: 14px; }
 .time { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.subject { margin: 2px 0; font-size: 14px; }
-.snippet { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
 .tag {
   font-size: 11px;
@@ -321,7 +342,7 @@ a.card { display: block; text-decoration: none; color: inherit; }
 .tag.fyi { color: var(--muted); background: #f1f3f4; }
 .card.fyi { opacity: .68; }
 .card.fyi:hover { opacity: 1; }
-.card.fyi .subject { font-weight: 400; }
+.card.fyi .subject-text { font-weight: 400; }
 
 /* ── WAITING MENU ── */
 .menu {
