@@ -549,6 +549,13 @@ function renderBody(body) {
       const { name, email } = parseFrom(from);
       const { main, quoted } = splitQuoted(text);
       const last = i === blocks.length - 1;
+      // O toggle "Ver texto completo" fica no fim do texto principal --
+      // se a mensagem for longa, ninguém percebe que tem e-mail anterior
+      // citado escondido lá embaixo. Por isso também avisa logo no
+      // cabeçalho da mensagem, de forma clicável, pra achar sem rolar tudo.
+      const quotedHint = quoted
+        ? `<button type="button" class="msg-quoted-hint" data-tooltip="Esta mensagem cita um e-mail anterior -- clique pra ver">↩ e-mail anterior citado</button>`
+        : "";
       const quotedHtml = quoted
         ? `<div class="quote-toggle-row">
              <button type="button" class="quote-toggle">Ver texto completo</button>
@@ -559,18 +566,35 @@ function renderBody(body) {
         <div class="msg-head">
           <span class="avatar" data-email="${escHtml(email)}" style="background:${avatarColor(email || name)}">${escHtml(initials(name))}</span>
           <span class="msg-from">${escHtml(from)}</span>
+          ${quotedHint}
           <span class="msg-date">${escHtml(date)}</span>
         </div>
         <div class="msg-text">${linkify(main)}${quotedHtml}</div>
       </div>`;
     })
     .join("");
+  function toggleQuote(btn) {
+    const quotedEl = btn.closest(".msg-text").querySelector(".msg-quoted");
+    const nowHidden = quotedEl.classList.toggle("hidden");
+    btn.closest(".msg-text").querySelector(".quote-toggle").textContent = nowHidden
+      ? "Ver texto completo"
+      : "Ocultar texto citado";
+    return { quotedEl, nowHidden };
+  }
   el.querySelectorAll(".quote-toggle").forEach((btn) => {
     btn.onclick = (e) => {
       e.stopPropagation();
-      const quotedEl = btn.closest(".quote-toggle-row").nextElementSibling;
-      const nowHidden = quotedEl.classList.toggle("hidden");
-      btn.textContent = nowHidden ? "Ver texto completo" : "Ocultar texto citado";
+      toggleQuote(btn);
+    };
+  });
+  el.querySelectorAll(".msg-quoted-hint").forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const card = btn.closest(".msg-card");
+      card.classList.add("open");
+      const quoteToggle = card.querySelector(".quote-toggle");
+      const { quotedEl, nowHidden } = toggleQuote(quoteToggle);
+      if (!nowHidden) quotedEl.scrollIntoView({ behavior: "smooth", block: "center" });
     };
   });
   el.querySelectorAll(".msg-head").forEach((head) => {
