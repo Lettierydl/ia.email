@@ -364,47 +364,45 @@ $("btn-mark-all-read").onclick = async () => {
   }
 };
 
-// ── Mark all automatics as read ──
-$("btn-auto-read").onclick = async () => {
-  if (!lastAutoIds.length) return;
-  $("btn-auto-read").disabled = true;
-  $("btn-auto-read").textContent = "Marcando…";
-  try {
-    const res = await fetch("/api/mark-read", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids: lastAutoIds }),
-    });
-    if (res.ok) {
-      await loadRadar({ preload: false });
-    }
-  } finally {
-    $("btn-auto-read").disabled = false;
-    $("btn-auto-read").innerHTML =
-      '<svg style="width:16px;height:16px;vertical-align:middle;margin-right:2px" viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg> Marcar lidos';
-  }
-};
+// ── Marcar lidos em massa (Automáticos / Promoções) ──
+// Botão silenciava qualquer falha (permissão, erro do Gmail, etc): dava
+// a impressão de "não funciona" quando na real só não tinha feedback
+// nenhum. Agora mostra erro no banner se a chamada falhar, e avisa se
+// clicado sem nada pra marcar (defensivo -- o botão já fica disabled
+// nesse caso, mas evita ficar mudo se algo ficar dessincronizado).
+const MARK_READ_ICON =
+  '<svg style="width:16px;height:16px;vertical-align:middle;margin-right:2px" viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg> Marcar lidos';
 
-// ── Mark all promotions as read ──
-$("btn-promo-read").onclick = async () => {
-  if (!lastPromoUnreadIds.length) return;
-  $("btn-promo-read").disabled = true;
-  $("btn-promo-read").textContent = "Marcando…";
+async function markReadBulk(ids, btn) {
+  if (!ids.length) {
+    showBanner("Nada pra marcar como lido aqui.", true);
+    setTimeout(() => showBanner("", false), 2500);
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "Marcando…";
   try {
     const res = await fetch("/api/mark-read", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids: lastPromoUnreadIds }),
+      body: JSON.stringify({ ids }),
     });
+    const data = await res.json().catch(() => ({}));
     if (res.ok) {
       await loadRadar({ preload: false });
+    } else {
+      showBanner(bannerDetail(data), true);
     }
+  } catch {
+    showBanner("Falha de rede ao marcar como lido.", true);
   } finally {
-    $("btn-promo-read").disabled = false;
-    $("btn-promo-read").innerHTML =
-      '<svg style="width:16px;height:16px;vertical-align:middle;margin-right:2px" viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg> Marcar lidos';
+    btn.disabled = false;
+    btn.innerHTML = MARK_READ_ICON;
   }
-};
+}
+
+$("btn-auto-read").onclick = () => markReadBulk(lastAutoIds, $("btn-auto-read"));
+$("btn-promo-read").onclick = () => markReadBulk(lastPromoUnreadIds, $("btn-promo-read"));
 
 // ── Pane ──
 let paneId = null;
