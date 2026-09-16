@@ -1563,13 +1563,13 @@ $("modal-confirm").onclick = async () => {
   }
 };
 
-// Autocomplete de e-mail no campo Cc do modal de envio, baseado no
-// histórico de remetentes -- mesma ideia do apelido nas Configurações,
-// mas aqui funciona por segmento (o campo aceita vários e-mails
-// separados por vírgula).
-(function setupCcAutocomplete() {
-  const input = $("modal-cc");
-  const box = $("modal-cc-suggestions");
+// Autocomplete de e-mail baseado no histórico de remetentes -- mesma ideia
+// do apelido nas Configurações, funciona por segmento (o campo aceita
+// vários e-mails separados por vírgula). Reutilizado pelo Cc do modal de
+// resposta e pelo Para/Cc do compositor de e-mail novo.
+function setupEmailAutocomplete(inputId, boxId) {
+  const input = $(inputId);
+  const box = $(boxId);
   let timer = null;
 
   function currentSegment() {
@@ -1620,7 +1620,67 @@ $("modal-confirm").onclick = async () => {
   document.addEventListener("mousedown", (e) => {
     if (!box.contains(e.target) && e.target !== input) box.classList.add("hidden");
   });
-})();
+}
+setupEmailAutocomplete("modal-cc", "modal-cc-suggestions");
+setupEmailAutocomplete("compose-to", "compose-to-suggestions");
+setupEmailAutocomplete("compose-cc", "compose-cc-suggestions");
+
+// ── Compor e-mail novo (não é resposta a nenhuma thread) ──
+function openComposeModal() {
+  $("compose-to").value = "";
+  $("compose-cc").value = "";
+  $("compose-subject").value = "";
+  $("compose-body").value = "";
+  $("compose-status").textContent = "";
+  $("compose-modal").classList.remove("hidden");
+  $("compose-to").focus();
+}
+function closeComposeModal() {
+  $("compose-modal").classList.add("hidden");
+}
+$("btn-compose").onclick = openComposeModal;
+$("compose-cancel").onclick = closeComposeModal;
+$("compose-modal").onclick = (e) => {
+  if (e.target === $("compose-modal")) closeComposeModal();
+};
+$("compose-confirm").onclick = async () => {
+  const to = $("compose-to").value.trim();
+  const text = $("compose-body").value.trim();
+  if (!to) {
+    $("compose-status").textContent = "Informe pelo menos um destinatário.";
+    return;
+  }
+  if (!text) {
+    $("compose-status").textContent = "Escreva o e-mail antes de enviar.";
+    return;
+  }
+  $("compose-confirm").disabled = true;
+  $("compose-confirm").textContent = "Enviando…";
+  try {
+    const res = await fetch("/api/compose/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to,
+        cc: $("compose-cc").value.trim(),
+        subject: $("compose-subject").value.trim(),
+        text,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $("compose-status").textContent = data.detail || "Falha ao enviar.";
+      return;
+    }
+    closeComposeModal();
+    showBanner(`E-mail enviado para ${data.to}.`, true);
+    setTimeout(() => showBanner("", false), 4000);
+    loadRadar({ preload: false });
+  } finally {
+    $("compose-confirm").disabled = false;
+    $("compose-confirm").textContent = "Enviar agora";
+  }
+};
 
 // Botão de gerar ativa com texto na caixa OU com anotações pendentes
 // (dá pra mandar só anotação, sem escrever nada no campo livre).

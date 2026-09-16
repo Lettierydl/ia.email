@@ -41,6 +41,13 @@ class SendBody(BaseModel):
     cc: str = ""
 
 
+class ComposeBody(BaseModel):
+    to: str
+    cc: str = ""
+    subject: str = ""
+    text: str
+
+
 class RsvpBody(BaseModel):
     response: str
 
@@ -443,6 +450,29 @@ def thread_send(thread_id: str, body: SendBody):
     )
     for item in attachments.list_files(thread_id):
         attachments.delete_file(thread_id, item["name"])
+    return {"ok": True, **result}
+
+
+@app.post("/api/compose/send")
+def compose_send(body: ComposeBody):
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "Texto vazio.")
+    if not body.to.strip():
+        raise HTTPException(400, "Informe pelo menos um destinatário.")
+    try:
+        result = gmail_client.send_new(body.to, body.cc, body.subject, text)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, str(exc)) from exc
+    thread_id = result.get("thread_id")
+    if thread_id:
+        try:
+            gmail_client.refresh_thread(thread_id)
+            store.save_ai(thread_id, sent_via_app_at=int(datetime.now().timestamp() * 1000))
+        except Exception:
+            pass
     return {"ok": True, **result}
 
 

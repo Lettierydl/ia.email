@@ -915,6 +915,19 @@ body.conversation .pane {
   cursor: pointer;
 }
 .cc-resolution-opts button:hover { background: var(--blue-soft); border-color: var(--blue); }
+#compose-modal .modal-card { max-width: 560px; }
+.compose-body {
+  width: 100%;
+  min-height: 220px;
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+.controls .primary { font-size: 13px; padding: 6px 14px; white-space: nowrap; }
 .modal-preview {
   margin: 12px 0;
   padding: 12px;

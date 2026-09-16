@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=70" />
+  <link rel="stylesheet" href="/static/styles.css?v=72" />
 </head>
 <body>
   <header class="top">
@@ -56,6 +56,10 @@
   </section>
 
   <section class="controls">
+    <button type="button" id="btn-compose" class="primary" data-tooltip="Escrever um e-mail novo (não é resposta a nenhuma thread)">
+      <svg style="width:16px;height:16px;vertical-align:middle;margin-right:4px" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+      Novo e-mail
+    </button>
     <input id="q" type="search" placeholder="Buscar por remetente ou assunto" />
     <label><input type="checkbox" id="acao" /> só ação minha</label>
     <button type="button" id="btn-hidden" class="ghost">Restaurar ocultos (0)</button>
@@ -209,13 +213,13 @@
     <div class="modal-card">
       <h3>Enviar e-mail?</h3>
       <p class="modal-row"><strong>Para:</strong> <span id="modal-to"></span></p>
-      <p class="modal-row cc-row">
+      <div class="modal-row cc-row">
         <strong>Cc:</strong>
         <span class="alias-field-wrap">
           <input type="text" id="modal-cc" placeholder="opcional, e-mails separados por vírgula" autocomplete="off" />
           <div id="modal-cc-suggestions" class="alias-suggestions hidden"></div>
         </span>
-      </p>
+      </div>
       <p class="modal-row"><strong>Assunto:</strong> <span id="modal-subject"></span></p>
       <div id="modal-preview" class="modal-preview"></div>
       <p id="modal-attach-warning" class="modal-warning attach hidden">
@@ -225,6 +229,37 @@
       <div class="modal-actions">
         <button type="button" id="modal-cancel" class="ghost">Cancelar</button>
         <button type="button" id="modal-confirm" class="primary send-mail-btn">Enviar agora</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="compose-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3>Novo e-mail</h3>
+      <div class="modal-row cc-row">
+        <strong>Para:</strong>
+        <span class="alias-field-wrap">
+          <input type="text" id="compose-to" placeholder="e-mails separados por vírgula" autocomplete="off" />
+          <div id="compose-to-suggestions" class="alias-suggestions hidden"></div>
+        </span>
+      </div>
+      <div class="modal-row cc-row">
+        <strong>Cc:</strong>
+        <span class="alias-field-wrap">
+          <input type="text" id="compose-cc" placeholder="opcional, e-mails separados por vírgula" autocomplete="off" />
+          <div id="compose-cc-suggestions" class="alias-suggestions hidden"></div>
+        </span>
+      </div>
+      <div class="modal-row cc-row">
+        <strong>Assunto:</strong>
+        <input type="text" id="compose-subject" placeholder="assunto do e-mail" autocomplete="off" />
+      </div>
+      <textarea id="compose-body" class="compose-body" placeholder="Escreva o e-mail…"></textarea>
+      <p id="compose-status" class="muted"></p>
+      <p class="modal-warning">Essa ação é definitiva — o e-mail sai imediatamente e não pode ser desfeito.</p>
+      <div class="modal-actions">
+        <button type="button" id="compose-cancel" class="ghost">Cancelar</button>
+        <button type="button" id="compose-confirm" class="primary send-mail-btn">Enviar agora</button>
       </div>
     </div>
   </div>
@@ -346,6 +381,6 @@
 
   <div id="original-email-popup" class="original-popup hidden"></div>
 
-  <script src="/static/app.js?v=70"></script>
+  <script src="/static/app.js?v=72"></script>
 </body>
 </html>

@@ -632,3 +632,37 @@ def send_reply(thread_id: str, body_text: str, cc: str = "") -> dict:
         .send(userId="me", body={"raw": raw_bytes, "threadId": thread_id})
     )
     return {"id": sent.get("id"), "to": to_addr, "cc": cc_clean, "subject": subject}
+
+
+def send_new(to: str, cc: str, subject: str, body_text: str) -> dict:
+    """E-mail do zero, sem responder nenhuma thread existente -- ao
+    contrário de send_reply, não tem In-Reply-To/References nem
+    threadId: o Gmail abre uma conversa nova."""
+    creds = load_credentials()
+    if not creds:
+        raise RuntimeError("Gmail nao autenticado.")
+    if not has_send_scope(creds):
+        raise RuntimeError(
+            "Reautorize o Gmail (Entrar no Gmail): o app precisa de gmail.send para enviar."
+        )
+    to_clean = ", ".join(addr for addr in (a.strip() for a in (to or "").split(",")) if addr)
+    if not to_clean:
+        raise RuntimeError("Informe pelo menos um destinatário.")
+    service = _service(creds)
+    msg = MIMEText(body_text)
+    msg["To"] = to_clean
+    cc_clean = ", ".join(addr for addr in (a.strip() for a in (cc or "").split(",")) if addr)
+    if cc_clean:
+        msg["Cc"] = cc_clean
+    msg["From"] = formataddr(("Lettiery D'Lamare", ACCOUNT))
+    msg["Subject"] = subject.strip() or "(sem assunto)"
+
+    raw_bytes = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    sent = _execute(service.users().messages().send(userId="me", body={"raw": raw_bytes}))
+    return {
+        "id": sent.get("id"),
+        "thread_id": sent.get("threadId"),
+        "to": to_clean,
+        "cc": cc_clean,
+        "subject": msg["Subject"],
+    }
