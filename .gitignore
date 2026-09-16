@@ -6,3 +6,6 @@ __pycache__/
 
 data/
 
+desktop/node_modules/
+desktop/dist/
+

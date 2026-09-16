@@ -1,0 +1,29 @@
+{
+  "name": "ia-email-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "IA.Email em janela nativa (Electron) -- sobe o mesmo backend Docker do projeto e mostra a mesma tela, sem precisar abrir o navegador.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "br.com.confrapag.iaemail",
+    "productName": "IA.Email",
+    "files": [
+      "main.js",
+      "preload.js",
+      "icon.png"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg", "zip"],
+      "icon": "icon.png"
+    }
+  }
+}

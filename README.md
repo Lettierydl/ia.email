@@ -33,3 +33,9 @@ Cliente OAuth: tipo **Desktop**, Gmail API ligada. Redirect usado:
 No Google Cloud, se o login falhar com `redirect_uri_mismatch`, acrescente esse URI (ou use Desktop, que aceita loopback).
 
 Token fica em `data/gmail-token.json` (nao versionado). Escopos atuais: `gmail.modify` e `gmail.send`.
+
+## App de mesa (Electron)
+
+Prefere uma janela própria em vez de aba do navegador? `desktop/` tem um
+wrapper Electron que sobe o mesmo Docker e abre a mesma tela numa janela
+nativa — veja `desktop/README.md`.
