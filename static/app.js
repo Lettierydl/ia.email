@@ -7,7 +7,7 @@ const $ = (id) => document.getElementById(id);
 if ("scrollRestoration" in history) history.scrollRestoration = "manual";
 const LIST_SCROLL_KEY = "ia_email_list_scroll";
 window.addEventListener("pagehide", () => {
-  if (!mailPathId()) sessionStorage.setItem(LIST_SCROLL_KEY, String(window.scrollY));
+  if (location.pathname === "/") sessionStorage.setItem(LIST_SCROLL_KEY, String(window.scrollY));
 });
 
 let restoreHidden = false;
@@ -1625,37 +1625,136 @@ setupEmailAutocomplete("modal-cc", "modal-cc-suggestions");
 setupEmailAutocomplete("compose-to", "compose-to-suggestions");
 setupEmailAutocomplete("compose-cc", "compose-cc-suggestions");
 
-// ── Compor e-mail novo (não é resposta a nenhuma thread) ──
-function openComposeModal() {
-  $("compose-to").value = "";
-  $("compose-cc").value = "";
-  $("compose-subject").value = "";
-  $("compose-body").value = "";
-  $("compose-status").textContent = "";
-  $("compose-modal").classList.remove("hidden");
-  $("compose-to").focus();
+// ── Compor e-mail novo -- mesma dinâmica de chat da resposta (instrução ->
+// IA escreve o rascunho -> revisa -> envia), só que sem thread nenhuma por
+// trás. Estado fica só em memória (composeChatHistory): não existe row no
+// banco pra pendurar isso até o e-mail sair de verdade.
+function composePathActive() {
+  return location.pathname === "/compose";
 }
-function closeComposeModal() {
-  $("compose-modal").classList.add("hidden");
+
+let composeChatHistory = [];
+
+function lastComposeDraft() {
+  for (let i = composeChatHistory.length - 1; i >= 0; i--) {
+    const m = composeChatHistory[i];
+    if (m.role === "ai" && m.kind !== "answer") return m.text;
+  }
+  return "";
 }
-$("btn-compose").onclick = openComposeModal;
-$("compose-cancel").onclick = closeComposeModal;
-$("compose-modal").onclick = (e) => {
-  if (e.target === $("compose-modal")) closeComposeModal();
+
+function renderComposeChat() {
+  const el = $("compose-chat-messages");
+  el.innerHTML = composeChatHistory
+    .map((msg, idx) => {
+      if (msg.role === "user") return `<div class="chat-msg user">${escHtml(msg.text)}</div>`;
+      const ccHtml = renderCcResolution(msg, idx);
+      if (msg.kind === "answer") {
+        return `<div class="chat-msg ai answer"><div class="draft-label">Resposta</div>${escHtml(msg.text)}${ccHtml}</div>`;
+      }
+      return `<div class="chat-msg ai"><div class="draft-label">Rascunho</div>${escHtml(msg.text)}${ccHtml}</div>`;
+    })
+    .join("");
+  el.querySelectorAll("[data-cc-pick]").forEach((btn) => {
+    btn.onclick = () => {
+      const [msgIdx, ccIdx] = btn.dataset.ccPick.split(":").map(Number);
+      const entry = composeChatHistory[msgIdx] && composeChatHistory[msgIdx].cc_resolution[ccIdx];
+      if (!entry) return;
+      entry.chosen = btn.dataset.ccEmail || "(nenhum)";
+      if (btn.dataset.ccEmail) addPendingCc(btn.dataset.ccEmail);
+      renderComposeChat();
+    };
+  });
+  el.scrollTop = el.scrollHeight;
+  updateComposeSendBar();
+}
+
+function updateComposeSendBar() {
+  const draft = lastComposeDraft();
+  const bar = $("compose-send-bar");
+  if (!draft) {
+    bar.classList.add("hidden");
+    $("compose-send").disabled = true;
+    return;
+  }
+  bar.classList.remove("hidden");
+  $("compose-send-target").textContent = `Para: ${$("compose-to").value.trim() || "?"}`;
+  $("compose-send").disabled = !canSend;
+  $("compose-send").title = canSend ? "" : "Reautorize o Gmail (Entrar no Gmail) para poder enviar.";
+}
+
+$("compose-instr").addEventListener("input", function () {
+  this.style.height = "auto";
+  this.style.height = Math.min(this.scrollHeight, 280) + "px";
+  $("compose-gen").disabled = !this.value.trim();
+});
+$("compose-instr").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    $("compose-gen").click();
+  }
+});
+
+$("compose-gen").onclick = async () => {
+  const freeText = $("compose-instr").value.trim();
+  if (!freeText) return;
+  composeChatHistory.push({ role: "user", text: freeText });
+  renderComposeChat();
+  $("compose-instr").value = "";
+  $("compose-instr").style.height = "auto";
+  $("compose-gen").disabled = true;
+  try {
+    const res = await fetch("/api/compose/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: $("compose-to").value.trim(),
+        subject: $("compose-subject").value.trim(),
+        instruction: freeText,
+        comment: "",
+        chat: composeChatHistory,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showBanner(data.detail || "Falha ao gerar rascunho.", true);
+      return;
+    }
+    const aiMsg = { role: "ai", text: data.text, kind: data.kind };
+    if (data.cc_resolution) aiMsg.cc_resolution = data.cc_resolution;
+    composeChatHistory.push(aiMsg);
+    applyCcResolution(aiMsg);
+    renderComposeChat();
+  } catch {
+    showBanner("Falha de rede ao gerar rascunho.", true);
+  } finally {
+    $("compose-gen").disabled = !$("compose-instr").value.trim();
+  }
 };
-$("compose-confirm").onclick = async () => {
+
+function openComposeSendModal() {
+  const text = lastComposeDraft();
+  if (!text) return;
+  $("compose-modal-to").textContent = $("compose-to").value.trim() || "(vazio)";
+  $("compose-modal-cc").textContent = $("compose-cc").value.trim() || "(nenhum)";
+  $("compose-modal-subject").textContent = $("compose-subject").value.trim() || "(sem assunto)";
+  $("compose-modal-preview").textContent = text;
+  $("compose-send-modal").classList.remove("hidden");
+}
+function closeComposeSendModal() {
+  $("compose-send-modal").classList.add("hidden");
+}
+$("compose-send").onclick = openComposeSendModal;
+$("compose-modal-cancel").onclick = closeComposeSendModal;
+$("compose-send-modal").onclick = (e) => {
+  if (e.target === $("compose-send-modal")) closeComposeSendModal();
+};
+$("compose-modal-confirm").onclick = async () => {
+  const text = lastComposeDraft();
   const to = $("compose-to").value.trim();
-  const text = $("compose-body").value.trim();
-  if (!to) {
-    $("compose-status").textContent = "Informe pelo menos um destinatário.";
-    return;
-  }
-  if (!text) {
-    $("compose-status").textContent = "Escreva o e-mail antes de enviar.";
-    return;
-  }
-  $("compose-confirm").disabled = true;
-  $("compose-confirm").textContent = "Enviando…";
+  if (!text || !to) return;
+  $("compose-modal-confirm").disabled = true;
+  $("compose-modal-confirm").textContent = "Enviando…";
   try {
     const res = await fetch("/api/compose/send", {
       method: "POST",
@@ -1668,18 +1767,26 @@ $("compose-confirm").onclick = async () => {
       }),
     });
     const data = await res.json().catch(() => ({}));
+    closeComposeSendModal();
     if (!res.ok) {
-      $("compose-status").textContent = data.detail || "Falha ao enviar.";
+      showBanner(data.detail || "Falha ao enviar.", true);
       return;
     }
-    closeComposeModal();
     showBanner(`E-mail enviado para ${data.to}.`, true);
-    setTimeout(() => showBanner("", false), 4000);
-    loadRadar({ preload: false });
+    setTimeout(() => {
+      window.location.href = "/";
+    }, 900);
   } finally {
-    $("compose-confirm").disabled = false;
-    $("compose-confirm").textContent = "Enviar agora";
+    $("compose-modal-confirm").disabled = false;
+    $("compose-modal-confirm").textContent = "Enviar agora";
   }
+};
+
+$("compose-close").onclick = () => {
+  window.location.href = "/";
+};
+$("btn-compose").onclick = () => {
+  window.location.href = "/compose";
 };
 
 // Botão de gerar ativa com texto na caixa OU com anotações pendentes
@@ -2252,6 +2359,12 @@ function wrapSelectionAsAnnotation(range) {
 (async () => {
   const mailId = mailPathId();
   const status = await loadStatus();
+  if (composePathActive()) {
+    document.body.classList.add("composing");
+    $("compose-page").classList.remove("hidden");
+    $("compose-to").focus();
+    return;
+  }
   if (mailId) {
     document.body.classList.add("conversation");
     $("back-inbox").classList.remove("hidden");

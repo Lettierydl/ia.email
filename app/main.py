@@ -48,6 +48,14 @@ class ComposeBody(BaseModel):
     text: str
 
 
+class ComposeDraftBody(BaseModel):
+    to: str = ""
+    subject: str = ""
+    instruction: str = ""
+    comment: str = ""
+    chat: List[dict] = []
+
+
 class RsvpBody(BaseModel):
     response: str
 
@@ -92,6 +100,11 @@ def favicon():
 
 @app.get("/mail/{thread_id}")
 def mail_page(thread_id: str):
+    return _index()
+
+
+@app.get("/compose")
+def compose_page():
     return _index()
 
 
@@ -451,6 +464,16 @@ def thread_send(thread_id: str, body: SendBody):
     for item in attachments.list_files(thread_id):
         attachments.delete_file(thread_id, item["name"])
     return {"ok": True, **result}
+
+
+@app.post("/api/compose/draft")
+def compose_draft(body: ComposeDraftBody):
+    try:
+        return assistant.compose_draft(body.to, body.subject, body.instruction, body.comment, body.chat)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 @app.post("/api/compose/send")

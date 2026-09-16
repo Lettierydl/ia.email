@@ -492,6 +492,69 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
         }
 
 
+def _chat_transcript(chat: list[dict]) -> str:
+    lines = []
+    for msg in chat:
+        if msg.get("placeholder"):
+            continue
+        who = "Leo" if msg.get("role") == "user" else "Você (IA)"
+        lines.append(f"{who}: {msg.get('text', '')}")
+    return "\n".join(lines)
+
+
+def compose_draft(to: str, subject: str, instruction: str, comment: str, chat: list[dict]) -> dict:
+    """Mesmo motor do draft() de resposta, mas pra um e-mail do zero --
+    sem thread_id nem corpo de e-mail anterior pra ler. Sem lock nem
+    persistência própria: quem chama (o compositor no front) segura o
+    histórico da conversa em memória e manda de volta a cada mensagem,
+    já que não existe uma thread no banco pra pendurar isso até o envio."""
+    if not llm.has_key():
+        raise RuntimeError("Falta chave de LLM (Claude/Gemini/OpenRouter) para gerar rascunho.")
+    email_match = _EMAIL_RE.search(instruction or "")
+    pending_query = _pending_cc_query(chat) if email_match else None
+    if email_match and pending_query:
+        email = email_match.group(0).lower()
+        store.save_alias(alias=pending_query, name=pending_query, email=email)
+        return {
+            "kind": "answer",
+            "text": f'Beleza, salvei "{pending_query}" = {email} como apelido -- da próxima vez '
+            f"resolvo direto. Vou copiar esse e-mail nessa resposta.",
+            "cc_resolution": [
+                {
+                    "query": pending_query,
+                    "status": "resolved",
+                    "candidates": [{"name": pending_query, "email": email}],
+                }
+            ],
+        }
+
+    raw = llm.complete(
+        'Responda em JSON: {"kind": "draft" ou "answer", "text": "...", "cc_names": [...]}.\n'
+        'Use kind="draft" quando a instrução pede pra escrever/ajustar o e-mail -- text deve ser '
+        "só o corpo do e-mail (sem assunto, sem markdown).\n"
+        'Use kind="answer" quando a instrução é uma pergunta sobre o que está sendo escrito, não um '
+        "pedido de texto -- text é uma resposta direta em português, curta, sem virar e-mail.\n"
+        "cc_names: se a instrução pedir pra adicionar, copiar, incluir ou envolver alguém no e-mail "
+        "(Cc), liste cada nome/apelido mencionado como uma string nesse array. NÃO invente e-mail, "
+        "NÃO escreva e-mail nesse campo, só o nome como o Leo escreveu. Não inclua o próprio Leo. "
+        "Array vazio se ninguém foi pedido pra ser adicionado.\n\n"
+        f"{_draft_extra_context(instruction)}"
+        "Este é um e-mail NOVO que o Leo está escrevendo do zero (não é resposta a nenhuma thread "
+        "existente).\n"
+        f"Para: {to or '(não preenchido ainda)'}\n"
+        f"Assunto: {subject or '(sem assunto)'}\n"
+        f"Instrução do Leo: {instruction or '(gerar a partir do que já foi conversado)'}\n"
+        f"Ajuste pedido: {comment or '(nenhum)'}\n"
+        f"Conversa até agora:\n{_chat_transcript(chat) or '(nenhuma)'}"
+    )
+    kind, text, cc_names = _parse_draft_response(raw)
+    cc_resolution = _resolve_cc_names(cc_names)
+    result: dict = {"kind": kind, "text": text}
+    if cc_resolution:
+        result["cc_resolution"] = cc_resolution
+    return result
+
+
 def _slug(text: str, max_len: int = 60) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
     return slug[:max_len] or "sem-assunto"

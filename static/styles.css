@@ -110,6 +110,8 @@ button {
 .icon-btn:hover { background: #e8eaed; }
 .icon-btn svg { width: 20px; height: 20px; }
 .icon-btn.spinning svg { animation: spin .8s linear infinite; }
+.compose-btn { background: var(--blue); color: #fff; flex-shrink: 0; }
+.compose-btn:hover { background: var(--blue-dark); }
 @keyframes spin { to { transform: rotate(360deg); } }
 .hidden { display: none !important; }
 
@@ -405,6 +407,17 @@ body.conversation .pane {
   }
   body.conversation .split-label { display: block; }
 }
+
+/* ── Página de e-mail novo (mesmo chat de IA da resposta, sem thread) ── */
+body.composing .metrics,
+body.composing .controls,
+body.composing .mail-tabs,
+body.composing .mail-tab-actions,
+body.composing .board { display: none; }
+body.composing { max-width: 760px; }
+#compose-page .pane-header { border-bottom: 1px solid var(--line); padding: 16px 8px 12px; align-items: flex-start; }
+#compose-page .cc-row { margin-bottom: 8px; }
+#compose-page .pane-body-wrap { padding: 16px 8px 32px; }
 .split-label {
   display: none;
   font-size: 13px;

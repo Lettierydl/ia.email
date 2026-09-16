@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=72" />
+  <link rel="stylesheet" href="/static/styles.css?v=73" />
 </head>
 <body>
   <header class="top">
@@ -56,9 +56,8 @@
   </section>
 
   <section class="controls">
-    <button type="button" id="btn-compose" class="primary" data-tooltip="Escrever um e-mail novo (não é resposta a nenhuma thread)">
-      <svg style="width:16px;height:16px;vertical-align:middle;margin-right:4px" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-      Novo e-mail
+    <button type="button" id="btn-compose" class="icon-btn compose-btn" data-tooltip="Escrever um e-mail novo (não é resposta a nenhuma thread)">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
     </button>
     <input id="q" type="search" placeholder="Buscar por remetente ou assunto" />
     <label><input type="checkbox" id="acao" /> só ação minha</label>
@@ -103,6 +102,55 @@
     <article data-list-panel="sent" class="hidden">
       <div id="sent" class="list"></div>
     </article>
+  </section>
+
+  <section id="compose-page" class="hidden">
+    <div class="pane-header">
+      <div style="flex:1">
+        <div class="modal-row cc-row">
+          <strong>Para:</strong>
+          <span class="alias-field-wrap">
+            <input type="text" id="compose-to" placeholder="e-mails separados por vírgula" autocomplete="off" />
+            <div id="compose-to-suggestions" class="alias-suggestions hidden"></div>
+          </span>
+        </div>
+        <div class="modal-row cc-row">
+          <strong>Cc:</strong>
+          <span class="alias-field-wrap">
+            <input type="text" id="compose-cc" placeholder="opcional, e-mails separados por vírgula" autocomplete="off" />
+            <div id="compose-cc-suggestions" class="alias-suggestions hidden"></div>
+          </span>
+        </div>
+        <div class="modal-row cc-row">
+          <strong>Assunto:</strong>
+          <input type="text" id="compose-subject" placeholder="assunto do e-mail" autocomplete="off" />
+        </div>
+      </div>
+      <div class="pane-actions">
+        <button type="button" id="compose-close" class="icon-btn" data-tooltip="Fechar">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="pane-body-wrap">
+      <div class="compose-area">
+        <div id="compose-chat-messages" class="chat-messages"></div>
+        <div id="compose-send-bar" class="send-bar hidden">
+          <span id="compose-send-target" class="send-target"></span>
+          <button type="button" id="compose-send" class="primary send-mail-btn">
+            <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px;vertical-align:middle;margin-right:4px"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+            Enviar e-mail
+          </button>
+        </div>
+        <div class="compose-input-row">
+          <textarea id="compose-instr" rows="3" placeholder="Diga o que você quer escrever..."></textarea>
+          <button type="button" id="compose-gen" class="send-btn" data-tooltip="Gerar rascunho" disabled>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 7v4H5.83l3.58-3.59L8 6l-6 6 6 6 1.41-1.41L5.83 13H21V7z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
   </section>
 
   <aside id="pane" class="pane hidden">
@@ -233,33 +281,17 @@
     </div>
   </div>
 
-  <div id="compose-modal" class="modal-overlay hidden">
+  <div id="compose-send-modal" class="modal-overlay hidden">
     <div class="modal-card">
-      <h3>Novo e-mail</h3>
-      <div class="modal-row cc-row">
-        <strong>Para:</strong>
-        <span class="alias-field-wrap">
-          <input type="text" id="compose-to" placeholder="e-mails separados por vírgula" autocomplete="off" />
-          <div id="compose-to-suggestions" class="alias-suggestions hidden"></div>
-        </span>
-      </div>
-      <div class="modal-row cc-row">
-        <strong>Cc:</strong>
-        <span class="alias-field-wrap">
-          <input type="text" id="compose-cc" placeholder="opcional, e-mails separados por vírgula" autocomplete="off" />
-          <div id="compose-cc-suggestions" class="alias-suggestions hidden"></div>
-        </span>
-      </div>
-      <div class="modal-row cc-row">
-        <strong>Assunto:</strong>
-        <input type="text" id="compose-subject" placeholder="assunto do e-mail" autocomplete="off" />
-      </div>
-      <textarea id="compose-body" class="compose-body" placeholder="Escreva o e-mail…"></textarea>
-      <p id="compose-status" class="muted"></p>
+      <h3>Enviar e-mail?</h3>
+      <p class="modal-row"><strong>Para:</strong> <span id="compose-modal-to"></span></p>
+      <p class="modal-row"><strong>Cc:</strong> <span id="compose-modal-cc"></span></p>
+      <p class="modal-row"><strong>Assunto:</strong> <span id="compose-modal-subject"></span></p>
+      <div id="compose-modal-preview" class="modal-preview"></div>
       <p class="modal-warning">Essa ação é definitiva — o e-mail sai imediatamente e não pode ser desfeito.</p>
       <div class="modal-actions">
-        <button type="button" id="compose-cancel" class="ghost">Cancelar</button>
-        <button type="button" id="compose-confirm" class="primary send-mail-btn">Enviar agora</button>
+        <button type="button" id="compose-modal-cancel" class="ghost">Cancelar</button>
+        <button type="button" id="compose-modal-confirm" class="primary send-mail-btn">Enviar agora</button>
       </div>
     </div>
   </div>
@@ -381,6 +413,6 @@
 
   <div id="original-email-popup" class="original-popup hidden"></div>
 
-  <script src="/static/app.js?v=72"></script>
+  <script src="/static/app.js?v=73"></script>
 </body>
 </html>
