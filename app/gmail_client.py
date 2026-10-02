@@ -203,6 +203,16 @@ def _header_map(payload: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def list_sent_thread_ids(limit: int = 150) -> list[str]:
+    """IDs de threads do Enviados -- usado pelo piloto automatico pra
+    aprender os padroes de resposta reais do Leo, nao so o que passou pelo
+    IA.Email. Reaproveita `_list_ids`, que ja e generico sobre a query."""
+    creds = load_credentials()
+    if not creds:
+        raise RuntimeError("Gmail nao autenticado.")
+    return _list_ids(_service(creds), "in:sent", limit)
+
+
 def refresh_thread(thread_id: str) -> None:
     """Re-busca uma unica thread no Gmail e atualiza a classificacao local."""
     creds = load_credentials()

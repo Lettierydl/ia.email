@@ -4,10 +4,19 @@ import json
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from . import context_base, gmail_client, llm, store
-from .config import CONTEXT_GLOBAL_MAX_CHARS, CONTEXT_MD, EMAIL_EXPORT_DIR, EMAIL_EXPORT_RETENTION_DAYS
+from . import attachments, context_base, gmail_client, llm, rag, secrets_guard, store, summary_templates
+from .config import (
+    ACCOUNT,
+    CONTEXT_GLOBAL_MAX_CHARS,
+    CONTEXT_MD,
+    EMAIL_EXPORT_RETENTION_DAYS,
+    LB_COMPANY_DIR,
+    LB_PERSONAL_DIR,
+    LEARNING_BASE_GLOBAL_DEFAULT,
+)
+from .preload import pick_preload
 
 # Pasta-mãe de todas as categorias de captura (cada uma com README.md
 # descrevendo o assunto + context.md pra acumular fatos, mesmo padrão que
@@ -40,64 +49,21 @@ def _lock_for(thread_id: str) -> threading.Lock:
         return lock
 
 
-SUMARIO_SYSTEM = """Você resume e-mails para Leo (TI/Confrapag). Português do Brasil.
-Nunca copie o e-mail. Nunca cole URL do Gmail (google.com/url).
-Formato obrigatório do campo resumo, em texto puro:
-
-Pedido: uma linha com o que o remetente quer de Leo.
-Fatos:
-- 3 a 6 bullets com números, prazos, sistemas e nomes citados
-Decisão/ação de Leo:
-- o que ele precisa validar, responder ou fazer
-Ruído: uma linha se houver (cópia, marketing, aceite de agenda) ou "nenhum".
-
-Se faltar evidência, escreva "Não identificado". Sem tom alarmista.
-
-Marque so_copia=true quando Leo está apenas em cópia/FYI e o e-mail não pede
-nada dele: atas de reunião distribuídas em massa, avisos de status entre
-outras pessoas, threads onde a decisão já foi resolvida por terceiros, etc.
-so_copia=true mesmo que o assunto pareça importante, desde que não haja
-pedido/decisão direta a Leo. Nesse caso acao_leo deve ser false também.
-
-Preencha nota_captura APENAS quando o e-mail tiver um fato durável que valha
-guardar num arquivo de referência pessoal do Leo (uma decisão tomada, uma
-regra/política definida, um número ou acordo que vai ser consultado depois).
-Não preencha para chamados pontuais, cobranças rotineiras ou "ainda em
-aberto". Se preencher, escreva 1-2 linhas objetivas, estilo nota de
-referência (fato + data + quem decidiu), sem floreio. Deixe "" se não houver
-nada que valha a pena.
-
-Marque eh_propaganda=true para e-mail comercial/institucional de terceiros
-sem relação de trabalho direta com Leo: convite de webinar, newsletter,
-divulgação de produto/parceria, prospecção comercial (ex.: fornecedor
-oferecendo serviço). NÃO marque para comunicação interna da Confrapag/Pulse/
-Stalopay nem para threads de trabalho com clientes, parceiros ou fornecedores
-já em relação ativa (mesmo que peça pra "conhecer uma solução").
-"""
-
-SUMARIO_EXEMPLO = """Exemplo de resumo bom:
-Pedido: Paulo pede validação técnica se Confrapag pode ser EC de operação.
-Fatos:
-- Confrapag está como EC/LA no tenant Pague Assim e gerou R$ 9.813,07 de comissão em 2026
-- Pede 4 checagens: path_percent zerado, papéis OP/WL/EC, marcação de conta interna, esforço/prazo
-- Limpeza de 3 sellers no CNPJ e correção de débito F6 de R$ 2.451,60
-Decisão/ação de Leo:
-- Confirmar se a comissão foi combinada e como travar comissão zero
-Ruído: nenhum."""
-
-
-def _looks_verbatim(summary: str, body: str, snippet: str) -> bool:
+def _looks_verbatim(summary: str, body: str, snippet: str, strict_format: bool = True) -> bool:
     text = (summary or "").strip()
     if not text:
         return True
     if "google.com/url" in text.lower():
         return True
-    if not text.startswith(("Pedido:", "pedido:")) and "\n-" not in text and "Fatos:" not in text:
-        seed = (snippet or body or "").strip()[:80]
-        if seed and seed[:40] in text:
-            return True
-        if text.count("\n") < 2 and len(text) > 280:
-            return True
+    seed = (snippet or body or "").strip()[:80]
+    if strict_format:
+        if not text.startswith(("Pedido:", "pedido:")) and "\n-" not in text and "Fatos:" not in text:
+            if seed and seed[:40] in text:
+                return True
+            if text.count("\n") < 2 and len(text) > 280:
+                return True
+    elif seed and len(seed) >= 40 and seed[:40] in text:
+        return True
     return False
 
 
@@ -204,6 +170,7 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
                 row.get("summary") or "",
                 row.get("body_text") or body,
                 row.get("snippet") or "",
+                summary_templates.is_default(store.get_settings()),
             ):
                 return {
                     "id": thread_id,
@@ -236,26 +203,24 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
                 "warning": "Sem chave de LLM (Claude/Gemini/OpenRouter): não dá para resumir no estilo do painel. Cole uma chave no .env do cérebro.",
             }
         subject = row.get("subject") or ""
+        settings = store.get_settings()
         raw = llm.complete(
-            f"{SUMARIO_EXEMPLO}\n\n"
+            f"{summary_templates.example(settings)}\n\n"
             "Agora resuma ESTA thread. JSON apenas:\n"
-            '{"resumo":"Pedido: ...\\nFatos:\\n- ...\\nDecisão/ação de Leo:\\n- ...\\nRuído: ...",'
-            '"acao_leo":true,'
-            '"sugestao":"",'
-            '"so_copia":false,'
-            '"nota_captura":"",'
-            '"eh_propaganda":false}\n'
+            f"{summary_templates.json_spec()}\n"
             "sugestao só se der para responder sem inventar; senão string vazia.\n"
             "acao_leo=true só se pede decisão/validação direta do Leo.\n"
             "so_copia=true se Leo só está em cópia/FYI, sem nada pra fazer (ver regra no system).\n"
             "nota_captura só se houver fato durável pra guardar (ver regra no system).\n"
             "eh_propaganda só pra e-mail comercial de terceiros (ver regra no system).\n\n"
             f"Assunto: {subject}\n\n{_recent_body(body)}",
-            system=llm.SYSTEM + "\n" + SUMARIO_SYSTEM,
+            system=llm.SYSTEM + "\n" + summary_templates.build_system(settings),
         )
         parsed = _parse_json(raw)
+        if secrets_guard.looks_like_secret(parsed["nota_captura"]):
+            parsed["nota_captura"] = ""  # nunca sugerir guardar senha/credencial no cérebro
         summary = parsed["resumo"] or raw
-        if _looks_verbatim(summary, body, row.get("snippet") or ""):
+        if _looks_verbatim(summary, body, row.get("snippet") or "", summary_templates.is_default(settings)):
             summary = (
                 "Pedido: Não identificado com segurança (o modelo devolveu o texto do e-mail).\n"
                 "Fatos:\n- Abra Texto completo e gere o resumo de novo.\n"
@@ -279,6 +244,7 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
             save_kwargs["capture_note"] = parsed["nota_captura"]
             save_kwargs["capture_status"] = "pending"
         store.save_ai(thread_id, **save_kwargs)
+        store.log_event("summary", thread_id)
         return {
             "id": thread_id,
             "subject": row.get("subject") or "",
@@ -302,23 +268,49 @@ def _style_instructions(settings: dict) -> str:
 
 
 def _alias_glossary() -> str:
-    aliases = store.list_aliases()
-    lines = [
-        f'- "{a["alias"]}" = {a["name"]} <{a["email"]}>'
-        for a in aliases
-        if a.get("name") or a.get("email")
-    ]
+    """Uma linha por PESSOA (vários apelidos para o mesmo e-mail ficam juntos),
+    em vez de uma linha por apelido: menos texto no prompt e deixa claro que
+    "rodrigo" e "rodrigo henrrique" são a mesma pessoa."""
+    groups: dict[str, dict] = {}
+    for a in store.list_aliases():
+        if not (a.get("name") or a.get("email")):
+            continue
+        key = (a.get("email") or "").lower() or a["alias"]
+        g = groups.setdefault(key, {"name": a.get("name") or a["alias"], "email": a.get("email") or "", "aliases": []})
+        g["aliases"].append(a["alias"])
+    lines = []
+    for g in groups.values():
+        names = " ou ".join(f'"{x}"' for x in g["aliases"])
+        target = f'{g["name"]} <{g["email"]}>' if g["email"] else g["name"]
+        lines.append(f"- {names} = {target}")
     if not lines:
         return ""
     return "Apelidos que o Leo usa pra se referir a pessoas (resolva assim quando aparecer na instrução):\n" + "\n".join(lines)
 
 
-def _draft_extra_context(instruction: str) -> str:
+def _rag_context(query_text: str, exclude_ref: str | None = None) -> str:
+    settings = store.get_settings()
+    hits = rag.search(query_text, k=int(settings.get("rag_top_k") or 6), exclude_ref=exclude_ref)
+    return rag.format_context(hits)
+
+
+def _draft_extra_context(instruction: str, query_text: str = "", exclude_ref: str | None = None) -> str:
     settings = store.get_settings()
     blocks = [f"Estilo de escrita pedido:\n{_style_instructions(settings)}"]
     glossary = _alias_glossary()
     if glossary:
         blocks.append(glossary)
+    if settings.get("rag_enabled", True):
+        # Busca só o que é relevante pra ESTE e-mail (cérebro + histórico),
+        # em vez de despejar os arquivos mais recentes que couberem.
+        snippet = _rag_context(f"{instruction}\n{query_text}", exclude_ref)
+        if snippet:
+            blocks.append(
+                "Trechos mais relevantes do cérebro do Leo e do histórico de e-mails dele (decisões "
+                "anteriores, respostas parecidas, regras) -- use só o que for realmente pertinente à "
+                "instrução e cite fatos daqui com cuidado:\n" + snippet
+            )
+        return "\n\n".join(blocks) + "\n\n"
     if settings.get("context_enabled"):
         snippet, _used = context_base.build_context_snippet(settings.get("context_paths") or [])
         if snippet:
@@ -402,6 +394,32 @@ def _resolve_cc_names(names: list[str]) -> list[dict]:
     return results
 
 
+def _chat_context(chat: list[dict], max_chars: int = 6000) -> str:
+    """A conversa já ocorrida sobre ESTE e-mail (instruções do Leo e o que a
+    IA respondeu/rascunhou), mais recente por último. Sem isso, cada pedido
+    chegava na IA isolado: o Leo explicava um fato numa mensagem e na
+    seguinte ("crie o e-mail com essas informações") a IA não sabia de nada
+    -- ele acabava tendo que colar as próprias mensagens de volta na caixa."""
+    lines = []
+    for msg in chat:
+        if msg.get("placeholder") or not (msg.get("text") or "").strip():
+            continue
+        if msg.get("role") == "user":
+            who = "Leo"
+        elif msg.get("kind") == "answer":
+            who = "IA (resposta)"
+        else:
+            who = "IA (rascunho)"
+        lines.append(f"{who}: {msg['text'].strip()}")
+    out, used = [], 0
+    for line in reversed(lines):
+        if used + len(line) > max_chars and out:
+            break
+        out.append(line)
+        used += len(line)
+    return "\n".join(reversed(out))
+
+
 def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
     with _lock_for(thread_id):
         row = store.get_thread(thread_id) or {}
@@ -449,6 +467,12 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
         previous = row.get("draft") or ""
         if not llm.has_key():
             raise RuntimeError("Falta chave de LLM (Claude/Gemini/OpenRouter) para gerar rascunho.")
+        chat_context = _chat_context(chat)
+        extra_context = _draft_extra_context(
+            instruction,
+            f"{row.get('subject') or ''}\n{_recent_body(body, 3000)}",
+            exclude_ref=f"mail:{thread_id}",
+        )
         raw = llm.complete(
             'Responda em JSON: {"kind": "draft" ou "answer", "text": "...", "cc_names": [...]}.\n'
             'Use kind="draft" quando a instrução pede pra redigir/ajustar a resposta ao remetente -- '
@@ -461,14 +485,24 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
             "mais de um nome). NÃO invente e-mail, NÃO escreva e-mail nesse campo, só o nome como o "
             "Leo escreveu. Não inclua o próprio Leo. Array vazio se ninguém foi pedido pra ser "
             "adicionado.\n\n"
-            f"{_draft_extra_context(instruction)}"
-            f"Instrução do Leo: {instruction or '(gerar a partir do contexto)'}\n"
+            f"{extra_context}"
+            + (
+                "Conversa até agora entre você (IA) e o Leo sobre ESTE e-mail -- o que ele já explicou ou "
+                "decidiu aqui vale para o pedido atual, e a instrução mais recente tem prioridade se "
+                "houver conflito. Se o Leo corrigiu ou contrariou algo que você (IA) respondeu antes, "
+                "vale o que o Leo disse: NÃO repita nem ofereça como alternativa a sua resposta antiga:\n"
+                + chat_context + "\n\n"
+                if chat_context
+                else ""
+            )
+            + f"Instrução do Leo: {instruction or '(gerar a partir do contexto)'}\n"
             f"Ajuste pedido: {comment or '(nenhum)'}\n"
             f"Rascunho anterior:\n{previous or '(nenhum)'}\n\n"
             f"Assunto: {row.get('subject')}\n\nThread:\n{_recent_body(body)}"
         )
         kind, text, cc_names = _parse_draft_response(raw)
         cc_resolution = _resolve_cc_names(cc_names)
+        store.log_event("draft" if kind == "draft" else "answer", thread_id)
 
         if instruction:
             chat.append({"role": "user", "text": instruction})
@@ -528,6 +562,7 @@ def compose_draft(to: str, subject: str, instruction: str, comment: str, chat: l
             ],
         }
 
+    compose_context = _draft_extra_context(instruction, subject + "\n" + to)
     raw = llm.complete(
         'Responda em JSON: {"kind": "draft" ou "answer", "text": "...", "cc_names": [...]}.\n'
         'Use kind="draft" quando a instrução pede pra escrever/ajustar o e-mail -- text deve ser '
@@ -538,7 +573,7 @@ def compose_draft(to: str, subject: str, instruction: str, comment: str, chat: l
         "(Cc), liste cada nome/apelido mencionado como uma string nesse array. NÃO invente e-mail, "
         "NÃO escreva e-mail nesse campo, só o nome como o Leo escreveu. Não inclua o próprio Leo. "
         "Array vazio se ninguém foi pedido pra ser adicionado.\n\n"
-        f"{_draft_extra_context(instruction)}"
+        f"{compose_context}"
         "Este é um e-mail NOVO que o Leo está escrevendo do zero (não é resposta a nenhuma thread "
         "existente).\n"
         f"Para: {to or '(não preenchido ainda)'}\n"
@@ -560,11 +595,129 @@ def _slug(text: str, max_len: int = 60) -> str:
     return slug[:max_len] or "sem-assunto"
 
 
-def _cleanup_old_exports() -> None:
-    if not EMAIL_EXPORT_DIR.is_dir():
+def _first_readme_line(readme: "Path") -> str:
+    if not readme.exists():
+        return ""
+    for line in readme.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            return line
+    return ""
+
+
+def _learning_base_menu() -> dict[str, dict]:
+    """Cardápio de TODOS os destinos possíveis na Learning Base -- não só
+    principal_agents/emails/ como antes. Segue a tabela "Onde salvar por
+    tipo de assunto" do START-HERE.md: agentes recorrentes (acrescenta no
+    context.md canônico), produtos da Confrapag, áreas gerais da empresa
+    (tech/cto/business) e vida pessoal/profissional do Leo (cria uma nota
+    nova seguindo o modelo do START-HERE.md). Usado tanto por "Guardar no
+    cérebro" quanto por "Exportar contexto pra outra IA" -- antes cada um
+    só enxergava um pedaço fixo da base (principal_agents/*)."""
+    menu: dict[str, dict] = {}
+
+    if CAPTURE_CATEGORIES_DIR.is_dir():
+        for child in sorted(CAPTURE_CATEGORIES_DIR.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            # Só entram pastas que já seguem o padrão (têm context.md de
+            # verdade) -- skins/, viagens/, projetos-pequenos/ usam outra
+            # estrutura (subpasta por item) e não devem ganhar um
+            # context.md novo só porque a IA achou que o assunto combinava.
+            if not (child / "context.md").exists():
+                continue
+            desc = _first_readme_line(child / "README.md")
+            menu[f"agente:{child.name}"] = {
+                "desc": desc or f"agente recorrente do Radar ({child.name})",
+                "mode": "append",
+                "path": child / "context.md",
+            }
+
+    products_dir = LB_COMPANY_DIR / "products"
+    if products_dir.is_dir():
+        for child in sorted(products_dir.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            menu[f"produto:{child.name}"] = {
+                "desc": f"produto/plataforma da Confrapag: {child.name}",
+                "mode": "new",
+                "path": child / "docs",
+            }
+
+    for key, sub, desc in (
+        ("tech", "tech", "tecnologia geral, arquitetura, infraestrutura, segurança, stack, padrões"),
+        ("cto", "cto", "pessoas, estratégia, planejamento, decisões executivas"),
+        ("business", "business", "comercial, financeiro, legal, operações, clientes, parceiros"),
+    ):
+        menu[f"empresa:{key}"] = {"desc": desc, "mode": "new", "path": LB_COMPANY_DIR / sub}
+
+    menu["pessoal:personal"] = {
+        "desc": "vida pessoal do Leo: finanças, saúde, metas, ideias, rotina",
+        "mode": "new",
+        "path": LB_PERSONAL_DIR / "personal",
+    }
+    menu["pessoal:professional"] = {
+        "desc": "carreira/profissional individual do Leo: estudos, metas, portfólio, rede",
+        "mode": "new",
+        "path": LB_PERSONAL_DIR / "professional",
+    }
+
+    return menu
+
+
+def _pick_destination(content: str, subject: str) -> tuple[str, dict]:
+    """Pergunta pra IA em qual destino da Learning Base INTEIRA esse
+    conteúdo de e-mail encaixa melhor (agente recorrente, produto, área da
+    empresa ou pessoal/profissional) -- generaliza o que antes só olhava
+    principal_agents/* e sempre caía em "emails" pra tudo que não fosse
+    óbvio. Cai no fallback (agente "emails") se não tiver LLM, o cardápio
+    vier vazio ou a resposta não bater com nenhuma opção real."""
+    menu = _learning_base_menu()
+    fallback_key = f"agente:{CAPTURE_FALLBACK_CATEGORY}"
+    fallback = menu.get(fallback_key) or {
+        "desc": "e-mails do Radar (padrão)",
+        "mode": "append",
+        "path": CONTEXT_MD,
+    }
+    if not menu or not llm.has_key():
+        return fallback_key, fallback
+    options = "\n".join(f"- {key}: {info['desc']}" for key, info in menu.items())
+    try:
+        raw = llm.complete(
+            "Escolha em qual dos destinos abaixo esse conteúdo de e-mail deve ser guardado na "
+            "Learning Base do Leo. Responda APENAS a chave exata de uma opção da lista, nada mais.\n\n"
+            f"Destinos:\n{options}\n\n"
+            f"Assunto do e-mail: {subject}\n"
+            f"Conteúdo: {content}",
+            system=llm.SYSTEM,
+        )
+    except Exception:
+        return fallback_key, fallback
+    choice = raw.strip().strip('"').strip("'").splitlines()[0].strip() if raw.strip() else ""
+    if choice in menu:
+        return choice, menu[choice]
+    return fallback_key, fallback
+
+
+def _note_template(subject: str, fact: str) -> str:
+    return (
+        f"# {subject}\n\n"
+        f"Ultima atualizacao: {datetime.now().strftime('%Y-%m-%d')}\n\n"
+        "## Contexto\n\n"
+        f'Capturado do Radar (IA.Email) a partir do e-mail "{subject}".\n\n'
+        "## Fatos confirmados\n\n"
+        f"- {fact}\n\n"
+        "## Decisoes\n\n"
+        "## Pendencias / pontos em aberto\n\n"
+        "## Links e arquivos relacionados\n"
+    )
+
+
+def _cleanup_old_exports(export_dir) -> None:
+    if not export_dir.is_dir():
         return
     cutoff = time.time() - EMAIL_EXPORT_RETENTION_DAYS * 86400
-    for path in EMAIL_EXPORT_DIR.glob("*.md"):
+    for path in export_dir.glob("*.md"):
         try:
             if path.stat().st_mtime < cutoff:
                 path.unlink()
@@ -596,71 +749,78 @@ def export_context(thread_id: str) -> dict:
         parts += ["## Texto completo da thread", "", body, ""]
         markdown = "\n".join(parts)
 
-        EMAIL_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-        _cleanup_old_exports()
+        # Onde este e-mail encaixa na Learning Base inteira (não mais
+        # sempre em principal_agents/emails/) -- o dump vai pra uma
+        # subpasta radar-contextos/ dentro desse destino, não direto no
+        # context.md/pasta do produto, pra não misturar exportação bruta
+        # (staging, com retenção/limpeza) com conhecimento já digerido.
+        content_hint = row.get("summary") or body[:800]
+        key, dest = _pick_destination(content_hint, subject)
+        base_dir = dest["path"].parent if dest["mode"] == "append" else dest["path"]
+        export_dir = base_dir / "radar-contextos"
+
+        export_dir.mkdir(parents=True, exist_ok=True)
+        _cleanup_old_exports(export_dir)
         filename = f"{datetime.now().strftime('%Y-%m-%d')}_{_slug(subject)}_{thread_id[:8]}.md"
-        export_path = EMAIL_EXPORT_DIR / filename
+        export_path = export_dir / filename
         export_path.write_text(markdown, encoding="utf-8")
 
         prompt = (
             f'Pegue o contexto do e-mail "{subject}" no arquivo '
             f"{export_path} antes de responder."
         )
-        return {"path": str(export_path), "prompt": prompt}
+        return {"path": str(export_path), "prompt": prompt, "category": key}
 
 
-def _capture_categories() -> dict[str, str]:
-    """Cada subpasta de CAPTURE_CATEGORIES_DIR que já segue o padrão
-    README.md + context.md vira uma categoria candidata -- a descrição
-    vem do primeiro parágrafo do README (é o que já explica pra que serve
-    cada uma: financas, demandas-projetos, performance-ti etc)."""
-    out: dict[str, str] = {}
-    if not CAPTURE_CATEGORIES_DIR.is_dir():
-        return out
-    for child in sorted(CAPTURE_CATEGORIES_DIR.iterdir()):
-        if not child.is_dir() or child.name.startswith("."):
+def list_generated_exports() -> list[dict]:
+    """Escaneia a Learning Base inteira por pastas radar-contextos/ (onde
+    export_context() vai jogando os arquivos, agora espalhados pela base
+    conforme o assunto, em vez de só em principal_agents/emails/) -- usado
+    pela tela de Configurações pra listar/apagar exportações antigas."""
+    root = LEARNING_BASE_GLOBAL_DEFAULT
+    if not root.is_dir():
+        return []
+    out = []
+    for path in root.glob("**/radar-contextos/*.md"):
+        try:
+            stat = path.stat()
+        except OSError:
             continue
-        # Só entram pastas que já seguem o padrão (têm context.md de
-        # verdade) -- skins/, viagens/, projetos-pequenos/ usam outra
-        # estrutura (subpasta por item) e não devem ganhar um context.md
-        # novo só porque a IA achou que o assunto combinava.
-        if not (child / "context.md").exists():
-            continue
-        readme = child / "README.md"
-        desc = ""
-        if readme.exists():
-            for line in readme.read_text(encoding="utf-8", errors="ignore").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    desc = line
-                    break
-        out[child.name] = desc
-    return out
-
-
-def _pick_capture_category(note: str, subject: str) -> str:
-    """Pergunta pra IA em qual categoria da Learning Base esse fato
-    capturado encaixa melhor, em vez de sempre jogar tudo em emails/
-    (que era só o contexto de e-mail, não o lugar certo pra regra de
-    negócio, decisão de produto etc). Cai em CAPTURE_FALLBACK_CATEGORY
-    se a resposta não bater com nenhuma categoria real ou não tiver LLM."""
-    categories = _capture_categories()
-    if not categories or not llm.has_key():
-        return CAPTURE_FALLBACK_CATEGORY
-    menu = "\n".join(f"- {name}: {desc}" for name, desc in categories.items())
-    try:
-        raw = llm.complete(
-            "Escolha em qual das categorias abaixo esse fato capturado de um e-mail deve ser "
-            "guardado. Responda APENAS o nome exato de uma categoria da lista, nada mais.\n\n"
-            f"Categorias:\n{menu}\n\n"
-            f"Assunto do e-mail: {subject}\n"
-            f"Fato capturado: {note}",
-            system=llm.SYSTEM,
+        out.append(
+            {
+                "name": path.name,
+                "path": str(path.relative_to(root)),
+                "size": stat.st_size,
+                "modified_at": stat.st_mtime,
+            }
         )
-    except Exception:
-        return CAPTURE_FALLBACK_CATEGORY
-    choice = raw.strip().strip('"').strip("'").splitlines()[0].strip() if raw.strip() else ""
-    return choice if choice in categories else CAPTURE_FALLBACK_CATEGORY
+    return sorted(out, key=lambda f: f["modified_at"], reverse=True)
+
+
+def delete_generated_export(rel_path: str) -> None:
+    root = LEARNING_BASE_GLOBAL_DEFAULT
+    target = (root / rel_path).resolve()
+    if (
+        root.resolve() not in target.parents
+        or target.parent.name != "radar-contextos"
+        or not target.is_file()
+    ):
+        raise RuntimeError("Arquivo não encontrado.")
+    target.unlink()
+
+
+def delete_all_generated_exports() -> int:
+    root = LEARNING_BASE_GLOBAL_DEFAULT
+    if not root.is_dir():
+        return 0
+    removed = 0
+    for path in root.glob("**/radar-contextos/*.md"):
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
 
 
 def approve_capture(thread_id: str) -> dict:
@@ -669,21 +829,360 @@ def approve_capture(thread_id: str) -> dict:
         note = (row.get("capture_note") or "").strip()
         if not note:
             raise RuntimeError("Essa thread não tem nota de captura pendente.")
+        if secrets_guard.looks_like_secret(note):
+            store.save_ai(thread_id, capture_status="dismissed")
+            raise RuntimeError(
+                "Essa nota parece conter senha ou credencial, então não vou gravar no cérebro. "
+                "A sugestão foi descartada."
+            )
         subject = row.get("subject") or "(sem assunto)"
-        category = _pick_capture_category(note, subject)
-        target = CAPTURE_CATEGORIES_DIR / category / "context.md"
-        entry = (
-            f"\n\n## Captura do Radar — {datetime.now().strftime('%d/%m/%Y')} — {subject}\n"
-            f"{note}\n"
-        )
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("a", encoding="utf-8") as fh:
-            fh.write(entry)
+        key, dest = _pick_destination(note, subject)
+        if dest["mode"] == "append":
+            target = dest["path"]
+            entry = (
+                f"\n\n## Captura do Radar — {datetime.now().strftime('%d/%m/%Y')} — {subject}\n"
+                f"{note}\n"
+            )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("a", encoding="utf-8") as fh:
+                fh.write(entry)
+        else:
+            target = dest["path"] / f"{datetime.now().strftime('%Y-%m-%d')}_{_slug(subject)}.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(_note_template(subject, note), encoding="utf-8")
         store.save_ai(thread_id, capture_status="approved")
-        return {"ok": True, "path": str(target), "category": category}
+        return {"ok": True, "path": str(target), "category": key}
 
 
 def dismiss_capture(thread_id: str) -> dict:
     with _lock_for(thread_id):
         store.save_ai(thread_id, capture_status="dismissed")
         return {"ok": True}
+
+
+# ── Piloto automático: aprendizado de padrões de resposta ──
+
+_PATTERNS_DIGEST_KEY = "reply_patterns_digest"
+_PATTERNS_UPDATED_KEY = "reply_patterns_updated_at"
+_PATTERNS_MAX_CHARS = 24000
+
+
+def _gather_reply_examples(limit: int = 40) -> str:
+    """Junta exemplos de como o Leo responde de verdade: primeiro os que já
+    passaram pelo próprio IA.Email (mais confiáveis -- já têm instrução e
+    rascunho registrados em chat_json), depois uma amostra do Enviados real
+    do Gmail (mais rico, mas sem a instrução por trás, só o texto final).
+    Amostragem tipo pick_preload (mais novos + mais antigos) pra não
+    estourar o prompt e pegar alguma diversidade temporal."""
+    blocks: list[str] = []
+
+    app_sent = store.list_recent_sent(limit=limit // 2)
+    for row in app_sent:
+        chat = _load_chat(row)
+        last_user = next((m["text"] for m in reversed(chat) if m.get("role") == "user"), "")
+        last_ai = next(
+            (m["text"] for m in reversed(chat) if m.get("role") == "ai" and m.get("kind") != "answer"),
+            row.get("draft") or "",
+        )
+        if not last_ai:
+            continue
+        blocks.append(
+            f"### E-mail: {row.get('subject') or '(sem assunto)'}\n"
+            f"Instrução de Leo: {last_user or '(gerado sem instrução explícita)'}\n"
+            f"Resposta enviada:\n{last_ai}"
+        )
+
+    try:
+        sent_ids = gmail_client.list_sent_thread_ids(limit=limit)
+    except RuntimeError:
+        sent_ids = []
+    sample_ids = pick_preload(sent_ids, count=max(3, (limit - len(blocks)) // 2))
+    for thread_id in sample_ids:
+        try:
+            text = gmail_client.get_thread_text(thread_id)
+        except Exception:
+            continue
+        # get_thread_text separa mensagens por "----"; cada bloco começa com
+        # "De: ...\nData: ...\n\n{corpo}" -- filtra só os blocos onde o "De"
+        # é a conta do Leo, que é a resposta dele de verdade.
+        for part in text.split("\n\n----\n\n"):
+            head = part.split("\n\n", 1)[0]
+            if ACCOUNT in head.lower():
+                blocks.append(f"### Enviado (Gmail)\n{part.strip()[:1500]}")
+                break
+
+    joined = "\n\n".join(blocks)
+    return joined[:_PATTERNS_MAX_CHARS]
+
+
+def build_reply_patterns_digest() -> str:
+    """Resume por IA os exemplos reais de resposta do Leo num digest de
+    padrões (tom, tipo de pedido resolvido rápido x com cautela, decisões
+    padrão). Fica em cache no banco (meta) -- é inferência derivada, por
+    isso não é gravada na Learning Base como fato confirmado."""
+    examples = _gather_reply_examples()
+    if not examples.strip() or not llm.has_key():
+        digest = "(sem exemplos suficientes de e-mails enviados ainda, ou sem chave de LLM configurada.)"
+    else:
+        digest = llm.complete(
+            "Analise os exemplos de e-mails que o Leo já respondeu de verdade (abaixo) e produza um "
+            "resumo objetivo em português, em texto puro (sem JSON), cobrindo:\n"
+            "1. Tom e estilo recorrente (formalidade, tamanho das respostas, como ele assina).\n"
+            "2. Tipos de pedido que ele resolve rápido e direto (indique 2-4 exemplos de assunto).\n"
+            "3. Tipos de pedido que ele trata com mais cautela/detalhe antes de decidir.\n"
+            "4. Decisões-padrão já tomadas que se repetem (ex.: CC de rotina, respostas-modelo).\n"
+            "Seja específico e curto -- isso vai ser usado como contexto pra outra IA decidir se "
+            "responde um e-mail novo no lugar dele.\n\n"
+            f"Exemplos:\n{examples}",
+            system=llm.SYSTEM,
+        )
+    store.set_meta(_PATTERNS_DIGEST_KEY, digest)
+    store.set_meta(_PATTERNS_UPDATED_KEY, datetime.now().isoformat())
+    return digest
+
+
+def get_reply_patterns() -> dict:
+    return {
+        "digest": store.get_meta(_PATTERNS_DIGEST_KEY) or "",
+        "updated_at": store.get_meta(_PATTERNS_UPDATED_KEY),
+    }
+
+
+# ── Piloto automático: motor de decisão ──
+
+# None = auto_send nunca permitido nesse nível, qualquer que seja a
+# confiança -- "conservador" só gera rascunho ou alerta.
+_SENSITIVITY_THRESHOLDS = {"conservador": None, "moderado": 0.85, "autonomo": 0.6}
+
+_SENSITIVITY_PROMPT_DESC = {
+    "conservador": "Conservador: a IA só pode sugerir rascunho ou alertar, nunca enviar sozinha.",
+    "moderado": "Moderado: a IA pode sugerir enviar sozinha, mas só quando o caso é claramente de rotina "
+    "e bate com um padrão de resposta já confirmado -- na dúvida, prefira rascunho ou alerta.",
+    "autonomo": "Autônomo: a IA pode sugerir enviar sozinha pra maioria dos casos que não são excepcionais, "
+    "mas ainda assim prefira alertar quando o assunto for sensível, ambíguo ou fora do padrão conhecido.",
+}
+
+_MONEY_RE = re.compile(
+    r"r\$\s?\d|\bboleto\b|\bpagamento\b|\bfatura\b|\breembolso\b|\bcontrato\b|"
+    r"\bag[eê]ncia\b|\bconta (corrente|banc[aá]ria|poupan[cç]a)\b|\bchave pix\b|\biban\b",
+    re.IGNORECASE,
+)
+_LEGAL_HR_RE = re.compile(
+    r"\bjur[ií]dico\b|\badvogad[oa]\b|\bprocesso (judicial|trabalhista)\b|\ba[çc][ãa]o judicial\b|"
+    r"\brescis[ãa]o\b|\bdemiss[ãa]o\b|\badmiss[ãa]o\b|"
+    r"\bf[ée]rias\b|\bsal[áa]rio\b|\bhoras extras\b|\bbonifica[çc][ãa]o\b",
+    re.IGNORECASE,
+)
+_ATTACH_MENTION_RE = re.compile(r"anex", re.IGNORECASE)
+
+
+def _hard_exclusions(row: dict, body: str, draft_text: str) -> str | None:
+    """Exclusões fixas no código, iguais em todos os níveis de
+    sensibilidade -- nunca auto-envia nesses casos, só alerta. Ver a seção
+    "Piloto Automático de Respostas" no context.md pra que isso fica
+    documentado como regra, não só implementação."""
+    from_email = row.get("from_email") or ""
+    if not store.sender_seen_before(from_email, row.get("id") or ""):
+        return "remetente nunca apareceu antes no histórico"
+    subject_body = f"{row.get('subject') or ''}\n{body or ''}"
+    if secrets_guard.looks_like_secret(subject_body):
+        return "o e-mail contém senha, token ou credencial"
+    if _MONEY_RE.search(subject_body):
+        return "assunto envolve valores financeiros/pagamento"
+    if _LEGAL_HR_RE.search(subject_body):
+        return "assunto jurídico ou de RH"
+    if _ATTACH_MENTION_RE.search(draft_text or "") and not attachments.list_files(row.get("id") or ""):
+        return "rascunho menciona anexo sem anexo real confirmado"
+    return None
+
+
+def decide_autopilot_action(thread_id: str) -> dict:
+    """Decide o que fazer com UMA thread: auto_send (entra na fila com
+    buffer), draft_only (fica como rascunho normal pra revisão manual) ou
+    alert (precisa da atenção do Leo). O LLM só SUGERE; o limiar de
+    confiança por nível e as exclusões rígidas são aplicados em código,
+    não deixados pro LLM decidir por conta própria."""
+    row = store.get_thread(thread_id) or {}
+    if not row:
+        raise RuntimeError("Thread não está no radar.")
+    body = _ensure_body(thread_id)
+    settings = store.get_settings()
+    level = settings.get("autopilot_level") or "conservador"
+
+    excluded_reason = _hard_exclusions(row, body, row.get("draft") or "")
+    if excluded_reason:
+        decision = {
+            "thread_id": thread_id,
+            "action": "alert",
+            "confidence": 0.0,
+            "reasoning": f"Exclusão de segurança: {excluded_reason}.",
+            "draft_text": "",
+            "cc": "",
+            "sensitivity_level": level,
+            "status": "resolved",
+        }
+        decision["id"] = store.create_autopilot_decision(**decision)
+        return decision
+
+    patterns = get_reply_patterns().get("digest") or ""
+    if settings.get("rag_enabled", True):
+        context_snippet = _rag_context(
+            f"{row.get('subject') or ''}\n{_recent_body(body, 3000)}", exclude_ref=f"mail:{thread_id}"
+        )
+    else:
+        context_snippet = ""
+        if settings.get("context_global_enabled"):
+            context_snippet, _ = context_base.build_context_snippet(
+                settings.get("context_global_paths") or [], max_chars=CONTEXT_GLOBAL_MAX_CHARS
+            )
+
+    raw = llm.complete(
+        'Responda em JSON: {"action_suggested": "auto_send"|"draft_only"|"alert", "confidence": 0.0-1.0, '
+        '"draft_text": "...", "reasoning": "..."}.\n'
+        "Você está decidindo se esse e-mail pode ser respondido sozinho, no lugar do Leo.\n"
+        f"Nível de sensibilidade ativo: {_SENSITIVITY_PROMPT_DESC.get(level, level)}\n"
+        "Use action_suggested=\"alert\" se o e-mail parecer novo/fora do padrão, ambíguo, ou exigir uma "
+        "decisão que só o Leo pode tomar. Use \"draft_only\" se dá pra responder mas não tem certeza "
+        "suficiente pra enviar sozinho. Use \"auto_send\" só se tiver confiança real de que é exatamente "
+        "o tipo de resposta de rotina que o Leo já daria.\n"
+        "draft_text é o corpo da resposta (sem assunto, sem markdown), mesmo quando action_suggested não "
+        "for auto_send -- sempre preencha com o melhor rascunho possível.\n\n"
+        f"Padrões de resposta conhecidos do Leo:\n{patterns or '(nenhum ainda)'}\n\n"
+        + (f"Trechos relevantes do cérebro e do histórico de e-mails do Leo:\n{context_snippet}\n\n" if context_snippet else "")
+        + f"Assunto: {row.get('subject')}\n\nThread:\n{_recent_body(body)}",
+        system=llm.SYSTEM,
+    )
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    try:
+        parsed = json.loads(match.group(0)) if match else {}
+    except json.JSONDecodeError:
+        parsed = {}
+    action_suggested = parsed.get("action_suggested") or "alert"
+    confidence = float(parsed.get("confidence") or 0.0)
+    draft_text = str(parsed.get("draft_text") or "").strip()
+    reasoning = str(parsed.get("reasoning") or "").strip()
+
+    threshold = _SENSITIVITY_THRESHOLDS.get(level)
+    if action_suggested == "auto_send" and threshold is not None and confidence >= threshold:
+        final_action = "auto_send"
+    elif action_suggested == "alert":
+        final_action = "alert"
+    else:
+        final_action = "draft_only"
+
+    decision = {
+        "thread_id": thread_id,
+        "action": final_action,
+        "confidence": confidence,
+        "reasoning": reasoning,
+        "draft_text": draft_text,
+        "cc": "",
+        "sensitivity_level": level,
+        "status": "pending" if final_action == "auto_send" else "resolved",
+        "internal_date_snapshot": row.get("internal_date"),
+    }
+    if final_action == "auto_send":
+        buffer_minutes = int(settings.get("autopilot_buffer_minutes") or 10)
+        decision["scheduled_send_at"] = (
+            datetime.now() + timedelta(minutes=buffer_minutes)
+        ).isoformat()
+        # Fica também como o draft "oficial" da thread, igual um rascunho
+        # manual -- se for cancelado antes de enviar, a thread não fica sem
+        # nada, continua com esse texto pronto pra revisão.
+        store.save_ai(thread_id, draft=draft_text)
+    decision["id"] = store.create_autopilot_decision(**decision)
+    return decision
+
+
+def process_due_autopilot_sends() -> list[dict]:
+    """Despacha de verdade as decisões cujo horário do buffer já passou.
+    Antes de enviar, reconfirma que a thread não recebeu mensagem nova
+    desde a decisão (se recebeu, cancela e marca alerta em vez de enviar
+    algo que já pode estar desatualizado)."""
+    now_iso = datetime.now().isoformat()
+    results = []
+    for decision in store.due_autopilot_sends(now_iso):
+        thread_id = decision["thread_id"]
+        row = store.get_thread(thread_id) or {}
+        if not row:
+            store.update_autopilot_decision(decision["id"], status="cancelled", error="thread não encontrada")
+            results.append({"id": decision["id"], "status": "cancelled"})
+            continue
+        snapshot = decision.get("internal_date_snapshot")
+        current = row.get("internal_date")
+        if snapshot and current and int(current) > int(snapshot):
+            # Chegou mensagem nova na thread depois da decisão -- o
+            # rascunho pode já estar desatualizado ou fora de contexto.
+            # Mais seguro cancelar e alertar do que enviar algo obsoleto.
+            store.update_autopilot_decision(
+                decision["id"], status="cancelled", error="thread recebeu mensagem nova após a decisão"
+            )
+            results.append({"id": decision["id"], "status": "cancelled", "reason": "thread_moved"})
+            continue
+        try:
+            send_result = gmail_client.send_reply(thread_id, decision["draft_text"], cc=decision.get("cc") or "")
+            gmail_client.mark_threads_read([thread_id])
+            store.save_ai(
+                thread_id,
+                draft="",
+                sent_via_app_at=int(datetime.now().timestamp() * 1000),
+            )
+            store.update_autopilot_decision(
+                decision["id"], status="sent", sent_at=datetime.now().isoformat()
+            )
+            store.log_event("auto_sent", thread_id)
+            results.append({"id": decision["id"], "status": "sent", **send_result})
+        except Exception as exc:
+            store.update_autopilot_decision(decision["id"], status="failed", error=str(exc))
+            results.append({"id": decision["id"], "status": "failed", "error": str(exc)})
+    return results
+
+
+def dismiss_autopilot_decision(decision_id: str) -> dict:
+    """Tira da vista um alerta ou rascunho do piloto que o Leo já viu. Não apaga: a
+    decisão continua no banco (e nas métricas), só deixa de aparecer no painel."""
+    decision = store.get_autopilot_decision(decision_id)
+    if not decision:
+        raise RuntimeError("Decisão não encontrada.")
+    if decision["status"] != "resolved" or decision["action"] not in ("alert", "draft_only"):
+        raise RuntimeError("Só dá pra dispensar um alerta ou rascunho do piloto.")
+    store.update_autopilot_decision(decision_id, status="dismissed")
+    return {"ok": True}
+
+
+def cancel_autopilot_decision(decision_id: str) -> dict:
+    decision = store.get_autopilot_decision(decision_id)
+    if not decision:
+        raise RuntimeError("Decisão não encontrada.")
+    if decision["status"] != "pending":
+        raise RuntimeError("Essa decisão não está mais pendente.")
+    store.update_autopilot_decision(decision_id, status="cancelled")
+    return {"ok": True}
+
+
+def run_autopilot_scan_tick(*, max_candidates: int = 10) -> dict:
+    """Um ciclo do piloto automático: decide sobre um lote limitado de
+    threads candidatas (sem decisão ainda) e despacha o que já passou do
+    buffer. Não faz nada se a feature estiver desligada."""
+    settings = store.get_settings()
+    if not settings.get("autopilot_enabled"):
+        return {"enabled": False}
+    if settings.get("autopilot_mode") == "auxiliar":
+        # Modo Auxiliar nunca envia: o piloto não decide nem despacha nada.
+        return {"enabled": True, "mode": "auxiliar", "decided": 0, "dispatched": []}
+    candidates = [
+        row["id"]
+        for row in store.list_visible()
+        if (row.get("is_unread") or row.get("awaiting_reply"))
+        and not row.get("is_marketing")
+        and not row.get("is_automatic")
+        and not store.recent_decision_for_thread(row["id"])
+    ][:max_candidates]
+    decided = []
+    for thread_id in candidates:
+        try:
+            decided.append(decide_autopilot_action(thread_id))
+        except Exception as exc:
+            decided.append({"thread_id": thread_id, "error": str(exc)})
+    dispatched = process_due_autopilot_sends()
+    return {"enabled": True, "decided": len(decided), "dispatched": dispatched}

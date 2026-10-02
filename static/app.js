@@ -200,9 +200,8 @@ async function loadStatus() {
   canSend = !!data.can_send;
   if (data.llm_provider) {
     const tokens = data.llm_tokens_today || 0;
-    const label = tokens
-      ? `${data.llm_provider} · ${tokens.toLocaleString("pt-BR")} tokens hoje`
-      : data.llm_provider;
+    const who = data.llm_model || data.llm_provider;
+    const label = tokens ? `${who} · ${tokens.toLocaleString("pt-BR")} tokens hoje` : who;
     $("llm-badge").textContent = label;
     $("llm-badge").dataset.tooltip =
       "Consumo somado neste app desde meia-noite UTC. A API não informa a cota restante da sua conta, só o que foi gasto aqui.";
@@ -730,6 +729,7 @@ function renderChat() {
       if (msg.role === "user") {
         return `<div class="chat-msg user">${escHtml(msg.text)}</div>`;
       }
+      if (msg.typing) return typingBubbleHTML();
       if (msg.placeholder) {
         return `<div class="chat-msg ai muted-msg">${escHtml(msg.text)}</div>`;
       }
@@ -787,6 +787,26 @@ function updateSendBar() {
   $("send-target").textContent = `Para: ${currentTo || "?"}`;
   $("pane-send").disabled = !canSend;
   $("pane-send").title = canSend ? "" : "Reautorize o Gmail (Entrar no Gmail) para poder enviar.";
+}
+
+const WORKING_ICON =
+  '<svg class="working-icon" viewBox="0 0 34 34" aria-hidden="true">' +
+  '<rect x="3.5" y="3.5" width="21" height="27" rx="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
+  '<path class="w-line l1" d="M8.5 11h11"/><path class="w-line l2" d="M8.5 16.5h11"/><path class="w-line l3" d="M8.5 22h6"/>' +
+  '<path class="w-star" d="M27 3l1.2 3 3 1.2-3 1.2L27 11.4l-1.2-3-3-1.2 3-1.2z"/>' +
+  '<g class="w-pen"><path d="M22 27l6.5-6.5 2.4 2.4L24.4 29.4 21.2 30z" fill="currentColor"/></g></svg>';
+
+// Texto + ícone animado de "a IA está trabalhando" (substitui o "Gerando…" seco).
+function workingHTML(label) {
+  return (
+    `<span class="working" role="status" aria-live="polite">${WORKING_ICON}` +
+    `<span class="working-text">${escHtml(label)}</span>` +
+    '<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></span>'
+  );
+}
+
+function typingBubbleHTML() {
+  return '<div class="chat-msg ai typing" aria-label="A IA está escrevendo" role="status"><span class="bar"></span><span class="bar"></span><span class="bar"></span></div>';
 }
 
 function escHtml(s) {
@@ -1011,7 +1031,7 @@ async function openPane(id, force) {
   $("pane-open-gmail").href = gmailThreadUrl(id);
   chatHistory = [];
   $("pane").classList.remove("hidden");
-  $("pane-status").textContent = "Carregando…";
+  $("pane-status").innerHTML = workingHTML("Lendo o e-mail e preparando o resumo");
   $("pane-summary").textContent = "";
   $("pane-summary").classList.add("loading");
   $("pane-body").textContent = "";
@@ -1048,7 +1068,7 @@ async function openPane(id, force) {
 
   const q = force ? "?force=true" : "";
   const controller = new AbortController();
-  const killer = setTimeout(() => controller.abort(), 60000);
+  const killer = setTimeout(() => controller.abort(), 120000);
   try {
     const res = await fetch(`/api/threads/${encodeURIComponent(id)}${q}`, {
       signal: controller.signal,
@@ -1084,7 +1104,7 @@ async function openPane(id, force) {
     $("pane-summary").classList.remove("loading");
     const timedOut = err && err.name === "AbortError";
     $("pane-status").textContent = timedOut
-      ? "Demorou demais pra responder (60s). Tente de novo."
+      ? "Demorou demais pra responder (2 min). Tente de novo."
       : "Erro ao carregar este e-mail. Tente de novo.";
   } finally {
     clearTimeout(killer);
@@ -1426,11 +1446,12 @@ $("pane-export-ctx").onclick = async () => {
       $("pane-status").textContent = data.detail || "Falha ao exportar contexto.";
       return;
     }
+    const where = data.category ? ` (destino: ${data.category})` : "";
     try {
       await navigator.clipboard.writeText(data.prompt);
-      $("pane-status").textContent = `Contexto salvo em ${data.path} — prompt copiado, é só colar no chat da IA.`;
+      $("pane-status").textContent = `Contexto salvo em ${data.path}${where} — prompt copiado, é só colar no chat da IA.`;
     } catch {
-      $("pane-status").textContent = `Contexto salvo em ${data.path}. Prompt: ${data.prompt}`;
+      $("pane-status").textContent = `Contexto salvo em ${data.path}${where}. Prompt: ${data.prompt}`;
     }
   } finally {
     btn.disabled = false;
@@ -1638,7 +1659,7 @@ let composeChatHistory = [];
 function lastComposeDraft() {
   for (let i = composeChatHistory.length - 1; i >= 0; i--) {
     const m = composeChatHistory[i];
-    if (m.role === "ai" && m.kind !== "answer") return m.text;
+    if (m.role === "ai" && !m.placeholder && m.kind !== "answer") return m.text;
   }
   return "";
 }
@@ -1648,6 +1669,7 @@ function renderComposeChat() {
   el.innerHTML = composeChatHistory
     .map((msg, idx) => {
       if (msg.role === "user") return `<div class="chat-msg user">${escHtml(msg.text)}</div>`;
+      if (msg.typing) return typingBubbleHTML();
       const ccHtml = renderCcResolution(msg, idx);
       if (msg.kind === "answer") {
         return `<div class="chat-msg ai answer"><div class="draft-label">Resposta</div>${escHtml(msg.text)}${ccHtml}</div>`;
@@ -1699,6 +1721,8 @@ $("compose-gen").onclick = async () => {
   const freeText = $("compose-instr").value.trim();
   if (!freeText) return;
   composeChatHistory.push({ role: "user", text: freeText });
+  const sentHistory = composeChatHistory.slice();
+  composeChatHistory.push({ role: "ai", placeholder: true, typing: true, text: "" });
   renderComposeChat();
   $("compose-instr").value = "";
   $("compose-instr").style.height = "auto";
@@ -1712,11 +1736,13 @@ $("compose-gen").onclick = async () => {
         subject: $("compose-subject").value.trim(),
         instruction: freeText,
         comment: "",
-        chat: composeChatHistory,
+        chat: sentHistory,
       }),
     });
     const data = await res.json().catch(() => ({}));
+    composeChatHistory = composeChatHistory.filter((m) => !m.typing);
     if (!res.ok) {
+      renderComposeChat();
       showBanner(data.detail || "Falha ao gerar rascunho.", true);
       return;
     }
@@ -1726,6 +1752,8 @@ $("compose-gen").onclick = async () => {
     applyCcResolution(aiMsg);
     renderComposeChat();
   } catch {
+    composeChatHistory = composeChatHistory.filter((m) => !m.typing);
+    renderComposeChat();
     showBanner("Falha de rede ao gerar rascunho.", true);
   } finally {
     $("compose-gen").disabled = !$("compose-instr").value.trim();
@@ -1840,12 +1868,13 @@ $("pane-gen").onclick = async () => {
 
   chatHistory = chatHistory.filter((m) => !m.placeholder);
   chatHistory.push({ role: "user", text: visibleText });
+  chatHistory.push({ role: "ai", placeholder: true, typing: true, text: "" });
   renderChat();
   $("pane-instr").value = "";
   $("pane-instr").style.height = "auto";
   clearAllAnnotations();
 
-  $("pane-status").textContent = "Gerando rascunho…";
+  $("pane-status").innerHTML = workingHTML("Escrevendo o rascunho");
   $("pane-gen").disabled = true; // esvaziou a caixa, então continua desabilitado no finally
 
   try {
@@ -1858,7 +1887,9 @@ $("pane-gen").onclick = async () => {
       }),
     });
     const data = await res.json().catch(() => ({}));
+    chatHistory = chatHistory.filter((m) => !m.typing);
     if (!res.ok) {
+      renderChat();
       $("pane-status").textContent = data.detail || "Falha no rascunho.";
       return;
     }
@@ -1871,6 +1902,10 @@ $("pane-gen").onclick = async () => {
       renderChat();
     }
     $("pane-status").textContent = "Rascunho gerado. Nada foi enviado.";
+  } catch {
+    chatHistory = chatHistory.filter((m) => !m.typing);
+    renderChat();
+    $("pane-status").textContent = "Falha de rede ao gerar o rascunho. Tente de novo.";
   } finally {
     updateGenButtonState();
   }
@@ -2075,286 +2110,165 @@ function wrapSelectionAsAnnotation(range) {
   };
 })();
 
-// ── Configurações: base de contexto, estilo, apelidos, arquivos ──
-(function setupSettings() {
-  function formatBytes(n) {
-    if (!n) return "0B";
-    if (n < 1024) return `${n}B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)}KB`;
-    return `${(n / 1024 / 1024).toFixed(1)}MB`;
-  }
+// ── Configurações agora é uma página (/settings), em static/settings.js ──
+$("btn-settings").onclick = () => {
+  window.location.href = "/settings";
+};
 
-  function formatWhen(tsSeconds) {
-    if (!tsSeconds) return "";
-    return new Intl.DateTimeFormat("pt-BR", {
-      day: "2-digit",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(new Date(tsSeconds * 1000));
-  }
+// Quais rótulos viram negrito no resumo depende do formato escolhido; a lista
+// vem do servidor (todos os formatos), com o padrão antigo como reserva.
+fetch("/api/summary/templates")
+  .then((r) => r.json())
+  .then((d) => {
+    if (Array.isArray(d.headers) && d.headers.length) SUMMARY_HEADERS.splice(0, SUMMARY_HEADERS.length, ...d.headers);
+  })
+  .catch(() => {});
 
-  function renderAliases(aliases) {
-    const el = $("cfg-aliases-list");
-    if (!aliases.length) {
-      el.innerHTML = '<p class="files-empty">Nenhum apelido cadastrado ainda.</p>';
-      return;
-    }
-    el.innerHTML = aliases
-      .map(
-        (a) => `<div class="alias-row" data-alias="${escHtml(a.alias)}">
-          <span class="alias-tag">${escHtml(a.alias)}</span>
-          <span class="alias-detail">${escHtml(a.name)}${a.email ? ` &lt;${escHtml(a.email)}&gt;` : ""}</span>
-          <button type="button" data-remove-alias="${escHtml(a.alias)}" data-tooltip="Excluir">×</button>
-        </div>`
-      )
-      .join("");
-    el.querySelectorAll("[data-remove-alias]").forEach((btn) => {
+// ── Piloto automático ──
+function autopilotPathActive() {
+  return location.pathname === "/autopilot";
+}
+
+function relativeMinutes(iso) {
+  if (!iso) return "";
+  const diffMs = new Date(iso).getTime() - Date.now();
+  const mins = Math.round(diffMs / 60000);
+  if (mins <= 0) return "a qualquer momento";
+  return `em ~${mins} min`;
+}
+
+function renderAutopilotList(el, items, opts) {
+  if (!items.length) {
+    el.innerHTML = '<p class="files-empty">Nada aqui.</p>';
+    return;
+  }
+  el.innerHTML = items
+    .map((it) => {
+      const title = it.subject || "(sem assunto)";
+      const meta = [
+        it.from_email,
+        it.confidence != null ? `confiança ${(it.confidence * 100).toFixed(0)}%` : "",
+        it.scheduled_send_at ? `envia ${relativeMinutes(it.scheduled_send_at)}` : "",
+        it.status === "sent" ? "enviado" : "",
+        it.status === "cancelled" ? "cancelado" : "",
+        it.status === "failed" ? `falhou: ${it.error || ""}` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      const cancelBtn =
+        opts && opts.cancelable
+          ? `<button type="button" data-ap-cancel="${it.id}" class="ghost danger">Cancelar</button>`
+          : "";
+      return `<div class="file-row" style="flex-direction:column;align-items:flex-start;gap:4px">
+        <div style="display:flex;justify-content:space-between;width:100%;gap:8px">
+          <span class="file-path" data-tooltip="${escHtml(title)}">${escHtml(title)}</span>
+          ${cancelBtn}
+        </div>
+        <span class="file-meta">${escHtml(meta)}</span>
+        ${it.reasoning ? `<span class="settings-hint" style="margin:0">${escHtml(it.reasoning)}</span>` : ""}
+      </div>`;
+    })
+    .join("");
+  if (opts && opts.cancelable) {
+    el.querySelectorAll("[data-ap-cancel]").forEach((btn) => {
       btn.onclick = async () => {
-        await fetch(`/api/settings/aliases/${encodeURIComponent(btn.dataset.removeAlias)}`, {
-          method: "DELETE",
-        });
-        loadAliases();
+        btn.disabled = true;
+        await fetch(`/api/autopilot/queue/${btn.dataset.apCancel}/cancel`, { method: "POST" });
+        loadAutopilotQueue();
       };
     });
   }
+}
 
-  async function loadAliases() {
-    const res = await fetch("/api/settings/aliases");
-    const data = await res.json().catch(() => ({ aliases: [] }));
-    renderAliases(data.aliases || []);
-  }
+async function loadAutopilotQueue() {
+  const res = await fetch("/api/autopilot/queue");
+  const data = await res.json().catch(() => ({ items: [] }));
+  renderAutopilotList($("ap-queue-list"), data.items || [], { cancelable: true });
+}
 
-  async function loadSettingsForm() {
-    const res = await fetch("/api/settings");
+async function loadAutopilotLog() {
+  const res = await fetch("/api/autopilot/log");
+  const data = await res.json().catch(() => ({ items: [] }));
+  renderAutopilotList($("ap-log-list"), data.items || [], { cancelable: false });
+}
+
+async function loadAutopilotAlerts() {
+  const res = await fetch("/api/autopilot/alerts");
+  const data = await res.json().catch(() => ({ items: [] }));
+  renderAutopilotList($("ap-alerts-list"), data.items || [], { cancelable: false });
+}
+
+async function loadAutopilotDrafts() {
+  const res = await fetch("/api/autopilot/drafts");
+  const data = await res.json().catch(() => ({ items: [] }));
+  renderAutopilotList($("ap-drafts-list"), data.items || [], { cancelable: false });
+}
+
+async function loadAutopilotPatterns() {
+  const res = await fetch("/api/autopilot/patterns");
+  const data = await res.json().catch(() => ({ digest: "", updated_at: null }));
+  $("ap-patterns-digest").textContent = data.digest || "(nenhum digest gerado ainda.)";
+  $("ap-patterns-updated").textContent = data.updated_at
+    ? `Última atualização: ${new Date(data.updated_at).toLocaleString("pt-BR")}`
+    : "Nunca gerado ainda.";
+}
+
+async function loadAutopilotSettingsForm() {
+  const res = await fetch("/api/settings");
+  const data = await res.json().catch(() => ({}));
+  const s = data.settings || {};
+  $("ap-enabled").checked = !!s.autopilot_enabled;
+  $("ap-level").value = s.autopilot_level || "conservador";
+  $("ap-buffer").value = s.autopilot_buffer_minutes || 10;
+}
+
+async function initAutopilotPage() {
+  await loadAutopilotSettingsForm();
+  loadAutopilotPatterns();
+  loadAutopilotQueue();
+  loadAutopilotLog();
+  loadAutopilotAlerts();
+  loadAutopilotDrafts();
+  setInterval(loadAutopilotQueue, 30000);
+}
+
+$("btn-autopilot").onclick = () => {
+  window.location.href = "/autopilot";
+};
+$("autopilot-close").onclick = () => {
+  window.location.href = "/";
+};
+$("ap-settings-save").onclick = async () => {
+  const res = await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      autopilot_enabled: $("ap-enabled").checked,
+      autopilot_level: $("ap-level").value,
+      autopilot_buffer_minutes: Math.max(1, parseInt($("ap-buffer").value, 10) || 10),
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  $("ap-settings-status").textContent = res.ok ? "Salvo." : data.detail || "Falha ao salvar.";
+};
+$("ap-patterns-refresh").onclick = async () => {
+  const btn = $("ap-patterns-refresh");
+  btn.disabled = true;
+  btn.textContent = "Gerando…";
+  try {
+    const res = await fetch("/api/autopilot/patterns/refresh", { method: "POST" });
     const data = await res.json().catch(() => ({}));
-    const s = data.settings || {};
-    $("cfg-context-enabled").checked = !!s.context_enabled;
-    $("cfg-context-paths").value = (s.context_paths || []).join("\n");
-    $("cfg-context-global-enabled").checked = !!s.context_global_enabled;
-    $("cfg-context-global-paths").value = (s.context_global_paths || []).join("\n");
-    $("cfg-style-preset").value = s.style_preset || "neutro";
-    $("cfg-style-custom").value = s.style_custom || "";
-    $("cfg-preload-enabled").checked = s.preload_enabled !== false;
-    $("cfg-preload-count").value = s.preload_count || 2;
-    renderAliases(data.aliases || []);
-  }
-
-  function renderFiles(el, files, opts) {
-    if (!files.length) {
-      el.innerHTML = '<p class="files-empty">Nada aqui.</p>';
-      return;
-    }
-    el.innerHTML = files
-      .map((f) => {
-        const label = f.path || f.name;
-        const delBtn = opts && opts.deletable
-          ? `<button type="button" data-del-file="${escHtml(f.name)}" data-tooltip="Apagar">🗑</button>`
-          : "";
-        return `<div class="file-row">
-          <span class="file-path" data-tooltip="${escHtml(label)}">${escHtml(label)}</span>
-          <span class="file-meta">${formatBytes(f.size)} · ${formatWhen(f.modified_at)}</span>
-          ${delBtn}
-        </div>`;
-      })
-      .join("");
-    if (opts && opts.deletable) {
-      el.querySelectorAll("[data-del-file]").forEach((btn) => {
-        btn.onclick = async () => {
-          await fetch(`/api/settings/generated-files/${encodeURIComponent(btn.dataset.delFile)}`, {
-            method: "DELETE",
-          });
-          loadGeneratedFiles();
-        };
-      });
-    }
-  }
-
-  async function loadContextFiles() {
-    const el = $("cfg-context-files-list");
-    el.innerHTML = '<p class="files-empty">Carregando…</p>';
-    const res = await fetch("/api/settings/context-files?base=email");
-    const data = await res.json().catch(() => ({ files: [] }));
-    renderFiles(el, data.files || [], { deletable: false });
-  }
-
-  async function loadContextGlobalFiles() {
-    const el = $("cfg-context-global-files-list");
-    el.innerHTML = '<p class="files-empty">Carregando…</p>';
-    const res = await fetch("/api/settings/context-files?base=global");
-    const data = await res.json().catch(() => ({ files: [] }));
-    renderFiles(el, data.files || [], { deletable: false });
-  }
-
-  async function loadGeneratedFiles() {
-    const res = await fetch("/api/settings/generated-files");
-    const data = await res.json().catch(() => ({ exports: [], context_md: null }));
-    renderFiles($("cfg-generated-files-list"), data.exports || [], { deletable: true });
-    const info = $("cfg-context-md-info");
-    if (data.context_md) {
-      info.textContent = `context.md (conhecimento acumulado, não apagável por aqui): ${data.context_md.path} — ${formatBytes(data.context_md.size)}`;
+    if (res.ok) {
+      $("ap-patterns-digest").textContent = data.digest || "";
+      $("ap-patterns-updated").textContent = "Última atualização: agora";
     } else {
-      info.textContent = "context.md ainda não existe.";
+      showBanner(data.detail || "Falha ao atualizar padrões.", true);
     }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Atualizar padrões";
   }
-
-  async function openSettingsModal() {
-    $("settings-modal").classList.remove("hidden");
-    $("cfg-context-status").textContent = "";
-    $("cfg-context-global-status").textContent = "";
-    $("cfg-style-status").textContent = "";
-    await loadSettingsForm();
-    loadContextFiles();
-    loadContextGlobalFiles();
-    loadGeneratedFiles();
-  }
-
-  $("btn-settings").onclick = openSettingsModal;
-  $("settings-close").onclick = () => $("settings-modal").classList.add("hidden");
-  $("settings-modal").addEventListener("click", (e) => {
-    if (e.target.id === "settings-modal") $("settings-modal").classList.add("hidden");
-  });
-
-  $("cfg-context-save").onclick = async () => {
-    const paths = $("cfg-context-paths")
-      .value.split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-    await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ context_enabled: $("cfg-context-enabled").checked, context_paths: paths }),
-    });
-    $("cfg-context-status").textContent = "Salvo.";
-    loadContextFiles();
-  };
-
-  $("cfg-context-global-save").onclick = async () => {
-    const paths = $("cfg-context-global-paths")
-      .value.split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-    await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        context_global_enabled: $("cfg-context-global-enabled").checked,
-        context_global_paths: paths,
-      }),
-    });
-    $("cfg-context-global-status").textContent = "Salvo.";
-    loadContextGlobalFiles();
-  };
-
-  $("cfg-style-save").onclick = async () => {
-    await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        style_preset: $("cfg-style-preset").value,
-        style_custom: $("cfg-style-custom").value.trim(),
-      }),
-    });
-    $("cfg-style-status").textContent = "Salvo.";
-  };
-
-  $("cfg-preload-save").onclick = async () => {
-    const count = Math.max(1, parseInt($("cfg-preload-count").value, 10) || 2);
-    const res = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        preload_enabled: $("cfg-preload-enabled").checked,
-        preload_count: count,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (data.settings) {
-      PRELOAD_ENABLED = data.settings.preload_enabled !== false;
-      PRELOAD_COUNT = data.settings.preload_count || 2;
-    }
-    $("cfg-preload-status").textContent = "Salvo.";
-  };
-
-  $("cfg-alias-add").onclick = async () => {
-    const alias = $("cfg-alias-new-alias").value.trim();
-    const name = $("cfg-alias-new-name").value.trim();
-    const email = $("cfg-alias-new-email").value.trim();
-    if (!alias) return;
-    await fetch("/api/settings/aliases", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ alias, name, email }),
-    });
-    $("cfg-alias-new-alias").value = "";
-    $("cfg-alias-new-name").value = "";
-    $("cfg-alias-new-email").value = "";
-    loadAliases();
-  };
-
-  $("cfg-context-files-refresh").onclick = loadContextFiles;
-  $("cfg-context-global-files-refresh").onclick = loadContextGlobalFiles;
-
-  $("cfg-generated-files-delete-all").onclick = async () => {
-    const btn = $("cfg-generated-files-delete-all");
-    btn.disabled = true;
-    try {
-      await fetch("/api/settings/generated-files", { method: "DELETE" });
-      loadGeneratedFiles();
-    } finally {
-      btn.disabled = false;
-    }
-  };
-
-  // Sugestao de remetente ao digitar o apelido: procura no historico de
-  // e-mails quem bate com o texto, pra nao precisar digitar o e-mail na
-  // mao (e nao errar).
-  let aliasSuggestTimer = null;
-  $("cfg-alias-new-alias").addEventListener("input", function () {
-    clearTimeout(aliasSuggestTimer);
-    const q = this.value.trim();
-    const box = $("cfg-alias-suggestions");
-    if (q.length < 2) {
-      box.classList.add("hidden");
-      box.innerHTML = "";
-      return;
-    }
-    aliasSuggestTimer = setTimeout(async () => {
-      const res = await fetch(`/api/settings/alias-suggest?q=${encodeURIComponent(q)}`);
-      const data = await res.json().catch(() => ({ suggestions: [] }));
-      const suggestions = data.suggestions || [];
-      if (!suggestions.length) {
-        box.classList.add("hidden");
-        box.innerHTML = "";
-        return;
-      }
-      box.innerHTML = suggestions
-        .map(
-          (s, i) => `<button type="button" data-sugg="${i}">
-            <span class="sugg-name">${escHtml(s.name || s.email)}</span>
-            <span class="sugg-email">${escHtml(s.email)}</span>
-          </button>`
-        )
-        .join("");
-      box.querySelectorAll("[data-sugg]").forEach((btn) => {
-        btn.onclick = () => {
-          const s = suggestions[Number(btn.dataset.sugg)];
-          $("cfg-alias-new-name").value = s.name || "";
-          $("cfg-alias-new-email").value = s.email || "";
-          box.classList.add("hidden");
-          box.innerHTML = "";
-        };
-      });
-      box.classList.remove("hidden");
-    }, 250);
-  });
-  document.addEventListener("mousedown", (e) => {
-    const box = $("cfg-alias-suggestions");
-    if (!box.contains(e.target) && e.target.id !== "cfg-alias-new-alias") {
-      box.classList.add("hidden");
-    }
-  });
-})();
+};
 
 (async () => {
   const mailId = mailPathId();
@@ -2363,6 +2277,17 @@ function wrapSelectionAsAnnotation(range) {
     document.body.classList.add("composing");
     $("compose-page").classList.remove("hidden");
     $("compose-to").focus();
+    return;
+  }
+  if (location.pathname === "/settings") {
+    document.body.classList.add("composing", "settings-view");
+    $("settings-page").classList.remove("hidden");
+    return;
+  }
+  if (autopilotPathActive()) {
+    document.body.classList.add("composing");
+    $("autopilot-page").classList.remove("hidden");
+    await initAutopilotPage();
     return;
   }
   if (mailId) {

@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from app import assistant, llm, store
+
+
+@pytest.fixture(autouse=True)
+def _isolated(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.store.DB_PATH", tmp_path / "t.sqlite")
+    store.init()
+    store.save_settings(rag_enabled=False)
+    monkeypatch.setattr(llm, "has_key", lambda: True)
+
+
+def _thread(chat):
+    store.upsert_thread(
+        {
+            "id": "t1", "subject": "Dados bancários", "from_email": "fin@x.com", "from_name": "Fin",
+            "snippet": "", "internal_date": 5, "is_unread": 0, "last_from_me": 0, "is_automatic": 0,
+            "is_marketing": 0, "needs_action_hint": 0, "awaiting_reply": 0, "conferido": 1,
+            "hidden": 0, "hide_as_replied": 0, "last_from_header": "", "labels_json": [],
+        }
+    )
+    store.save_ai("t1", body_text="De: Fin <fin@x.com>\nData: 2026-09-29\n\nSegue conta 0052-3.",
+                  chat_json=json.dumps(chat), chat_anchor_date=5)
+
+
+def test_previous_instructions_and_answers_reach_the_draft_prompt(monkeypatch):
+    _thread(
+        [
+            {"role": "user", "text": "Essa solicitação tem que ser via chamado direto de alguém da Confrapag."},
+            {"role": "ai", "kind": "answer", "text": "Quem deve abrir é o BKO ou o Comercial."},
+            {"role": "ai", "text": "texto temporário", "placeholder": True},
+        ]
+    )
+    seen = {}
+
+    def fake_complete(prompt, **kwargs):
+        seen["prompt"] = prompt
+        return json.dumps({"kind": "draft", "text": "Olá, abra o chamado.", "cc_names": []})
+
+    monkeypatch.setattr(llm, "complete", fake_complete)
+    assistant.draft("t1", "crie o e-mail de resposta com essas informações")
+
+    prompt = seen["prompt"]
+    assert "via chamado direto de alguém da Confrapag" in prompt
+    assert "BKO ou o Comercial" in prompt
+    assert "texto temporário" not in prompt
+    assert prompt.index("via chamado direto") < prompt.index("Instrução do Leo")
+
+
+def test_chat_context_keeps_the_most_recent_messages_when_too_long():
+    chat = [{"role": "user", "text": f"mensagem {i} " + "x" * 400} for i in range(40)]
+    out = assistant._chat_context(chat, max_chars=2000)
+    assert "mensagem 39" in out and "mensagem 0 " not in out
+    assert len(out) < 2600
+
+
+def test_bank_data_is_a_hard_exclusion_pattern():
+    assert assistant._MONEY_RE.search("Banco do Brasil, agência 0052-3, conta corrente 000100770-X")
+    assert assistant._MONEY_RE.search("Nossa chave Pix é o CNPJ")
+    assert not assistant._MONEY_RE.search("Reunião de alinhamento do projeto amanhã às 14h")

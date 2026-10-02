@@ -5,6 +5,8 @@ from typing import List, Optional
 import mimetypes
 import os
 import re
+import threading
+import time
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
@@ -14,16 +16,59 @@ from googleapiclient.errors import HttpError
 
 from pydantic import BaseModel
 
-from . import assistant, attachments, calendar_client, context_base, gmail_client, llm, people_client, store
+from . import assist, assistant, attachments, board, calendar_client, context_base, fs_browser, gmail_client, llm, metrics, people_client, rag, store, summary_templates
 from .gmail_client import QuotaPartial
 from .preload import pick_preload
-from .config import ACCOUNT, CONTEXT_MD, EMAIL_EXPORT_DIR, ROOT, TZ
+from .config import ACCOUNT, CONTEXT_MD, ROOT, TZ
 
 STATIC = ROOT / "static"
 
 app = FastAPI(title="IA.Email")
 store.init()
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+def _autopilot_loop() -> None:
+    # Loop em processo único (sem fila/scheduler externo) -- só funciona
+    # corretamente com um único worker/processo, que é o setup atual (um
+    # container, uvicorn sem --workers). Uma falha num ciclo não mata o
+    # loop; só loga e tenta de novo no próximo intervalo.
+    while True:
+        try:
+            settings = store.get_settings()
+            scan_minutes = max(1, int(settings.get("autopilot_scan_minutes") or 5))
+        except Exception:
+            scan_minutes = 5
+        time.sleep(scan_minutes * 60)
+        try:
+            current = store.get_settings()
+            if current.get("autopilot_enabled") and current.get("autopilot_mode") == "auxiliar":
+                assist.background_tick()
+            else:
+                assistant.run_autopilot_scan_tick()
+        except Exception as exc:
+            print(f"[autopilot] ciclo falhou: {exc}")
+
+
+def _warm_llm_catalog() -> None:
+    try:
+        llm.openrouter_catalog()
+    except Exception:
+        pass
+
+
+def _rag_initial_sync() -> None:
+    try:
+        rag.sync()
+    except Exception as exc:
+        print(f"[rag] indexação inicial falhou: {exc}")
+
+
+@app.on_event("startup")
+def _start_autopilot_loop() -> None:
+    threading.Thread(target=_autopilot_loop, daemon=True).start()
+    threading.Thread(target=_rag_initial_sync, daemon=True).start()
+    threading.Thread(target=_warm_llm_catalog, daemon=True).start()
 
 
 class SetupBody(BaseModel):
@@ -73,6 +118,24 @@ class SettingsBody(BaseModel):
     style_custom: Optional[str] = None
     preload_enabled: Optional[bool] = None
     preload_count: Optional[int] = None
+    llm_models: Optional[List[str]] = None
+    llm_reasoning: Optional[bool] = None
+    summary_template: Optional[str] = None
+    summary_custom: Optional[str] = None
+    metric_minutes_summary: Optional[float] = None
+    metric_minutes_reply: Optional[float] = None
+    rag_enabled: Optional[bool] = None
+    rag_top_k: Optional[int] = None
+    rag_include_personal: Optional[bool] = None
+    autopilot_enabled: Optional[bool] = None
+    autopilot_mode: Optional[str] = None
+    autopilot_level: Optional[str] = None
+    autopilot_buffer_minutes: Optional[int] = None
+    autopilot_scan_minutes: Optional[int] = None
+
+
+class PathsBody(BaseModel):
+    paths: List[str] = []
 
 
 class AliasBody(BaseModel):
@@ -95,7 +158,7 @@ def index():
 
 @app.get("/favicon.ico")
 def favicon():
-    return RedirectResponse("/static/favicon.svg")
+    return RedirectResponse("/static/favicon.svg?v=2")
 
 
 @app.get("/mail/{thread_id}")
@@ -106,6 +169,36 @@ def mail_page(thread_id: str):
 @app.get("/compose")
 def compose_page():
     return _index()
+
+
+@app.get("/autopilot")
+def autopilot_page():
+    return _index()
+
+
+@app.get("/settings")
+def settings_page():
+    return _index()
+
+
+@app.get("/board")
+def board_page():
+    return FileResponse(STATIC / "board.html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/settings")
+def settings_page():
+    return _index()
+
+
+def _active_model_name() -> str:
+    if not llm.has_key():
+        return ""
+    last = llm.last_used()
+    if last and last.get("name"):
+        return last["name"]
+    usable = llm.usable_chain()
+    return llm.display_name(usable[0]) if usable else ""
 
 
 @app.get("/api/status")
@@ -127,6 +220,7 @@ def status():
         "llm_tokens_today": store.llm_usage_today(),
         "preload_enabled": store.get_settings().get("preload_enabled", True),
         "preload_count": store.get_settings().get("preload_count", 2),
+        "llm_model": _active_model_name(),
     }
 
 
@@ -461,9 +555,234 @@ def thread_send(thread_id: str, body: SendBody):
         chat_anchor_date=row.get("internal_date") or 0,
         sent_via_app_at=int(datetime.now().timestamp() * 1000),
     )
+    store.log_event("sent", thread_id)
     for item in attachments.list_files(thread_id):
         attachments.delete_file(thread_id, item["name"])
     return {"ok": True, **result}
+
+
+@app.get("/api/fs/browse")
+def fs_browse(path: str = Query("")):
+    try:
+        return fs_browser.browse(path or None)
+    except fs_browser.FsError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/fs/search")
+def fs_search(q: str = Query("")):
+    return {"items": fs_browser.search(q)}
+
+
+@app.post("/api/fs/describe")
+def fs_describe(body: PathsBody):
+    return {"items": fs_browser.describe(body.paths)}
+
+
+@app.get("/api/metrics")
+def usage_metrics():
+    return {"week": metrics.compute(7), "month": metrics.compute(30)}
+
+
+@app.get("/api/summary/templates")
+def summary_template_catalog():
+    settings = store.get_settings()
+    return {
+        "items": [
+            {"key": k, "name": t["name"], "description": t["description"], "sample": t["sample"], "headers": t["headers"]}
+            for k, t in summary_templates.TEMPLATES.items()
+        ],
+        "headers": summary_templates.all_headers(),
+        "selected": settings.get("summary_template") or summary_templates.DEFAULT_KEY,
+        "custom": settings.get("summary_custom") or "",
+    }
+
+
+@app.get("/api/rag/status")
+def rag_status():
+    return rag.status()
+
+
+@app.post("/api/rag/reindex")
+def rag_reindex(force: bool = Query(False)):
+    try:
+        stats = rag.sync(force=force)
+    except Exception as exc:
+        raise HTTPException(502, f"Falha ao indexar: {exc}") from exc
+    return {"ok": True, "stats": stats, **rag.status()}
+
+
+@app.get("/api/rag/search")
+def rag_search(q: str = Query(""), k: int = Query(6, ge=1, le=20)):
+    hits = rag.search(q, k=k)
+    return {
+        "items": [
+            {"source": h["source"], "title": h["title"], "snippet": h["body"][:320]} for h in hits
+        ]
+    }
+
+
+@app.get("/api/llm/models")
+def llm_models_catalog():
+    try:
+        return {"items": llm.catalog()}
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.get("/api/llm/config")
+def llm_config():
+    keys = llm._keys()
+    configured = store.get_settings().get("llm_models") or []
+    return {
+        "models": [
+            {
+                "entry": e,
+                "name": llm.display_name(e),
+                "provider": llm.parse_entry(e)[0],
+                "available": bool(keys.get(llm.parse_entry(e)[0])),
+            }
+            for e in llm.chain()
+        ],
+        "is_default": not configured,
+        "last_used": llm.last_used(),
+    }
+
+
+@app.post("/api/llm/test")
+def llm_test():
+    try:
+        llm.complete("Responda apenas: ok", timeout=40)
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"ok": True, "last_used": llm.last_used()}
+
+
+@app.post("/api/autopilot/patterns/refresh")
+def autopilot_patterns_refresh():
+    try:
+        digest = assistant.build_reply_patterns_digest()
+    except Exception as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"ok": True, "digest": digest}
+
+
+@app.get("/api/autopilot/patterns")
+def autopilot_patterns():
+    return assistant.get_reply_patterns()
+
+
+@app.post("/api/autopilot/decide/{thread_id}")
+def autopilot_decide(thread_id: str):
+    # Roda o motor de decisão pra UMA thread, sob demanda -- usado pra
+    # testar/depurar e, pela própria página do piloto automático.
+    try:
+        return assistant.decide_autopilot_action(thread_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+def _with_thread_info(items: list[dict]) -> list[dict]:
+    out = []
+    for item in items:
+        row = store.get_thread(item.get("thread_id")) or {}
+        out.append({**item, "subject": row.get("subject") or "", "from_email": row.get("from_email") or ""})
+    return out
+
+
+@app.post("/api/assistant/run")
+def assistant_run(limit: int = Query(12, ge=1, le=40), force: bool = Query(False)):
+    if not llm.has_key():
+        raise HTTPException(400, "Falta chave de LLM (Gemini, OpenRouter ou Claude) no .env.")
+    return assist.start(limit, force)
+
+
+@app.get("/api/assistant/status")
+def assistant_status():
+    return assist.status()
+
+
+@app.post("/api/assistant/cancel")
+def assistant_cancel():
+    return assist.cancel()
+
+
+@app.get("/api/assistant/report")
+def assistant_report():
+    return assist.report()
+
+
+@app.post("/api/assistant/{decision_id}/use")
+def assistant_use(decision_id: str):
+    try:
+        return assist.use(decision_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/assistant/{decision_id}/dismiss")
+def assistant_dismiss(decision_id: str):
+    try:
+        return assist.dismiss(decision_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/board")
+def board_data():
+    return board.build()
+
+
+@app.post("/api/autopilot/decisions/{decision_id}/dismiss")
+def autopilot_dismiss(decision_id: str):
+    try:
+        return assistant.dismiss_autopilot_decision(decision_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/autopilot/queue")
+def autopilot_queue():
+    return {"items": _with_thread_info(store.list_autopilot_decisions(status="pending"))}
+
+
+@app.get("/api/autopilot/log")
+def autopilot_log():
+    sent = store.list_autopilot_decisions(status="sent", limit=50)
+    cancelled = store.list_autopilot_decisions(status="cancelled", limit=20)
+    failed = store.list_autopilot_decisions(status="failed", limit=20)
+    items = sorted(sent + cancelled + failed, key=lambda d: d.get("decided_at") or "", reverse=True)
+    return {"items": _with_thread_info(items[:50])}
+
+
+@app.get("/api/autopilot/alerts")
+def autopilot_alerts():
+    items = [d for d in store.list_autopilot_decisions(status="resolved", limit=100) if d["action"] == "alert"]
+    return {"items": _with_thread_info(items)}
+
+
+@app.get("/api/autopilot/drafts")
+def autopilot_drafts():
+    items = [d for d in store.list_autopilot_decisions(status="resolved", limit=100) if d["action"] == "draft_only"]
+    return {"items": _with_thread_info(items)}
+
+
+@app.post("/api/autopilot/queue/{decision_id}/cancel")
+def autopilot_cancel(decision_id: str):
+    try:
+        return assistant.cancel_autopilot_decision(decision_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/autopilot/tick")
+def autopilot_tick():
+    # Dispara manualmente um ciclo do piloto automático -- útil pra testar
+    # sem esperar o intervalo do loop em background, e é o mesmo código que
+    # o loop chama sozinho.
+    return assistant.run_autopilot_scan_tick()
 
 
 @app.post("/api/compose/draft")
@@ -496,6 +815,7 @@ def compose_send(body: ComposeBody):
             store.save_ai(thread_id, sent_via_app_at=int(datetime.now().timestamp() * 1000))
         except Exception:
             pass
+    store.log_event("compose_sent", thread_id or "")
     return {"ok": True, **result}
 
 
@@ -608,6 +928,17 @@ def get_settings():
 @app.post("/api/settings")
 def update_settings(body: SettingsBody):
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "autopilot_mode" in fields and fields["autopilot_mode"] not in ("piloto", "auxiliar"):
+        raise HTTPException(400, "Modo desconhecido.")
+    if "summary_template" in fields and fields["summary_template"] not in summary_templates.TEMPLATES:
+        raise HTTPException(400, "Modelo de resumo desconhecido.")
+    if "llm_models" in fields:
+        seen: list[str] = []
+        for entry in fields["llm_models"]:
+            norm = llm.normalize_entry(entry)
+            if norm not in seen:
+                seen.append(norm)
+        fields["llm_models"] = seen
     return {"settings": store.save_settings(**fields)}
 
 
@@ -647,11 +978,10 @@ def settings_context_files(base: str = Query("email")):
 
 @app.get("/api/settings/generated-files")
 def settings_generated_files():
-    exports = []
-    if EMAIL_EXPORT_DIR.is_dir():
-        for path in sorted(EMAIL_EXPORT_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
-            stat = path.stat()
-            exports.append({"name": path.name, "size": stat.st_size, "modified_at": stat.st_mtime})
+    # As exportações agora podem estar em qualquer pasta radar-contextos/
+    # da Learning Base (não só em principal_agents/emails/) -- ver
+    # assistant.export_context() e assistant._learning_base_menu().
+    exports = assistant.list_generated_exports()
     context_md = None
     if CONTEXT_MD.is_file():
         stat = CONTEXT_MD.stat()
@@ -659,25 +989,18 @@ def settings_generated_files():
     return {"exports": exports, "context_md": context_md}
 
 
-@app.delete("/api/settings/generated-files/{filename}")
-def delete_generated_file(filename: str):
-    if "/" in filename or "\\" in filename or filename in (".", ".."):
-        raise HTTPException(400, "Nome de arquivo inválido.")
-    path = (EMAIL_EXPORT_DIR / filename).resolve()
-    if EMAIL_EXPORT_DIR.resolve() not in path.parents or not path.is_file():
-        raise HTTPException(404, "Arquivo não encontrado.")
-    path.unlink()
+@app.delete("/api/settings/generated-files/{path:path}")
+def delete_generated_file(path: str):
+    try:
+        assistant.delete_generated_export(path)
+    except RuntimeError as exc:
+        raise HTTPException(404, str(exc)) from exc
     return {"ok": True}
 
 
 @app.delete("/api/settings/generated-files")
 def delete_all_generated_files():
-    removed = 0
-    if EMAIL_EXPORT_DIR.is_dir():
-        for path in EMAIL_EXPORT_DIR.glob("*.md"):
-            path.unlink()
-            removed += 1
-    return {"ok": True, "removed": removed}
+    return {"ok": True, "removed": assistant.delete_all_generated_exports()}
 
 
 def _public(row: dict, *, use_sent_time: bool = False) -> dict:

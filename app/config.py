@@ -29,6 +29,7 @@ PORT = int(os.getenv("RADAR_PORT", "8765"))
 PUBLIC_HOST = os.getenv("RADAR_PUBLIC_HOST", "127.0.0.1")
 TOKEN_PATH = DATA_DIR / "gmail-token.json"
 DB_PATH = DATA_DIR / "radar.sqlite"
+RAG_DB_PATH = DATA_DIR / "rag.sqlite"
 CLIENT_SECRETS_PATH = DATA_DIR / "client-secrets.json"
 
 SCOPES = [
@@ -62,6 +63,13 @@ EMAIL_EXPORT_RETENTION_DAYS = 7
 # propriedade e automatizar respostas que dependem de contexto do negocio).
 LEARNING_BASE_DEFAULT = Path("/Users/leo/Learning Base/principal_agents/emails")
 LEARNING_BASE_GLOBAL_DEFAULT = Path("/Users/leo/Learning Base")
+
+# lb-company/ e lb-personal/ -- usadas pelo roteamento de "Guardar no
+# cerebro" e "Exportar contexto" pra escolher destino em QUALQUER lugar da
+# Learning Base (nao so em principal_agents/*, que era o unico pedaco
+# escrito antes). Precisa de mount read-write no docker-compose.yml.
+LB_COMPANY_DIR = LEARNING_BASE_GLOBAL_DEFAULT / "lb-company"
+LB_PERSONAL_DIR = LEARNING_BASE_GLOBAL_DEFAULT / "lb-personal"
 CONTEXT_MAX_CHARS = 20000
 CONTEXT_GLOBAL_MAX_CHARS = 15000
 CONTEXT_MAX_FILES_LISTED = 300

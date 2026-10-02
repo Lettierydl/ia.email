@@ -20,13 +20,15 @@ services:
       - ./data:/app/data
       - ./app:/app/app
       - ./static:/app/static
-      # Learning Base inteira, so leitura -- usada pela base de contexto
-      # "geral" das Configuracoes. principal_agents/ e montada de novo por
-      # cima, em leitura/escrita: e' onde "Guardar no cerebro" escreve,
-      # escolhendo a categoria certa (financas, demandas-projetos, emails
-      # etc) em vez de sempre em emails/ (o mount mais especifico vence
-      # sobre o pai). lb-company/ e lb-personal/ continuam so leitura --
-      # sao vaults com convenc-o-es proprias, fora do escopo de escrita
-      # automatica deste app.
+      # Learning Base inteira, so leitura por padrao -- usada pela base de
+      # contexto "geral" das Configuracoes. principal_agents/, lb-company/
+      # e lb-personal/ sao montadas de novo por cima, em leitura/escrita
+      # (o mount mais especifico vence sobre o pai): e' onde "Guardar no
+      # cerebro" e "Exportar contexto" escrevem, escolhendo o destino certo
+      # em qualquer parte da base (produto, area da empresa, pessoal/
+      # profissional, agente recorrente) em vez de sempre em emails/.
+      # credenciais/ (e qualquer outra pasta nova) continuam so leitura.
       - "/Users/leo/Learning Base:/Users/leo/Learning Base:ro"
       - "/Users/leo/Learning Base/principal_agents:/Users/leo/Learning Base/principal_agents"
+      - "/Users/leo/Learning Base/lb-company:/Users/leo/Learning Base/lb-company"
+      - "/Users/leo/Learning Base/lb-personal:/Users/leo/Learning Base/lb-personal"

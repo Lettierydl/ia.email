@@ -10,6 +10,11 @@ _EXPORT_DIR_RESOLVED = EMAIL_EXPORT_DIR.resolve()
 
 
 def _iter_files(root: Path):
+    if root.is_file():
+        # arquivo escolhido direto no seletor das Configurações
+        if root.suffix.lower() in TEXT_EXTENSIONS:
+            yield root
+        return
     if not root.is_dir():
         return
     for path in root.rglob("*"):
@@ -17,7 +22,12 @@ def _iter_files(root: Path):
             continue
         # exports por thread sao ephemeros/redundantes -- nao contam como
         # "base de conhecimento pessoal", so poluiriam o contexto com
-        # transcricoes antigas de threads.
+        # transcricoes antigas de threads. Eles ficam em pastas
+        # radar-contextos/ espalhadas pela base (ver assistant.export_context).
+        # credenciais/ nunca entra: o texto daqui vai pra prompt de LLM externo.
+        rel_dirs = path.relative_to(root).parts[:-1]
+        if any(p in ("radar-contextos", "credenciais") for p in rel_dirs):
+            continue
         if _EXPORT_DIR_RESOLVED in path.resolve().parents:
             continue
         yield path

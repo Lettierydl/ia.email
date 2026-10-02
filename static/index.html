@@ -4,11 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>IA.Email</title>
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=2" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=73" />
+  <link rel="stylesheet" href="/static/styles.css?v=93" />
 </head>
 <body>
   <header class="top">
@@ -29,6 +29,9 @@
       <span class="last-update" id="updated">—</span>
       <button type="button" id="btn-refresh" class="icon-btn" data-tooltip="Atualizar emails do Gmail">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+      </button>
+      <button type="button" id="btn-autopilot" class="icon-btn" data-tooltip="Piloto automático">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a1 1 0 011 1v2.06A8.94 8.94 0 0119.94 11H22a1 1 0 010 2h-2.06A8.94 8.94 0 0113 19.94V22a1 1 0 01-2 0v-2.06A8.94 8.94 0 014.06 13H2a1 1 0 010-2h2.06A8.94 8.94 0 0111 4.06V2a1 1 0 011-1zm0 5a7 7 0 100 14 7 7 0 000-14zm0 3a1 1 0 01.993.883L13 11v3.59l1.7 1.71a1 1 0 01-1.32 1.5l-.1-.08-2-2A1 1 0 0111 15v-4a1 1 0 011-1z"/></svg>
       </button>
       <button type="button" id="btn-settings" class="icon-btn" data-tooltip="Configurações">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
@@ -150,6 +153,118 @@
           </button>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section id="autopilot-page" class="hidden">
+    <div class="pane-header">
+      <div>
+        <h3>Piloto automático</h3>
+        <p class="sub" style="margin:0">Decide e, dependendo do nível, responde e-mails sozinho.</p>
+      </div>
+      <div class="pane-actions">
+        <button type="button" id="autopilot-close" class="icon-btn" data-tooltip="Fechar">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="pane-body-wrap">
+      <section class="settings-section">
+        <h4>Modo <a class="as-link" style="font-weight:400;font-size:13px;margin-left:8px" href="/board">Abrir painel visual →</a></h4>
+        <div class="ap-modes" role="radiogroup" aria-label="Modo do piloto">
+          <button type="button" class="ap-mode" role="radio" data-mode="piloto" aria-checked="true">
+            <strong>Piloto automático</strong>
+            <span>Decide e, conforme o nível, pode responder sozinho (sempre com tempo pra você cancelar).</span>
+          </button>
+          <button type="button" class="ap-mode" role="radio" data-mode="auxiliar" aria-checked="false">
+            <strong>Auxiliar</strong>
+            <span>Nunca envia. Prepara respostas com base no que você já decidiu e mostra o que não consegue responder.</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="settings-section" id="ap-assist">
+        <h4>Auxiliar: como eu responderia</h4>
+        <p class="settings-hint">Analisa os e-mails que esperam resposta e mostra, para cada um, como responderia e em que se baseou (decisões e respostas suas anteriores), ou o que falta pra conseguir. <strong>Nada é enviado.</strong> Só vira sugestão o que tiver uma base real citada.</p>
+        <div class="as-controls">
+          <label class="as-limit">Analisar até
+            <select id="ap-assist-limit"><option value="6">6</option><option value="12" selected>12</option><option value="20">20</option><option value="30">30</option></select>
+            e-mails
+          </label>
+          <button type="button" id="ap-assist-run" class="primary">Analisar minha caixa</button>
+          <button type="button" id="ap-assist-cancel" class="ghost hidden">Parar</button>
+          <a class="ghost as-link" href="/board">Abrir painel visual</a>
+        </div>
+        <div id="ap-assist-progress" class="as-progress hidden" aria-live="polite">
+          <div id="ap-assist-working"></div>
+          <div class="as-bar"><i id="ap-assist-bar"></i></div>
+          <p class="settings-hint" id="ap-assist-counts"></p>
+        </div>
+        <p class="settings-hint" id="ap-assist-summary"></p>
+        <h5 class="as-title">Como eu responderia <span id="ap-assist-n-sug" class="as-count">0</span></h5>
+        <div id="ap-assist-suggestions" class="as-list"></div>
+        <h5 class="as-title">Sem contexto suficiente <span id="ap-assist-n-gap" class="as-count">0</span></h5>
+        <div id="ap-assist-gaps" class="as-list"></div>
+        <details class="as-noreply-wrap">
+          <summary>Não parecem precisar de resposta <span id="ap-assist-n-no" class="as-count">0</span></summary>
+          <div id="ap-assist-noreply" class="as-list"></div>
+        </details>
+      </section>
+
+      <section class="settings-section">
+        <h4>Sensibilidade</h4>
+        <p class="settings-hint">
+          Conservador: nunca envia sozinho, só rascunho. Moderado: envia sozinho em casos de alta
+          confiança/padrão já confirmado. Autônomo: envia sozinho a maioria dos casos não excepcionais.
+          Em todos os níveis, nenhum envio sai na hora -- fica numa fila com um tempo de segurança antes,
+          cancelável aqui mesmo.
+        </p>
+        <label class="settings-toggle">
+          <input type="checkbox" id="ap-enabled" />
+          <span id="ap-enabled-label">Ligar o piloto automático</span>
+        </label>
+        <div id="ap-piloto-only">
+        <select id="ap-level">
+          <option value="conservador">Conservador (só rascunho)</option>
+          <option value="moderado">Moderado</option>
+          <option value="autonomo">Autônomo</option>
+        </select>
+        <label class="settings-toggle" style="gap:6px">
+          Buffer de segurança (minutos) antes de enviar:
+          <input type="number" id="ap-buffer" min="1" max="120" style="width:70px" />
+        </label>
+        </div>
+        <button type="button" id="ap-settings-save" class="ghost">Salvar</button>
+        <span id="ap-settings-status" class="settings-status"></span>
+      </section>
+
+      <section class="settings-section">
+        <h4>Padrões de resposta aprendidos</h4>
+        <p class="settings-hint" id="ap-patterns-updated">Nunca gerado ainda.</p>
+        <button type="button" id="ap-patterns-refresh" class="ghost">Atualizar padrões</button>
+        <div id="ap-patterns-digest" class="box" style="white-space:pre-wrap"></div>
+      </section>
+
+      <section class="settings-section">
+        <h4>Fila de envio automático (pendente)</h4>
+        <div id="ap-queue-list" class="files-list"></div>
+      </section>
+
+      <section class="settings-section">
+        <h4>Já enviado automaticamente / cancelado / falhou</h4>
+        <div id="ap-log-list" class="files-list"></div>
+      </section>
+
+      <section class="settings-section">
+        <h4>Precisa de você (alertas)</h4>
+        <div id="ap-alerts-list" class="files-list"></div>
+      </section>
+
+      <section class="settings-section">
+        <h4>Rascunhos prontos pra revisão</h4>
+        <div id="ap-drafts-list" class="files-list"></div>
+      </section>
     </div>
   </section>
 
@@ -312,107 +427,245 @@
     </div>
   </div>
 
-  <div id="settings-modal" class="modal-overlay hidden">
-    <div class="modal-card settings-card">
-      <div class="settings-header">
-        <h3>Configurações</h3>
-        <button type="button" id="settings-close" class="icon-btn" data-tooltip="Fechar">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
-        </button>
+  <section id="settings-page" class="hidden" aria-label="Configurações">
+    <div class="st-head">
+      <a class="st-back" href="/" aria-label="Voltar para a caixa de entrada">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+        Caixa
+      </a>
+      <h2>Configurações</h2>
+    </div>
+
+    <nav class="st-nav" aria-label="Seções das configurações">
+      <a href="#st-uso">Uso</a>
+      <a href="#st-ia">Modelos de IA</a>
+      <a href="#st-resumo">Resumo</a>
+      <a href="#st-conhecimento">Conhecimento</a>
+      <a href="#st-escrita">Escrita</a>
+      <a href="#st-piloto">Piloto</a>
+      <a href="#st-contatos">Apelidos</a>
+      <a href="#st-arquivos">Arquivos gerados</a>
+    </nav>
+
+    <section class="st-card" id="st-uso">
+      <div class="st-card-head">
+        <div>
+          <h3>Seu tempo com a ferramenta</h3>
+          <p class="st-hint">O que a IA já fez por você. O tempo é uma estimativa.</p>
+        </div>
+        <div class="st-seg" role="group" aria-label="Período">
+          <button type="button" data-range="week" class="on">7 dias</button>
+          <button type="button" data-range="month">30 dias</button>
+        </div>
+      </div>
+      <div class="st-metrics">
+        <div class="st-metric">
+          <span class="st-metric-n" id="m-analyzed">0</span>
+          <span class="st-metric-l">e-mails analisados</span>
+        </div>
+        <div class="st-metric">
+          <span class="st-metric-n" id="m-answered">0</span>
+          <span class="st-metric-l">respondidos <small id="m-auto"></small></span>
+        </div>
+        <div class="st-metric st-metric-accent">
+          <span class="st-metric-n" id="m-saved">0 min</span>
+          <span class="st-metric-l">economizados <small id="m-saved-sub"></small></span>
+        </div>
+      </div>
+      <div class="st-bars" id="m-bars" aria-hidden="true"></div>
+      <div class="st-legend" aria-hidden="true"><span><i class="lg-a"></i> analisados</span><span><i class="lg-b"></i> respondidos</span></div>
+      <p class="st-hint" id="m-assumptions"></p>
+      <details class="st-details">
+        <summary>Ajustar a estimativa</summary>
+        <div class="st-row">
+          <label class="st-field">Minutos que um resumo me poupa
+            <input type="number" id="m-min-summary" min="0" max="60" step="0.5" inputmode="decimal" />
+          </label>
+          <label class="st-field">Minutos que uma resposta me poupa
+            <input type="number" id="m-min-reply" min="0" max="120" step="0.5" inputmode="decimal" />
+          </label>
+        </div>
+        <p class="st-hint">A contagem de análises começa quando as métricas foram ligadas; as respostas enviadas antes entraram no histórico.</p>
+        <button type="button" id="m-save" class="st-btn">Salvar estimativa</button>
+      </details>
+    </section>
+
+    <section class="st-card" id="st-uso-piloto" data-nav="st-uso">
+      <div class="st-card-head">
+        <div>
+          <h3>Piloto automático</h3>
+          <p class="st-hint" id="ap-m-sub"></p>
+        </div>
+        <span class="st-pill" id="ap-m-pill">Desligado</span>
+      </div>
+      <div id="ap-m-body">
+        <div class="st-metrics four">
+          <div class="st-metric"><span class="st-metric-n" id="ap-m-decisions">0</span><span class="st-metric-l">e-mails analisados pelo piloto</span></div>
+          <div class="st-metric"><span class="st-metric-n" id="ap-m-sent">0</span><span class="st-metric-l">respondidos sozinho <small id="ap-m-sent-sub"></small></span></div>
+          <div class="st-metric"><span class="st-metric-n" id="ap-m-drafts">0</span><span class="st-metric-l">rascunhos prontos pra você</span></div>
+          <div class="st-metric"><span class="st-metric-n" id="ap-m-alerts">0</span><span class="st-metric-l">alertas pra você decidir</span></div>
+        </div>
+        <div class="st-metrics">
+          <div class="st-metric st-metric-accent"><span class="st-metric-n" id="ap-m-rate">0%</span><span class="st-metric-l">taxa de automação <small>(decisões que viraram envio)</small></span></div>
+          <div class="st-metric"><span class="st-metric-n" id="ap-m-saved">0 min</span><span class="st-metric-l">economizados só pelo piloto</span></div>
+          <div class="st-metric"><span class="st-metric-n" id="ap-m-cancelled">0</span><span class="st-metric-l">envios cancelados por você <small id="ap-m-cancel-sub"></small></span></div>
+        </div>
+        <p class="st-hint" id="ap-m-assist"></p>
+        <div class="st-bars" id="ap-m-bars" aria-hidden="true"></div>
+        <div class="st-legend" aria-hidden="true"><span><i class="lg-s"></i> enviados sozinho</span><span><i class="lg-d"></i> rascunhos</span><span><i class="lg-al"></i> alertas</span></div>
+      </div>
+      <div class="st-actions"><a class="st-btn" href="/autopilot">Abrir o piloto automático</a></div>
+    </section>
+
+    <section class="st-card" id="st-ia">
+      <div class="st-card-head">
+        <div>
+          <h3>Modelos de IA</h3>
+          <p class="st-hint">A IA usa o primeiro da lista. Se acabar a cota ou falhar, tenta o próximo (até 5). Mude a ordem com as setas.</p>
+        </div>
+      </div>
+      <ol class="st-models" id="st-models-list"></ol>
+      <div class="st-combo" id="st-combo">
+        <label class="st-label" for="st-model-q">Adicionar modelo</label>
+        <input type="search" id="st-model-q" placeholder="Buscar: Gemini, Nemotron, Llama, Claude…" autocomplete="off" />
+        <div id="st-model-results" class="st-combo-list hidden" role="listbox"></div>
+      </div>
+      <label class="st-check"><input type="checkbox" id="st-free-only" checked /> Mostrar só modelos gratuitos</label>
+      <label class="st-check"><input type="checkbox" id="st-llm-reasoning" /> Deixar a IA “pensar” antes de responder <small>(bem mais lento: 20 a 60 s por resumo)</small></label>
+      <p class="st-hint">Desligado (recomendado), os modelos gratuitos respondem em poucos segundos. Ligado, eles gastam a maior parte do tempo raciocinando em silêncio; só vale a pena se a precisão importar mais que a velocidade.</p>
+      <div class="st-actions">
+        <button type="button" id="st-model-test" class="st-btn">Testar a ordem</button>
+        <button type="button" id="st-model-reset" class="st-btn st-btn-quiet">Voltar ao padrão</button>
+        <span class="st-status" id="st-model-status" role="status"></span>
+      </div>
+      <p class="st-hint" id="st-model-last"></p>
+    </section>
+
+    <section class="st-card" id="st-resumo">
+      <div class="st-card-head">
+        <div>
+          <h3>Como o resumo aparece</h3>
+          <p class="st-hint">Escolha o formato que ajuda você a decidir mais rápido. Vale para os próximos resumos; use "Resumir de novo" num e-mail para refazer.</p>
+        </div>
+      </div>
+      <div class="st-templates" id="st-templates" role="radiogroup" aria-label="Formato do resumo"></div>
+      <label class="st-label" for="st-summary-custom">Instrução extra (opcional)</label>
+      <textarea id="st-summary-custom" rows="3" placeholder="Ex.: sempre foque em quem está falando e no tom da pessoa."></textarea>
+      <div class="st-chips" id="st-summary-chips"></div>
+      <div class="st-actions">
+        <button type="button" id="st-summary-save" class="st-btn st-btn-primary">Salvar</button>
+        <span class="st-status" id="st-summary-status" role="status"></span>
+      </div>
+    </section>
+
+    <section class="st-card" id="st-conhecimento">
+      <div class="st-card-head">
+        <div>
+          <h3>Conhecimento da IA</h3>
+          <p class="st-hint">O que a IA consulta antes de responder: o seu cérebro (Learning Base) e o seu histórico de e-mails.</p>
+        </div>
       </div>
 
-      <section class="settings-section">
-        <h4>Base de contexto — e-mails</h4>
-        <p class="settings-hint">Quando ligado, o chat lê arquivos dessas pastas (e subpastas) como conhecimento pessoal seu ao gerar rascunho ou responder pergunta. Pensado pra contexto direcionado de e-mail/trabalho.</p>
-        <label class="settings-toggle">
-          <input type="checkbox" id="cfg-context-enabled" />
-          Ler a base de contexto (e-mails)
-        </label>
-        <textarea id="cfg-context-paths" rows="2" placeholder="Uma pasta por linha, ex.: /Users/leo/Learning Base/principal_agents/emails"></textarea>
-        <button type="button" id="cfg-context-save" class="ghost">Salvar</button>
-        <span id="cfg-context-status" class="settings-status"></span>
-      </section>
+      <h4 class="st-sub">Busca inteligente (RAG local)</h4>
+      <p class="st-hint">Em vez de ler os arquivos mais recentes, a IA procura só os trechos relevantes para cada e-mail: decisões antigas, respostas parecidas suas e regras do cérebro. O índice fica no seu computador, num arquivo separado.</p>
+      <label class="st-check"><input type="checkbox" id="st-rag-enabled" /> Usar a busca (recomendado)</label>
+      <label class="st-check"><input type="checkbox" id="st-rag-personal" /> Incluir conhecimento pessoal (finanças, saúde, rotina)</label>
+      <p class="st-hint" id="st-rag-info"></p>
+      <div class="st-actions">
+        <button type="button" id="st-rag-reindex" class="st-btn">Reindexar agora</button>
+        <span class="st-status" id="st-rag-status" role="status"></span>
+      </div>
+      <div class="st-search-row">
+        <input type="search" id="st-rag-q" placeholder="Testar a busca, ex.: pix estático" autocomplete="off" />
+        <button type="button" id="st-rag-search" class="st-btn">Buscar</button>
+      </div>
+      <div id="st-rag-results" class="st-results"></div>
 
-      <section class="settings-section">
-        <h4>Base de contexto — geral</h4>
-        <p class="settings-hint">Uma segunda base, mais ampla (ex.: a Learning Base inteira), com conhecimento de sistemas/produto/processos -- pra dar mais propriedade técnica e automatizar respostas que dependem de contexto de negócio, não só do e-mail em si.</p>
-        <label class="settings-toggle">
-          <input type="checkbox" id="cfg-context-global-enabled" />
-          Ler a base de contexto (geral)
-        </label>
-        <textarea id="cfg-context-global-paths" rows="2" placeholder="Uma pasta por linha, ex.: /Users/leo/Learning Base"></textarea>
-        <button type="button" id="cfg-context-global-save" class="ghost">Salvar</button>
-        <span id="cfg-context-global-status" class="settings-status"></span>
-      </section>
+      <h4 class="st-sub">Base geral</h4>
+      <p class="st-hint">Pastas e arquivos que formam a base de conhecimento. A busca acima indexa exatamente o que estiver aqui.</p>
+      <label class="st-check"><input type="checkbox" id="st-ctx-global-enabled" /> Ler também sem a busca (envia os arquivos mais recentes inteiros)</label>
+      <div class="st-picker" id="picker-global"></div>
 
-      <section class="settings-section">
-        <h4>Preload de resumo</h4>
-        <p class="settings-hint">Ao abrir a caixa, o app gera o resumo dos primeiros/últimos e-mails de cada lista automaticamente, pra abrir instantâneo. E-mails do meio da lista continuam gerando na hora que você abre.</p>
-        <label class="settings-toggle">
-          <input type="checkbox" id="cfg-preload-enabled" />
-          Pré-carregar resumos automaticamente
-        </label>
-        <label class="settings-toggle" style="gap:6px">
-          Quantos por ponta de cada lista:
-          <input type="number" id="cfg-preload-count" min="1" max="20" style="width:60px" />
-        </label>
-        <button type="button" id="cfg-preload-save" class="ghost">Salvar</button>
-        <span id="cfg-preload-status" class="settings-status"></span>
-      </section>
+      <h4 class="st-sub">Base de e-mails e trabalho</h4>
+      <p class="st-hint">Um recorte mais estreito, só usado quando a busca está desligada.</p>
+      <label class="st-check"><input type="checkbox" id="st-ctx-email-enabled" /> Ler esta base</label>
+      <div class="st-picker" id="picker-email"></div>
+    </section>
 
-      <section class="settings-section">
-        <h4>Estilo do texto</h4>
-        <select id="cfg-style-preset">
-          <option value="neutro">Neutro (padrão)</option>
-          <option value="formal">Formal</option>
-          <option value="direto">Direto / informal</option>
-        </select>
-        <textarea id="cfg-style-custom" rows="2" placeholder="Instrução extra de estilo (opcional), ex.: evite emoji, sempre assine como Léo"></textarea>
-        <button type="button" id="cfg-style-save" class="ghost">Salvar</button>
-        <span id="cfg-style-status" class="settings-status"></span>
-      </section>
-
-      <section class="settings-section">
-        <h4>Apelidos de pessoas</h4>
-        <p class="settings-hint">Ex.: "Paulo" → Paulo Lemes &lt;paulo.lemes@confrapag.com.br&gt;. O chat usa isso pra saber quem é quem quando você usar o apelido na instrução.</p>
-        <div id="cfg-aliases-list" class="aliases-list"></div>
-        <div class="alias-form">
-          <div class="alias-field-wrap">
-            <input type="text" id="cfg-alias-new-alias" placeholder="apelido, ex.: joanderson" autocomplete="off" />
-            <div id="cfg-alias-suggestions" class="alias-suggestions hidden"></div>
-          </div>
-          <input type="text" id="cfg-alias-new-name" placeholder="nome completo" />
-          <input type="text" id="cfg-alias-new-email" placeholder="email@confrapag.com.br" />
-          <button type="button" id="cfg-alias-add" class="ghost">Adicionar</button>
+    <section class="st-card" id="st-escrita">
+      <div class="st-card-head">
+        <div>
+          <h3>Escrita e desempenho</h3>
         </div>
-      </section>
+      </div>
+      <label class="st-label" for="st-style-preset">Estilo do texto</label>
+      <select id="st-style-preset">
+        <option value="neutro">Neutro (padrão)</option>
+        <option value="formal">Formal</option>
+        <option value="direto">Direto / informal</option>
+      </select>
+      <textarea id="st-style-custom" rows="2" placeholder="Instrução extra de estilo (opcional), ex.: evite emoji, sempre assine como Léo"></textarea>
+      <div class="st-actions">
+        <button type="button" id="st-style-save" class="st-btn st-btn-primary">Salvar estilo</button>
+        <span class="st-status" id="st-style-status" role="status"></span>
+      </div>
+      <h4 class="st-sub">Pré-carregar resumos</h4>
+      <p class="st-hint">Ao abrir a caixa, a IA já resume os primeiros e últimos e-mails de cada lista, para abrirem instantâneo.</p>
+      <label class="st-check"><input type="checkbox" id="st-preload-enabled" /> Pré-carregar automaticamente</label>
+      <label class="st-field st-inline">Quantos por ponta de cada lista
+        <input type="number" id="st-preload-count" min="1" max="20" inputmode="numeric" />
+      </label>
+    </section>
 
-      <section class="settings-section">
-        <h4>Arquivos em uso (base de contexto — e-mails)</h4>
-        <button type="button" id="cfg-context-files-refresh" class="ghost">Atualizar lista</button>
-        <div id="cfg-context-files-list" class="files-list"></div>
-      </section>
-
-      <section class="settings-section">
-        <h4>Arquivos em uso (base de contexto — geral)</h4>
-        <button type="button" id="cfg-context-global-files-refresh" class="ghost">Atualizar lista</button>
-        <div id="cfg-context-global-files-list" class="files-list"></div>
-      </section>
-
-      <section class="settings-section">
-        <div class="settings-row-header">
-          <h4>Arquivos gerados</h4>
-          <button type="button" id="cfg-generated-files-delete-all" class="ghost danger">Apagar todos</button>
+    <section class="st-card" id="st-piloto">
+      <div class="st-card-head">
+        <div>
+          <h3>Piloto automático</h3>
+          <p class="st-hint" id="st-autopilot-info">Carregando…</p>
         </div>
-        <p class="settings-hint">Escopos de e-mail exportados e o arquivo de conhecimento acumulado. Exportações antigas podem ser apagadas, uma a uma ou todas de uma vez.</p>
-        <div id="cfg-context-md-info" class="settings-hint"></div>
-        <div id="cfg-generated-files-list" class="files-list"></div>
-      </section>
-    </div>
-  </div>
+        <a class="st-btn" href="/autopilot">Abrir o piloto</a>
+      </div>
+    </section>
+
+    <section class="st-card" id="st-contatos">
+      <div class="st-card-head">
+        <div>
+          <h3>Apelidos de pessoas</h3>
+          <p class="st-hint">Ex.: "Paulo" → Paulo Lemes &lt;paulo.lemes@confrapag.com.br&gt;. Uma pessoa pode ter vários apelidos (separe por vírgula), e cada apelido aponta para uma só pessoa. A IA usa isso para saber quem é quem quando você escreve o apelido numa instrução.</p>
+        </div>
+      </div>
+      <div id="st-aliases" class="st-list"></div>
+      <div class="st-alias-form">
+        <div class="alias-field-wrap">
+          <input type="text" id="st-alias-alias" placeholder="Apelidos, ex.: rodrigo, rodrigo henrrique" autocomplete="off" />
+          <div id="st-alias-suggestions" class="alias-suggestions hidden"></div>
+        </div>
+        <input type="text" id="st-alias-name" placeholder="Nome completo" autocomplete="off" />
+        <input type="email" id="st-alias-email" placeholder="email@confrapag.com.br" autocomplete="off" />
+        <button type="button" id="st-alias-add" class="st-btn">Adicionar</button>
+      </div>
+    </section>
+
+    <section class="st-card" id="st-arquivos">
+      <div class="st-card-head">
+        <div>
+          <h3>Arquivos gerados</h3>
+          <p class="st-hint">Contextos exportados para outras IAs. Dá para apagar um a um ou todos de uma vez.</p>
+        </div>
+        <button type="button" id="st-files-delete-all" class="st-btn st-btn-danger">Apagar todos</button>
+      </div>
+      <p class="st-hint" id="st-context-md"></p>
+      <div id="st-files" class="st-list"></div>
+    </section>
+
+    <div id="st-toast" class="st-toast" role="status" aria-live="polite"></div>
+  </section>
 
   <div id="original-email-popup" class="original-popup hidden"></div>
 
-  <script src="/static/app.js?v=73"></script>
+  <script src="/static/tooltip.js?v=93"></script>
+  <script src="/static/app.js?v=93"></script>
+  <script src="/static/settings.js?v=93"></script>
+  <script src="/static/assist.js?v=93"></script>
 </body>
 </html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Painel de e-mails</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/board.css?v=1">
+</head>
+<body>
+  <header class="bd-top">
+    <a class="bd-back" href="/autopilot" aria-label="Voltar ao piloto">←</a>
+    <div class="bd-title">
+      <strong>Painel de e-mails</strong>
+      <span id="bd-sub">Carregando…</span>
+    </div>
+    <div class="bd-tools">
+      <select id="bd-limit" aria-label="Quantos e-mails analisar"><option value="6">6</option><option value="12" selected>12</option><option value="20">20</option><option value="30">30</option></select>
+      <button type="button" id="bd-run" class="bd-btn primary">Analisar minha caixa</button>
+      <button type="button" id="bd-stop" class="bd-btn hidden">Parar</button>
+      <span class="bd-sep"></span>
+      <div class="bd-seg" role="group" aria-label="Visualização">
+        <button type="button" id="bd-v-board" data-view="board">Painel</button>
+        <button type="button" id="bd-v-list" data-view="list">Lista</button>
+      </div>
+      <div class="bd-zoom" id="bd-zoom">
+        <button type="button" id="bd-zout" aria-label="Menos zoom">−</button>
+        <span id="bd-zval">100%</span>
+        <button type="button" id="bd-zin" aria-label="Mais zoom">+</button>
+        <button type="button" id="bd-zfit" aria-label="Ajustar à tela">⤢</button>
+        <button type="button" id="bd-reset" aria-label="Reorganizar cartões" title="Reorganizar cartões">↺</button>
+      </div>
+    </div>
+  </header>
+  <div id="bd-progress" class="bd-progress hidden" aria-live="polite">
+    <span id="bd-ptext"></span><div class="bd-bar"><i id="bd-pbar"></i></div>
+  </div>
+  <main id="bd-main">
+    <div id="bd-canvas" class="bd-canvas"><div id="bd-world" class="bd-world"></div></div>
+    <div id="bd-listview" class="bd-listview hidden"></div>
+    <aside id="bd-drawer" class="bd-drawer hidden" aria-label="Detalhes do e-mail"></aside>
+  </main>
+  <div id="bd-toast" class="bd-toast hidden" role="status"></div>
+  <script src="/static/board.js?v=2"></script>
+</body>
+</html>
