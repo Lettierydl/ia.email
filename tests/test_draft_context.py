@@ -63,3 +63,18 @@ def test_bank_data_is_a_hard_exclusion_pattern():
     assert assistant._MONEY_RE.search("Banco do Brasil, agência 0052-3, conta corrente 000100770-X")
     assert assistant._MONEY_RE.search("Nossa chave Pix é o CNPJ")
     assert not assistant._MONEY_RE.search("Reunião de alinhamento do projeto amanhã às 14h")
+
+
+def test_thread_outline_points_to_latest_message_from_someone_else():
+    body = (
+        "De: Paulo <paulo@x.com>\nData: 1\ntexto\n\n----\n\n"
+        "De: \"Leo\" <leo@confrapag.com.br>\nData: 2\nresposta\n\n----\n\n"
+        "De: Eudocio <eudocio@x.com>\nData: 3\npergunta\n"
+    )
+    out = assistant._thread_outline(body)
+    assert "nº 3, de Eudocio" in out
+    assert "Leo (já enviada)" in out
+
+
+def test_thread_outline_skipped_for_single_message():
+    assert assistant._thread_outline("De: A <a@x.com>\nData: 1\noi") == ""

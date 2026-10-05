@@ -134,6 +134,35 @@ def _recent_body(body: str, max_chars: int = 20000) -> str:
     return "[...thread truncada, mensagens mais antigas omitidas...]\n\n" + tail
 
 
+_MSG_HEAD_RE = re.compile(r"^De:\s*(.+?)\s*$\n^Data:\s*(.+?)\s*$", re.M)
+_LEO_ADDR_RE = re.compile(r"leo@confrapag\.com\.br", re.I)
+
+
+def _thread_outline(body: str) -> str:
+    """Mapa da thread (quem escreveu cada mensagem, em ordem) com a ÚLTIMA
+    destacada. Sem isso o modelo respondia à primeira mensagem (ou a quem
+    aparece primeiro) e repetia o que o Leo já tinha respondido antes."""
+    heads = _MSG_HEAD_RE.findall(body or "")
+    if len(heads) < 2:
+        return ""
+    lines = []
+    last_other = None
+    for i, (who, when) in enumerate(heads, 1):
+        mine = bool(_LEO_ADDR_RE.search(who))
+        lines.append(f"{i}. {'Leo (já enviada)' if mine else who} — {when}")
+        if not mine:
+            last_other = (i, who)
+    out = "Mensagens da thread, da mais antiga para a mais recente:\n" + "\n".join(lines) + "\n"
+    if last_other:
+        out += (
+            f"O rascunho responde à mensagem mais recente de outra pessoa (nº {last_other[0]}, de "
+            f"{last_other[1]}): cumprimente e responda a ESSA pessoa e ao que ELA perguntou. As "
+            "anteriores são só histórico: o que o Leo já respondeu nelas não se repete, e perguntas "
+            "antigas já respondidas por ele não entram de novo.\n"
+        )
+    return out + "\n"
+
+
 def _thread_moved_since_chat(row: dict) -> bool:
     """True se chegou mensagem nova na thread depois da ultima vez que
     resumo/chat foram gerados -- nesse caso o resumo/rascunho/conversa
@@ -475,11 +504,25 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
         )
         raw = llm.complete(
             'Responda em JSON: {"kind": "draft" ou "answer", "text": "...", "cc_names": [...]}.\n'
-            'Use kind="draft" quando a instrução pede pra redigir/ajustar a resposta ao remetente -- '
-            "text deve ser só o corpo do e-mail (sem assunto, sem markdown).\n"
-            'Use kind="answer" quando a instrução é uma pergunta ou pedido de explicação sobre a '
-            "thread (ex.: \"quanto foi cobrado?\", \"isso já foi resolvido?\") -- text é uma resposta "
-            "direta em português, curta, sem virar e-mail.\n"
+            'kind="draft" é o PADRÃO. Use "draft" sempre que o Leo explicar, decidir, corrigir, '
+            "comentar um trecho (instruções com [1], [2]... citando partes do e-mail), dar um "
+            "posicionamento ou pedir pra redigir/ajustar a resposta: ele quer que VOCÊ escreva o "
+            "e-mail que ELE vai mandar ao remetente, em primeira pessoa (como se fosse o Leo falando "
+            "com a pessoa), incorporando o que ele disse. Nunca narre o que o Leo disse em terceira "
+            'pessoa ("Leo esclareceu que...") -- isso não é e-mail. text deve ser só o corpo do '
+            "e-mail (sem assunto, sem markdown).\n"
+            'Use kind="answer" SÓ quando a instrução é claramente uma pergunta ou pedido de explicação '
+            "pro próprio Leo sobre a thread (ex.: \"quanto foi cobrado?\", \"isso já foi resolvido?\", "
+            '"resume pra mim") -- text é uma resposta direta em português, curta, sem virar e-mail. '
+            "Na dúvida, escolha draft.\n"
+            "Fidelidade: o rascunho só pode afirmar o que o Leo disse na instrução/conversa ou o que "
+            "está na thread. Não invente decisões, prazos ou compromissos novos e nunca contradiga o "
+            "Leo (se ele diz que algo já está definido, o e-mail diz que está definido, não propõe "
+            'fechar de novo). Trechos entre aspas com [n] são citações do e-mail RECEBIDO que o Leo '
+            "está comentando; o texto depois dos dois pontos é o posicionamento dele sobre aquele "
+            "trecho. Responda a quem escreveu o trecho citado. Reaproveite os argumentos do próprio Leo "
+            "(inclusive \"já fechamos isso\" ou \"já rediscutimos\"), de forma cordial, e NÃO acrescente "
+            "parágrafos que ele não pediu (próximos passos, \"precisamos alinhar\", etc.).\n"
             "cc_names: se a instrução pedir pra adicionar, copiar, incluir ou envolver alguém no "
             "e-mail (Cc), liste cada nome/apelido mencionado como uma string nesse array (pode ser "
             "mais de um nome). NÃO invente e-mail, NÃO escreva e-mail nesse campo, só o nome como o "
@@ -498,7 +541,7 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
             + f"Instrução do Leo: {instruction or '(gerar a partir do contexto)'}\n"
             f"Ajuste pedido: {comment or '(nenhum)'}\n"
             f"Rascunho anterior:\n{previous or '(nenhum)'}\n\n"
-            f"Assunto: {row.get('subject')}\n\nThread:\n{_recent_body(body)}"
+            f"Assunto: {row.get('subject')}\n\n{_thread_outline(body)}Thread:\n{_recent_body(body)}"
         )
         kind, text, cc_names = _parse_draft_response(raw)
         cc_resolution = _resolve_cc_names(cc_names)
