@@ -138,6 +138,11 @@ function buildMenu() {
           },
         },
         {
+          label: "Copiloto",
+          accelerator: "CmdOrCtrl+K",
+          click: () => mainWindow && mainWindow.loadURL(`${APP_URL}/copilot`),
+        },
+        {
           label: "Abrir no navegador",
           click: () => shell.openExternal(APP_URL),
         },

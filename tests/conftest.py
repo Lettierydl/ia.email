@@ -14,3 +14,7 @@ from app import config  # noqa: E402
 _tmp = Path(tempfile.mkdtemp(prefix="ia_email_tests_"))
 config.DB_PATH = _tmp / "test.sqlite"
 config.RAG_DB_PATH = _tmp / "rag-test.sqlite"
+# Espelho dos aprendizados: nunca na Learning Base real.
+config.LEARNED_NOTES_MD = _tmp / "aprendizados.md"
+# Sem sync automático com o Gmail nos testes (o loop nunca pode rodar aqui).
+config.SYNC_MINUTES = 0

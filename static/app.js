@@ -38,15 +38,15 @@ function tags(item) {
 function card(item) {
   const href = `/mail/${encodeURIComponent(item.id)}`;
   const viewOriginal = `<button type="button" class="quick-view-original" data-id="${item.id}" data-tooltip="Ver e-mail original">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8a3 3 0 100 6 3 3 0 000-6z"/></svg>
+        ${Icons.svg("eye")}
       </button>`;
   const quickReadTooltip = item.fyi_only ? "Marcar como lido (só cópia, sem ação)" : "Marcar como lido";
   const quickRead = `<button type="button" class="quick-read" data-id="${item.id}" data-tooltip="${quickReadTooltip}">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
+        ${Icons.svg("check-circle-double")}
       </button>`;
   const notInterested = item.is_marketing
     ? `<button type="button" class="quick-not-interested" data-id="${item.id}" data-tooltip="Não tenho interesse (remetente vai pra Promoções sempre)">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.41 0 8 3.59 8 8 0 1.85-.63 3.55-1.69 4.9z"/></svg>
+        ${Icons.svg("role-ignorar")}
       </button>`
     : "";
   const from = escHtml(item.from_email || item.from_name || "");
@@ -369,8 +369,7 @@ $("btn-mark-all-read").onclick = async () => {
 // nenhum. Agora mostra erro no banner se a chamada falhar, e avisa se
 // clicado sem nada pra marcar (defensivo -- o botão já fica disabled
 // nesse caso, mas evita ficar mudo se algo ficar dessincronizado).
-const MARK_READ_ICON =
-  '<svg style="width:16px;height:16px;vertical-align:middle;margin-right:2px" viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg> Marcar lidos';
+const MARK_READ_ICON = Icons.svg("check-circle-double", { size: 16, cls: "ic-inline" });
 
 async function markReadBulk(ids, btn) {
   if (!ids.length) {
@@ -586,7 +585,7 @@ function renderBody(body) {
       // citado escondido lá embaixo. Por isso também avisa logo no
       // cabeçalho da mensagem, de forma clicável, pra achar sem rolar tudo.
       const quotedHint = quoted
-        ? `<button type="button" class="msg-quoted-hint" data-tooltip="Esta mensagem cita um e-mail anterior -- clique pra ver">↩ e-mail anterior citado</button>`
+        ? `<button type="button" class="msg-quoted-hint" data-tooltip="Esta mensagem cita um e-mail anterior -- clique pra ver">${Icons.svg("reply", { size: 14 })} e-mail anterior citado</button>`
         : "";
       const quotedHtml = quoted
         ? `<div class="quote-toggle-row">
@@ -680,7 +679,7 @@ function mailPathId() {
 // Quando a instrução pede pra "adicionar fulano", o backend tenta achar
 // o e-mail real (apelido cadastrado ou histórico de remetentes). Resolvido
 // sozinho -> já entra em pendingCc. Ambíguo -> a pessoa escolhe qual
-// "fulano" é (renderCcResolution cria os botões); não achado -> só avisa.
+// "fulano" é (ChatUI, em static/chat.js, cria os botões); não achado -> só avisa.
 function addPendingCc(email) {
   const e = (email || "").trim().toLowerCase();
   if (e && !pendingCc.includes(e)) pendingCc.push(e);
@@ -696,61 +695,35 @@ function applyCcResolution(msg) {
   });
 }
 
-function renderCcResolution(msg, msgIdx) {
-  if (!Array.isArray(msg.cc_resolution) || !msg.cc_resolution.length) return "";
-  const rows = msg.cc_resolution
-    .map((entry, ccIdx) => {
-      if (entry.chosen) {
-        return `<div class="cc-resolution-row done">✓ Copiar: ${escHtml(entry.chosen)}</div>`;
-      }
-      if (entry.status === "not_found") {
-        return `<div class="cc-resolution-row muted">Não achei e-mail pra "${escHtml(entry.query)}" — adicione manualmente no Cc ao enviar.</div>`;
-      }
-      // ambiguous: mostra as opções pra escolher
-      const opts = entry.candidates
-        .map(
-          (c) =>
-            `<button type="button" data-cc-pick="${msgIdx}:${ccIdx}" data-cc-email="${escHtml(c.email)}">${escHtml(c.name || c.email)} &lt;${escHtml(c.email)}&gt;</button>`
-        )
-        .join("");
-      return `<div class="cc-resolution-row">
-        <span class="cc-resolution-q">Quem é "${escHtml(entry.query)}"?</span>
-        <div class="cc-resolution-opts">${opts}<button type="button" data-cc-pick="${msgIdx}:${ccIdx}" data-cc-email="">nenhum desses</button></div>
-      </div>`;
-    })
-    .join("");
-  return `<div class="cc-resolution">${rows}</div>`;
+// Chat com a IA: bolhas desenhadas por static/chat.js (o mesmo do /copilot e
+// do /compose). O rascunho mais recente vai para a caixa #pane-draft, que é o
+// texto enviado -- editável; o chat mostra a versão resumida.
+let draftAi = ""; // último rascunho da IA posto na caixa (para saber se o Leo editou)
+
+function draftEdited() {
+  const v = $("pane-draft").value.trim();
+  return !!v && v !== draftAi.trim();
 }
 
-function renderChat() {
-  const el = $("chat-messages");
-  el.innerHTML = chatHistory
-    .map((msg, idx) => {
-      if (msg.role === "user") {
-        return `<div class="chat-msg user">${escHtml(msg.text)}</div>`;
-      }
-      if (msg.typing) return typingBubbleHTML();
-      if (msg.placeholder) {
-        return `<div class="chat-msg ai muted-msg">${escHtml(msg.text)}</div>`;
-      }
-      const ccHtml = renderCcResolution(msg, idx);
-      if (msg.kind === "answer") {
-        return `<div class="chat-msg ai answer"><div class="draft-label">Resposta</div>${escHtml(msg.text)}${ccHtml}</div>`;
-      }
-      return `<div class="chat-msg ai"><div class="draft-label">Rascunho</div>${escHtml(msg.text)}${ccHtml}</div>`;
-    })
-    .join("");
-  el.querySelectorAll("[data-cc-pick]").forEach((btn) => {
-    btn.onclick = () => {
-      const [msgIdx, ccIdx] = btn.dataset.ccPick.split(":").map(Number);
-      const entry = chatHistory[msgIdx] && chatHistory[msgIdx].cc_resolution[ccIdx];
-      if (!entry) return;
-      entry.chosen = btn.dataset.ccEmail || "(nenhum)";
-      if (btn.dataset.ccEmail) addPendingCc(btn.dataset.ccEmail);
-      renderChat();
-    };
+function setDraft(text, fromAi) {
+  $("pane-draft").value = text || "";
+  if (fromAi) draftAi = text || "";
+  updateSendBar();
+}
+
+function renderChat(opts) {
+  const real = chatHistory.filter((m) => !m.placeholder && !m.typing).length;
+  $("chat-count").textContent = String(real);
+  ChatUI.render($("chat-messages"), chatHistory, {
+    compactDrafts: true,
+    onCcPick: (_m, _c, email) => { if (email) addPendingCc(email); updateSendBar(); },
+    onUseDraft: (text) => { setDraft(text, true); $("draft-status").textContent = "Versão anterior do rascunho na caixa."; },
   });
-  el.scrollTop = el.scrollHeight;
+  // rascunho novo da IA: vai para a caixa (a não ser que o Leo tenha editado
+  // e o rascunho não tenha vindo de uma geração pedida agora)
+  const ai = lastDraft();
+  if (ai && ai !== draftAi && ((opts && opts.forceDraft) || !draftEdited())) setDraft(ai, true);
+  updateGenLabel();
   updateSendBar();
   updateChatResetState();
 }
@@ -759,24 +732,30 @@ function renderChat() {
 // limpar: conversa real, rascunho, texto digitado ou anotação pendente.
 function updateChatResetState() {
   const hasChat = chatHistory.some((m) => !m.placeholder);
-  const hasTyped = $("pane-instr").value.trim().length > 0;
+  const hasTyped = $("pane-instr").value.trim().length > 0 || $("pane-draft").value.trim().length > 0;
   $("pane-chat-reset").disabled = !hasChat && !hasTyped && !annotations.length;
 }
 
+// último rascunho da IA no chat (kind ausente = mensagem antiga, vale como rascunho)
 function lastDraft() {
-  for (let i = chatHistory.length - 1; i >= 0; i--) {
-    const m = chatHistory[i];
-    // kind ausente = mensagem antiga (de antes dessa distinção existir),
-    // trata como rascunho pra não quebrar conversas já salvas.
-    if (m.role === "ai" && !m.placeholder && m.kind !== "answer") {
-      return m.text;
-    }
-  }
-  return "";
+  return ChatUI.lastDraft(chatHistory);
+}
+
+// o que vai ser enviado: o texto da caixa (rascunho da IA, editado ou não)
+function currentDraft() {
+  return $("pane-draft").value.trim();
+}
+
+function updateGenLabel() {
+  const adjust = !!currentDraft();
+  $("pane-gen-label").textContent = adjust ? "Ajustar" : "Gerar";
+  $("pane-gen").dataset.tooltip = adjust ? "Ajustar o rascunho com a instrução" : "Gerar o rascunho com a instrução";
 }
 
 function updateSendBar() {
-  const draft = lastDraft();
+  const draft = currentDraft();
+  const cc = defaultCcSuggestion();
+  $("send-target").innerHTML = `<b>Para:</b> ${escHtml(currentTo || "?")}${cc ? ` · <b>Cc:</b> ${escHtml(cc)}` : ""}`;
   const bar = $("send-bar");
   if (!draft) {
     bar.classList.add("hidden");
@@ -784,7 +763,6 @@ function updateSendBar() {
     return;
   }
   bar.classList.remove("hidden");
-  $("send-target").textContent = `Para: ${currentTo || "?"}`;
   $("pane-send").disabled = !canSend;
   $("pane-send").title = canSend ? "" : "Reautorize o Gmail (Entrar no Gmail) para poder enviar.";
 }
@@ -803,10 +781,6 @@ function workingHTML(label) {
     `<span class="working-text">${escHtml(label)}</span>` +
     '<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></span>'
   );
-}
-
-function typingBubbleHTML() {
-  return '<div class="chat-msg ai typing" aria-label="A IA está escrevendo" role="status"><span class="bar"></span><span class="bar"></span><span class="bar"></span></div>';
 }
 
 function escHtml(s) {
@@ -1040,9 +1014,10 @@ async function openPane(id, force) {
   $("pane-instr").value = "";
   $("pane-instr").style.height = "auto";
   $("pane-gen").disabled = true;
-  annotations = [];
-  $("annot-chip").classList.add("hidden");
-  $("annot-popup").classList.add("hidden");
+  draftAi = "";
+  setDraft("", false);
+  $("draft-status").textContent = "";
+  annot.reset(); // e-mail novo: esquece as anotações (as marcas sumiram com o conteúdo)
   pendingCc = [];
   lastRecipients = { to: [], cc: [] };
   renderAttachments([]);
@@ -1473,6 +1448,8 @@ $("pane-chat-reset").onclick = async () => {
         placeholder: true,
       },
     ];
+    draftAi = "";
+    setDraft("", false);
     renderChat();
     $("pane-instr").value = "";
     $("pane-instr").style.height = "auto";
@@ -1518,7 +1495,7 @@ function currentAttachmentCount() {
 }
 
 function openSendModal() {
-  const text = lastDraft();
+  const text = currentDraft();
   if (!paneId || !text) return;
   const subject = $("pane-subject").textContent || "(sem assunto)";
   $("modal-to").textContent = currentTo;
@@ -1543,7 +1520,7 @@ $("send-modal").onclick = (e) => {
 };
 
 $("modal-confirm").onclick = async () => {
-  const text = lastDraft();
+  const text = currentDraft();
   if (!paneId || !text) return;
   if (draftMentionsAttachment(text) && currentAttachmentCount() === 0) {
     const proceed = window.confirm(
@@ -1565,8 +1542,14 @@ $("modal-confirm").onclick = async () => {
       $("pane-status").textContent = data.detail || "Falha ao enviar.";
       return;
     }
-    $("pane-status").textContent = data.cc ? `Enviado para ${data.to} (Cc: ${data.cc}).` : `Enviado para ${data.to}.`;
+    // sem conexão: o servidor pôs na fila de envio (202 queued) -- sai sozinho depois
+    $("pane-status").textContent = data.queued
+      ? `Na fila de envio. ${data.message || "Sai quando a conexão voltar."}`
+      : data.cc ? `Enviado para ${data.to} (Cc: ${data.cc}).` : `Enviado para ${data.to}.`;
+    if (window.NetStatus) window.NetStatus.refresh();
     $("send-bar").classList.add("hidden");
+    draftAi = "";
+    setDraft("", false);
     renderAttachments([]);
     pendingCc = [];
     kickPreload();
@@ -1656,38 +1639,28 @@ function composePathActive() {
 
 let composeChatHistory = [];
 
+let composeDraftAi = "";
+
 function lastComposeDraft() {
-  for (let i = composeChatHistory.length - 1; i >= 0; i--) {
-    const m = composeChatHistory[i];
-    if (m.role === "ai" && !m.placeholder && m.kind !== "answer") return m.text;
-  }
-  return "";
+  return $("compose-draft").value.trim();
 }
 
-function renderComposeChat() {
-  const el = $("compose-chat-messages");
-  el.innerHTML = composeChatHistory
-    .map((msg, idx) => {
-      if (msg.role === "user") return `<div class="chat-msg user">${escHtml(msg.text)}</div>`;
-      if (msg.typing) return typingBubbleHTML();
-      const ccHtml = renderCcResolution(msg, idx);
-      if (msg.kind === "answer") {
-        return `<div class="chat-msg ai answer"><div class="draft-label">Resposta</div>${escHtml(msg.text)}${ccHtml}</div>`;
-      }
-      return `<div class="chat-msg ai"><div class="draft-label">Rascunho</div>${escHtml(msg.text)}${ccHtml}</div>`;
-    })
-    .join("");
-  el.querySelectorAll("[data-cc-pick]").forEach((btn) => {
-    btn.onclick = () => {
-      const [msgIdx, ccIdx] = btn.dataset.ccPick.split(":").map(Number);
-      const entry = composeChatHistory[msgIdx] && composeChatHistory[msgIdx].cc_resolution[ccIdx];
-      if (!entry) return;
-      entry.chosen = btn.dataset.ccEmail || "(nenhum)";
-      if (btn.dataset.ccEmail) addPendingCc(btn.dataset.ccEmail);
-      renderComposeChat();
-    };
+function renderComposeChat(opts) {
+  $("compose-chat-count").textContent = String(composeChatHistory.filter((m) => !m.typing).length);
+  ChatUI.render($("compose-chat-messages"), composeChatHistory, {
+    compactDrafts: true,
+    empty: "Diga embaixo o que quer escrever: eu escrevo o rascunho na caixa.",
+    onCcPick: (_m, _c, email) => { if (email) addPendingCc(email); },
+    onUseDraft: (text) => { $("compose-draft").value = text; composeDraftAi = text; updateComposeSendBar(); },
   });
-  el.scrollTop = el.scrollHeight;
+  const ai = ChatUI.lastDraft(composeChatHistory);
+  const box = $("compose-draft");
+  const edited = box.value.trim() && box.value.trim() !== composeDraftAi.trim();
+  if (ai && ai !== composeDraftAi && ((opts && opts.forceDraft) || !edited)) {
+    box.value = ai;
+    composeDraftAi = ai;
+  }
+  $("compose-gen-label").textContent = box.value.trim() ? "Ajustar" : "Gerar";
   updateComposeSendBar();
 }
 
@@ -1705,6 +1678,11 @@ function updateComposeSendBar() {
   $("compose-send").title = canSend ? "" : "Reautorize o Gmail (Entrar no Gmail) para poder enviar.";
 }
 
+$("compose-draft").addEventListener("input", () => {
+  $("compose-gen-label").textContent = $("compose-draft").value.trim() ? "Ajustar" : "Gerar";
+  updateComposeSendBar();
+});
+
 $("compose-instr").addEventListener("input", function () {
   this.style.height = "auto";
   this.style.height = Math.min(this.scrollHeight, 280) + "px";
@@ -1720,6 +1698,9 @@ $("compose-instr").addEventListener("keydown", (e) => {
 $("compose-gen").onclick = async () => {
   const freeText = $("compose-instr").value.trim();
   if (!freeText) return;
+  // texto editado na caixa: entra no histórico como a versão atual do rascunho
+  const box = $("compose-draft").value.trim();
+  if (box && box !== composeDraftAi.trim()) composeChatHistory.push({ role: "ai", kind: "draft", text: box });
   composeChatHistory.push({ role: "user", text: freeText });
   const sentHistory = composeChatHistory.slice();
   composeChatHistory.push({ role: "ai", placeholder: true, typing: true, text: "" });
@@ -1750,7 +1731,7 @@ $("compose-gen").onclick = async () => {
     if (data.cc_resolution) aiMsg.cc_resolution = data.cc_resolution;
     composeChatHistory.push(aiMsg);
     applyCcResolution(aiMsg);
-    renderComposeChat();
+    renderComposeChat({ forceDraft: true });
   } catch {
     composeChatHistory = composeChatHistory.filter((m) => !m.typing);
     renderComposeChat();
@@ -1800,7 +1781,7 @@ $("compose-modal-confirm").onclick = async () => {
       showBanner(data.detail || "Falha ao enviar.", true);
       return;
     }
-    showBanner(`E-mail enviado para ${data.to}.`, true);
+    showBanner(data.queued ? `Na fila de envio. ${data.message || "Sai quando a conexão voltar."}` : `E-mail enviado para ${data.to}.`, true);
     setTimeout(() => {
       window.location.href = "/";
     }, 900);
@@ -1825,12 +1806,7 @@ function updateGenButtonState() {
 }
 
 function composedInstruction() {
-  const free = $("pane-instr").value.trim();
-  if (!annotations.length) return free;
-  const notes = annotations
-    .map((a, i) => `[${i + 1}] Sobre "${a.quote}": ${a.comment || "(sem comentário)"}`)
-    .join("\n");
-  return free ? `${notes}\n\n${free}` : notes;
+  return Annotate.compose($("pane-instr").value, annotations);
 }
 
 // O que aparece na bolha do chat fica "camuflado": a referência ao trecho
@@ -1865,6 +1841,8 @@ $("pane-gen").onclick = async () => {
   if (!freeText && !annotations.length) return;
   const instruction = composedInstruction();
   const visibleText = visibleChatText();
+  // caixa editada: a IA reescreve a partir dela ("Rascunho anterior" no prompt)
+  const currentDraftText = draftEdited() ? currentDraft() : "";
 
   chatHistory = chatHistory.filter((m) => !m.placeholder);
   chatHistory.push({ role: "user", text: visibleText });
@@ -1884,6 +1862,7 @@ $("pane-gen").onclick = async () => {
       body: JSON.stringify({
         instruction: instruction,
         comment: "",
+        current_draft: currentDraftText,
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -1896,12 +1875,15 @@ $("pane-gen").onclick = async () => {
     if (Array.isArray(data.chat) && data.chat.length) {
       chatHistory = data.chat.slice();
       applyCcResolution(chatHistory[chatHistory.length - 1]);
-      renderChat();
+      renderChat({ forceDraft: true });
     } else if (data.draft) {
       chatHistory.push({ role: "ai", text: data.draft });
-      renderChat();
+      renderChat({ forceDraft: true });
     }
-    $("pane-status").textContent = "Rascunho gerado. Nada foi enviado.";
+    const lastMsg = chatHistory[chatHistory.length - 1];
+    const answered = lastMsg && lastMsg.kind === "answer";
+    $("pane-status").textContent = answered ? "A IA respondeu no chat. Nada foi enviado." : "Rascunho gerado. Nada foi enviado.";
+    $("draft-status").textContent = answered ? "A IA respondeu no chat; o rascunho da caixa continua o mesmo." : "Rascunho novo da IA na caixa. Nada foi enviado.";
   } catch {
     chatHistory = chatHistory.filter((m) => !m.typing);
     renderChat();
@@ -1915,200 +1897,35 @@ $("pane-gen").onclick = async () => {
 // Seleciona um pedaço do resumo/thread, marca aquele trecho com um
 // número (badge azul) e abre uma caixinha ali do lado pra comentar em
 // cima daquele pedaço específico. As anotações viram contexto
-// direcionado quando o próximo rascunho é gerado no chat.
-let annotations = [];
-let annotationSeq = 0;
+// direcionado quando o próximo rascunho é gerado no chat. A mecânica
+// (barrinha, marca, popup) mora em static/annotate.js, a mesma do /copilot.
+let annotations = []; // cópia de annot.list(), atualizada a cada mudança
 
-function annotationChipUpdate() {
-  const chip = $("annot-chip");
-  if (!annotations.length) {
-    chip.classList.add("hidden");
-    updateGenButtonState();
-    return;
-  }
-  chip.textContent = `${annotations.length} anotaç${annotations.length > 1 ? "ões" : "ão"}`;
-  chip.classList.remove("hidden");
+function annotationChipUpdate(list) {
+  annotations = list;
+  $("annot-chips").innerHTML = Composer.annotChipsHTML(annotations);
   updateGenButtonState();
 }
 
-function unwrapAnnotationMark(annot) {
-  if (annot.mark && annot.mark.parentNode) {
-    const parent = annot.mark.parentNode;
-    while (annot.mark.firstChild) parent.insertBefore(annot.mark.firstChild, annot.mark);
-    parent.removeChild(annot.mark);
-    parent.normalize();
-  }
-  if (annot.badge && annot.badge.parentNode) annot.badge.remove();
-}
+const annot = Annotate.create({
+  areas: () => [$("pane-summary"), $("pane-body"), $("chat-messages")],
+  textareas: () => [$("pane-draft")],
+  enabled: () => !!paneId,
+  onChange: annotationChipUpdate,
+});
 
-function renumberAnnotations() {
-  annotations.forEach((a, i) => {
-    if (a.badge) a.badge.textContent = String(i + 1);
-  });
-}
-
-function removeAnnotation(id) {
-  const idx = annotations.findIndex((a) => a.id === id);
-  if (idx === -1) return;
-  const [annot] = annotations.splice(idx, 1);
-  unwrapAnnotationMark(annot);
-  renumberAnnotations();
-  annotationChipUpdate();
-}
+// caixa do rascunho: editar habilita Enviar e troca Gerar -> Ajustar
+$("pane-draft").addEventListener("input", () => {
+  $("draft-status").textContent = draftEdited() ? "Editado por você." : "";
+  updateGenLabel();
+  updateSendBar();
+  updateChatResetState();
+});
 
 function clearAllAnnotations() {
-  annotations.forEach(unwrapAnnotationMark);
-  annotations = [];
-  annotationChipUpdate();
+  annot.clear();
 }
 
-function wrapSelectionAsAnnotation(range) {
-  const mark = document.createElement("span");
-  mark.className = "annot-mark";
-  try {
-    range.surroundContents(mark);
-  } catch {
-    const frag = range.extractContents();
-    mark.appendChild(frag);
-    range.insertNode(mark);
-  }
-  const badge = document.createElement("sup");
-  badge.className = "annot-badge";
-  mark.insertAdjacentElement("afterend", badge);
-  return { mark, badge };
-}
-
-(function setupAnnotations() {
-  const toolbar = $("select-toolbar");
-  const btn = $("select-add-chat");
-  const popup = $("annot-popup");
-  const textarea = $("annot-popup-textarea");
-  let pendingRange = null;
-
-  function hideToolbar() {
-    toolbar.classList.add("hidden");
-    pendingRange = null;
-  }
-
-  document.addEventListener("mouseup", () => {
-    setTimeout(() => {
-      const sel = window.getSelection();
-      const text = sel ? sel.toString().trim() : "";
-      if (!text || !paneId) {
-        hideToolbar();
-        return;
-      }
-      const areas = [$("pane-summary"), $("pane-body"), $("chat-messages")];
-      const inArea = areas.some((el) => el && sel.anchorNode && el.contains(sel.anchorNode));
-      if (!inArea) {
-        hideToolbar();
-        return;
-      }
-      const rect = sel.getRangeAt(0).getBoundingClientRect();
-      if (!rect.width && !rect.height) {
-        hideToolbar();
-        return;
-      }
-      pendingRange = sel.getRangeAt(0).cloneRange();
-      const left = Math.min(
-        Math.max(8, rect.left + rect.width / 2 - 90),
-        window.innerWidth - 220
-      );
-      toolbar.style.left = `${left}px`;
-      toolbar.style.top = `${Math.max(8, rect.top - 42)}px`;
-      toolbar.classList.remove("hidden");
-    }, 0);
-  });
-
-  document.addEventListener("mousedown", (e) => {
-    if (!toolbar.contains(e.target)) hideToolbar();
-  });
-  window.addEventListener("scroll", hideToolbar, true);
-  window.addEventListener("resize", hideToolbar);
-
-  function positionPopupNear(el) {
-    const rect = el.getBoundingClientRect();
-    const left = Math.min(Math.max(8, rect.left - 20), window.innerWidth - 300);
-    const top = Math.min(rect.bottom + 8, window.innerHeight - 140);
-    popup.style.left = `${left}px`;
-    popup.style.top = `${Math.max(8, top)}px`;
-  }
-
-  function closePopup() {
-    popup.classList.add("hidden");
-    popup.dataset.annotId = "";
-  }
-
-  function openPopupForNew(mark, badge, quote) {
-    const id = ++annotationSeq;
-    mark.dataset.annotId = String(id);
-    badge.dataset.annotId = String(id);
-    annotations.push({ id, quote, comment: "", mark, badge });
-    renumberAnnotations();
-    annotationChipUpdate();
-    popup.dataset.annotId = String(id);
-    textarea.value = "";
-    positionPopupNear(badge);
-    popup.classList.remove("hidden");
-    textarea.focus();
-  }
-
-  function openPopupForExisting(id, anchorEl) {
-    const annot = annotations.find((a) => a.id === id);
-    if (!annot) return;
-    popup.dataset.annotId = String(id);
-    textarea.value = annot.comment;
-    positionPopupNear(anchorEl);
-    popup.classList.remove("hidden");
-    textarea.focus();
-  }
-
-  btn.onclick = (e) => {
-    // sem isso, o mesmo clique borbulha até o document e o listener de
-    // "clicou fora" logo abaixo fecha o popup que acabou de abrir
-    e.stopPropagation();
-    if (!pendingRange) return;
-    const quote = pendingRange.toString().trim();
-    window.getSelection().removeAllRanges();
-    const { mark, badge } = wrapSelectionAsAnnotation(pendingRange);
-    hideToolbar();
-    openPopupForNew(mark, badge, quote.length > 600 ? `${quote.slice(0, 600)}…` : quote);
-  };
-
-  document.addEventListener("click", (e) => {
-    const anchorEl = e.target.closest(".annot-badge, .annot-mark");
-    if (anchorEl) {
-      const id = Number(anchorEl.dataset.annotId);
-      openPopupForExisting(id, anchorEl);
-      return;
-    }
-    if (!popup.contains(e.target)) closePopup();
-  });
-
-  $("annot-cancel").onclick = () => {
-    const id = Number(popup.dataset.annotId);
-    removeAnnotation(id);
-    closePopup();
-  };
-
-  $("annot-delete").onclick = () => {
-    const id = Number(popup.dataset.annotId);
-    removeAnnotation(id);
-    closePopup();
-  };
-
-  $("annot-save").onclick = () => {
-    const id = Number(popup.dataset.annotId);
-    const annot = annotations.find((a) => a.id === id);
-    if (annot) annot.comment = textarea.value.trim();
-    closePopup();
-  };
-
-  $("annot-chip").onclick = () => {
-    if (!annotations.length) return;
-    openPopupForExisting(annotations[annotations.length - 1].id, $("annot-chip"));
-  };
-})();
 
 // ── Configurações agora é uma página (/settings), em static/settings.js ──
 $("btn-settings").onclick = () => {
@@ -2273,9 +2090,19 @@ $("ap-patterns-refresh").onclick = async () => {
 (async () => {
   const mailId = mailPathId();
   const status = await loadStatus();
+  // Vindo do Copiloto (delegar/cobrar): chega com destinatários e rascunho
+  // prontos na URL. Só preenche a tela -- enviar continua sendo clique do Leo.
+  const prefill = new URLSearchParams(location.search);
   if (composePathActive()) {
     document.body.classList.add("composing");
     $("compose-page").classList.remove("hidden");
+    $("compose-to").value = prefill.get("to") || "";
+    $("compose-cc").value = prefill.get("cc") || "";
+    $("compose-subject").value = prefill.get("subject") || "";
+    if (prefill.get("draft")) {
+      composeChatHistory.push({ role: "ai", text: prefill.get("draft"), kind: "draft" });
+      renderComposeChat();
+    }
     $("compose-to").focus();
     return;
   }
@@ -2295,6 +2122,7 @@ $("ap-patterns-refresh").onclick = async () => {
     $("back-inbox").classList.remove("hidden");
     $("btn-refresh").classList.add("hidden");
     await openPane(mailId);
+    (prefill.get("cc") || "").split(",").forEach((email) => email.trim() && addPendingCc(email.trim()));
     return;
   }
   await loadRadar();

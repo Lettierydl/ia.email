@@ -4,6 +4,7 @@ import json
 import sqlite3
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from .config import DB_PATH, LEARNING_BASE_DEFAULT, LEARNING_BASE_GLOBAL_DEFAULT
@@ -21,7 +22,38 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
+
+
+def _backup_before_migration(reason: str) -> Path | None:
+    """Cópia do banco antes de mexer no schema. Usa a API de backup do
+    SQLite (consistente mesmo com o container escrevendo ao mesmo tempo),
+    nunca um cp do arquivo. Banco novo/vazio não precisa de cópia."""
+    db = Path(DB_PATH)
+    if not db.is_file() or db.stat().st_size == 0:
+        return None
+    folder = db.parent / "backups"
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    target = folder / f"{db.stem}-antes-{reason}-{stamp}.sqlite"
+    src = sqlite3.connect(db, timeout=5)
+    dst = sqlite3.connect(target)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    return target
+
+
 def init() -> None:
+    with _connect() as conn:
+        needs_copilot = _table_exists(conn, "threads") and not _table_exists(conn, "copilot_items")
+    if needs_copilot:
+        _backup_before_migration("copiloto")
     with _connect() as conn:
         conn.execute(
             """
@@ -113,6 +145,79 @@ def init() -> None:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_events_at ON usage_events(at)")
+        # Copiloto: uma linha por thread com a leitura da IA (papel do Leo, o
+        # que aconteceu, o que ele faria) + o histórico do que o Leo fez com
+        # ela (assumir, cobrar, delegar...), que vira "decisão anterior".
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS copilot_items (
+                thread_id TEXT PRIMARY KEY,
+                papel TEXT,
+                o_que_aconteceu TEXT,
+                opcoes_json TEXT,
+                urgencia TEXT,
+                bola_json TEXT,
+                depende_de_outros INTEGER,
+                sem_resposta_desde INTEGER,
+                prazo TEXT,
+                quem_pediu_json TEXT,
+                tarefas_json TEXT,
+                needs_context INTEGER,
+                o_que_falta TEXT,
+                pergunta TEXT,
+                status TEXT,
+                source TEXT,
+                delegado_json TEXT,
+                internal_date_snapshot INTEGER,
+                analyzed_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS copilot_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id TEXT,
+                action TEXT,
+                payload_json TEXT,
+                at TEXT
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_copilot_actions_at ON copilot_actions(at)")
+        # Rascunho da IA x texto que saiu de fato: material de aprendizado do
+        # estilo. Gravado pelo próprio envio (/mail e /copilot usam o mesmo).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reply_edits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id TEXT,
+                ai_draft TEXT,
+                sent_text TEXT,
+                edited INTEGER,
+                source TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_reply_edits_thread ON reply_edits(thread_id)")
+        # "Aprender" do copiloto: regra/contexto que o Leo registrou para os
+        # próximos e-mails -- vale para a conversa/assunto, uma pessoa ou geral.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS learned_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scope TEXT,
+                thread_id TEXT,
+                subject TEXT,
+                subject_key TEXT,
+                person_email TEXT,
+                text TEXT,
+                created_at TEXT
+            )
+            """
+        )
         # Colunas acrescentadas depois da tabela já existir em bancos antigos: só o
         # CREATE TABLE não basta (ele não mexe em tabela que já existe).
         for col, typ in (("internal_date_snapshot", "INTEGER"), ("evidence_json", "TEXT")):
@@ -130,11 +235,47 @@ def init() -> None:
             ("capture_status", "TEXT"),
             ("chat_anchor_date", "INTEGER"),
             ("sent_via_app_at", "INTEGER"),
+            ("to_header", "TEXT"),
+            ("cc_header", "TEXT"),
+            # historyId do Gmail: o refresh só re-busca a thread quando muda
+            ("history_id", "TEXT"),
         ):
             try:
                 conn.execute(f"ALTER TABLE threads ADD COLUMN {col} {typ}")
             except sqlite3.OperationalError:
                 pass
+        # quantas mensagens a IA leu na última análise: se o corpo (que o
+        # /mail também usa) tem outro número, a leitura do copiloto está velha
+        try:
+            conn.execute("ALTER TABLE copilot_items ADD COLUMN msg_count_snapshot INTEGER")
+        except sqlite3.OperationalError:
+            pass
+        # Fila de envio (app/outbox.py): só envios que o Leo confirmou e que
+        # não saíram por falta de conexão. Ver outbox._ensure (mesmo schema).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS outbox (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                thread_id TEXT,
+                to_addr TEXT,
+                cc TEXT,
+                subject TEXT,
+                body TEXT NOT NULL,
+                attachments_json TEXT,
+                source TEXT,
+                ai_draft TEXT,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                next_attempt_at REAL,
+                result_json TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                sent_at TEXT
+            )
+            """
+        )
         # Threads de antes desse controle existir nao tem uma base de
         # comparacao -- da um ponto de partida agora pra passar a detectar
         # mensagem nova a partir daqui (nao reseta o que ja esta desatualizado
@@ -176,6 +317,9 @@ def upsert_thread(row: dict[str, Any]) -> None:
         "hide_as_replied",
         "last_from_header",
         "labels_json",
+        "to_header",
+        "cc_header",
+        "history_id",
         "updated_at",
     ]
     row = dict(row)
@@ -189,6 +333,13 @@ def upsert_thread(row: dict[str, Any]) -> None:
         for name in fields
         if name not in {"id", "hidden"}
     )
+    # Mensagem nova na thread (internal_date subiu): o corpo em cache ficou
+    # velho. Sem isto o /copilot (que lê body_text direto) mostrava só as
+    # mensagens da primeira leitura, enquanto o /mail re-buscava o corpo.
+    assignments += (
+        ", body_text = CASE WHEN COALESCE(excluded.internal_date, 0) > COALESCE(threads.internal_date, 0) "
+        "THEN NULL ELSE threads.body_text END"
+    )
     values = [row.get(name) for name in fields]
     with _connect() as conn:
         conn.execute(
@@ -199,6 +350,23 @@ def upsert_thread(row: dict[str, Any]) -> None:
             """,
             values,
         )
+
+
+def thread_sync_index() -> dict[str, dict[str, Any]]:
+    """{id: {history_id, is_unread, visible}} -- o que o refresh precisa para
+    decidir o que re-buscar no Gmail sem abrir thread por thread."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, history_id, is_unread, hidden, hide_as_replied FROM threads"
+        ).fetchall()
+    return {
+        r["id"]: {
+            "history_id": r["history_id"] or "",
+            "is_unread": bool(r["is_unread"]),
+            "visible": not (r["hidden"] or r["hide_as_replied"]),
+        }
+        for r in rows
+    }
 
 
 def set_hidden(thread_id: str, hidden: bool) -> None:
@@ -408,6 +576,8 @@ DEFAULT_SETTINGS = {
     "autopilot_level": "conservador",
     "autopilot_buffer_minutes": 10,
     "autopilot_scan_minutes": 5,
+    # Copiloto: preferências por usuário (skin, horários do digest), chave = e-mail.
+    "copilot_users": {},
 }
 
 
@@ -641,3 +811,144 @@ def recent_decision_for_thread(thread_id: str) -> dict[str, Any] | None:
             (thread_id,),
         ).fetchone()
     return dict(row) if row else None
+
+
+# ── Copiloto ──
+
+_COPILOT_COLS = (
+    "papel", "o_que_aconteceu", "opcoes_json", "urgencia", "bola_json", "depende_de_outros",
+    "sem_resposta_desde", "prazo", "quem_pediu_json", "tarefas_json", "needs_context", "o_que_falta",
+    "pergunta", "status", "source", "delegado_json", "internal_date_snapshot", "analyzed_at", "msg_count_snapshot",
+)
+
+
+def save_copilot_item(thread_id: str, **fields: Any) -> None:
+    """Upsert parcial: só as colunas passadas mudam (status/delegação de uma
+    linha que já existe não somem quando a IA relê a thread)."""
+    data = {k: v for k, v in fields.items() if k in _COPILOT_COLS}
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    cols = ["thread_id", *data]
+    placeholders = ", ".join("?" for _ in cols)
+    assignments = ", ".join(f"{c}=excluded.{c}" for c in data)
+    with _connect() as conn:
+        conn.execute(
+            f"INSERT INTO copilot_items ({', '.join(cols)}) VALUES ({placeholders}) "
+            f"ON CONFLICT(thread_id) DO UPDATE SET {assignments}",
+            [thread_id, *data.values()],
+        )
+
+
+def get_copilot_item(thread_id: str) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM copilot_items WHERE thread_id=?", (thread_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_copilot_items() -> dict[str, dict[str, Any]]:
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM copilot_items").fetchall()
+    return {r["thread_id"]: dict(r) for r in rows}
+
+
+def log_copilot_action(thread_id: str, action: str, payload: dict[str, Any] | None = None) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO copilot_actions(thread_id, action, payload_json, at) VALUES (?, ?, ?, ?)",
+            (thread_id, action, json.dumps(payload or {}, ensure_ascii=False), datetime.now(timezone.utc).isoformat()),
+        )
+
+
+def list_copilot_actions(*, thread_id: str | None = None, since_iso: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+    sql, params = "SELECT * FROM copilot_actions WHERE 1=1", []
+    if thread_id:
+        sql += " AND thread_id=?"
+        params.append(thread_id)
+    if since_iso:
+        sql += " AND at>=?"
+        params.append(since_iso)
+    sql += " ORDER BY at DESC, id DESC LIMIT ?"
+    params.append(limit)
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def log_reply_edit(thread_id: str, ai_draft: str, sent_text: str, source: str = "mail") -> None:
+    """Guarda o rascunho da IA e o que foi enviado. Como log_event, nunca
+    pode atrapalhar o envio (que já saiu), então erro aqui é engolido."""
+    try:
+        with _connect() as conn:
+            conn.execute(
+                "INSERT INTO reply_edits(thread_id, ai_draft, sent_text, edited, source, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    thread_id,
+                    ai_draft,
+                    sent_text,
+                    int(ai_draft.strip() != sent_text.strip()),
+                    source,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+    except sqlite3.Error:
+        pass
+
+
+def list_reply_edits(*, thread_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    sql, params = "SELECT * FROM reply_edits WHERE 1=1", []
+    if thread_id:
+        sql += " AND thread_id=?"
+        params.append(thread_id)
+    sql += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_learned_note(
+    *, scope: str, text: str, thread_id: str = "", subject: str = "", subject_key: str = "", person_email: str = ""
+) -> dict[str, Any]:
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO learned_notes(scope, thread_id, subject, subject_key, person_email, text, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (scope, thread_id, subject, subject_key, person_email, text, datetime.now(timezone.utc).isoformat()),
+        )
+        row = conn.execute("SELECT * FROM learned_notes WHERE id=?", (cur.lastrowid,)).fetchone()
+    return dict(row)
+
+
+def list_learned_notes() -> list[dict[str, Any]]:
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM learned_notes ORDER BY id DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_learned_note(note_id: int) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM learned_notes WHERE id=?", (note_id,))
+    return cur.rowcount > 0
+
+
+def copilot_acted_thread_ids() -> set[str]:
+    """Threads em que o Leo já fez alguma ação pelo Copiloto (assumir, arrastar,
+    delegar...): a ação dele também classifica o item."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT DISTINCT thread_id FROM copilot_actions").fetchall()
+    return {r["thread_id"] for r in rows}
+
+
+def copilot_actions_for_sender(email: str, exclude_thread_id: str, limit: int = 5) -> list[dict[str, Any]]:
+    """O que o Leo já fez com outros e-mails dessa mesma pessoa -- entra como
+    "decisão anterior" quando o copiloto sugere o que fazer agora."""
+    email = (email or "").strip().lower()
+    if not email:
+        return []
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT a.*, t.subject FROM copilot_actions a JOIN threads t ON t.id = a.thread_id "
+            "WHERE t.from_email=? AND a.thread_id != ? AND a.action IN ('assumir','delegar','cobrar','resolver','aplicar') "
+            "ORDER BY a.at DESC LIMIT ?",
+            (email, exclude_thread_id, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]

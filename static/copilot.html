@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f6f5fb">
+  <title>Copiloto · IA.Email</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/composer.css?v=2">
+  <link rel="stylesheet" href="/static/copilot.css?v=13">
+</head>
+<body data-skin="clean" data-layout="mobile" data-mode="quadro">
+  <div class="cp-app">
+    <header class="cp-head">
+      <div class="cp-top">
+        <a class="cp-icon" href="/" aria-label="Voltar à caixa de entrada" title="Caixa de entrada"><span class="ic-slot" data-icon="back" data-icon-size="22"></span></a>
+        <div class="cp-hello">
+          <small id="cp-date"></small>
+          <h1 id="cp-hello">Olá</h1>
+        </div>
+        <div class="cp-cards">
+          <button type="button" class="cp-card peach" data-tab="precisa_de_voce">
+            <span class="cp-card-l">Hoje</span><b id="cp-n-hoje">0</b><small>pedem você hoje</small>
+          </button>
+          <button type="button" class="cp-card lilac" data-tab="bola_com_outros">
+            <span class="cp-card-l">Aguardando outras pessoas</span><b id="cp-n-esp">0</b><small>esperando retorno</small>
+          </button>
+        </div>
+        <div class="cp-seg cp-viewtog" role="group" aria-label="Visualização">
+          <button type="button" data-view="kanban">Kanban</button>
+          <button type="button" data-view="lista">Lista</button>
+        </div>
+        <button type="button" id="cp-skin" class="cp-icon" aria-label="Trocar visual (clean ou caderno)" title="Trocar visual"><span class="ic-slot" data-icon="pencil" data-icon-size="20"></span></button>
+        <button type="button" id="cp-run" class="cp-icon" aria-label="Pedir para a IA ler os e-mails novos" title="Ler e-mails novos"><span class="ic-slot" data-icon="refresh" data-icon-size="20"></span></button>
+        <button type="button" id="cp-prefs-btn" class="cp-icon" aria-label="Ajustes do copiloto" title="Ajustes"><span class="ic-slot" data-icon="settings" data-icon-size="20"></span></button>
+      </div>
+      <nav id="cp-views" class="cp-views" role="tablist" aria-label="Quadro ou histórico"></nav>
+      <div id="cp-progress" class="cp-progress hidden" role="status"></div>
+    </header>
+    <section class="cp-listpane" aria-label="Lista do copiloto">
+      <section id="cp-queue" class="cp-queue hidden" aria-label="Analisando"></section>
+      <nav class="cp-tabs" id="cp-tabs" role="tablist" aria-label="Filtros"></nav>
+      <ul id="cp-list" class="cp-list"></ul>
+    </section>
+    <section id="cp-hist" class="cp-histpane" aria-label="Histórico do copiloto"></section>
+    <section id="cp-board" class="cp-board" aria-label="Quadro do copiloto"></section>
+    <div id="cp-scrim" class="cp-scrim"></div>
+    <section id="cp-detail" class="cp-detail" aria-label="Detalhe">
+      <div class="cp-placeholder">Escolha um e-mail para ver o que aconteceu e o que eu faria.</div>
+    </section>
+  </div>
+
+  <div id="cp-sheet" class="cp-sheet hidden" role="dialog" aria-modal="true">
+    <div class="cp-sheet-box">
+      <button type="button" class="cp-icon cp-sheet-x" id="cp-sheet-x" aria-label="Fechar">×</button>
+      <div id="cp-sheet-body"></div>
+    </div>
+  </div>
+  <div id="cp-toast" class="cp-toast hidden" role="status"></div>
+
+  <!-- Citar trecho (static/annotate.js, o mesmo do /mail) -->
+  <div id="select-toolbar" class="select-toolbar hidden">
+    <button type="button" id="select-add-chat"><span class="ic-slot" data-icon="chat" data-icon-size="15"></span> Citar na instrução</button>
+  </div>
+  <div id="annot-popup" class="annot-popup hidden">
+    <textarea id="annot-popup-textarea" rows="2" placeholder="O que fazer com este trecho? Ex.: deixe mais curto, troque por terça…"></textarea>
+    <div class="annot-popup-actions">
+      <button type="button" id="annot-delete" class="cp-icon annot-del" title="Excluir citação" aria-label="Excluir citação">×</button>
+      <button type="button" id="annot-cancel" class="cp-btn">Cancelar</button>
+      <button type="button" id="annot-save" class="cp-btn primary">Salvar</button>
+    </div>
+  </div>
+  <script src="/static/icons.js?v=2"></script>
+  <script src="/static/chat.js?v=2"></script>
+  <script src="/static/composer.js?v=2"></script>
+  <script src="/static/annotate.js?v=96"></script>
+  <script src="/static/netstatus.js?v=2"></script>
+  <script src="/static/copilot.js?v=12"></script>
+</body>
+</html>

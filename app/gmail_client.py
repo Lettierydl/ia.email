@@ -173,27 +173,33 @@ def _service(creds: Credentials):
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 
-def _list_ids(service, query: str, max_results: int) -> list[str]:
-    ids: list[str] = []
+def _list_threads(service, query: str, max_results: int) -> list[dict[str, str]]:
+    """[{id, historyId}] -- o historyId muda a cada mensagem nova ou troca de
+    rótulo (lido/não lido) na thread: é o que diz se precisa re-buscar."""
+    out: list[dict[str, str]] = []
     token = None
-    while len(ids) < max_results:
-        remaining = max_results - len(ids)
+    while len(out) < max_results:
+        remaining = max_results - len(out)
         response = _execute(
             service.users()
             .threads()
             .list(
                 userId="me",
                 q=query,
-                maxResults=min(50, remaining),
+                maxResults=min(100, remaining),
                 pageToken=token,
             )
         )
         for item in response.get("threads", []):
-            ids.append(item["id"])
+            out.append({"id": item["id"], "historyId": str(item.get("historyId") or "")})
         token = response.get("nextPageToken")
         if not token:
             break
-    return ids
+    return out
+
+
+def _list_ids(service, query: str, max_results: int) -> list[str]:
+    return [item["id"] for item in _list_threads(service, query, max_results)]
 
 
 def _header_map(payload: dict[str, Any]) -> dict[str, str]:
@@ -269,11 +275,39 @@ def _ingest_thread(service, thread_id: str) -> None:
             "hide_as_replied": int(result.hide_as_replied),
             "last_from_header": from_header,
             "labels_json": sorted(set(all_labels)),
+            # Para/Cc da última mensagem: o copiloto usa pra saber se o Leo
+            # foi só copiado ou se o pedido é pra ele.
+            "to_header": last_headers.get("to") or "",
+            "cc_header": last_headers.get("cc") or "",
+            # versão da thread no Gmail: o refresh compara com a lista e só
+            # re-busca o que mudou (mensagem nova, lida/não lida em outro lugar)
+            "history_id": str(raw.get("historyId") or ""),
         }
     )
 
 
-def refresh(recent: int = 50, unread: int = 200) -> dict[str, int]:
+# Gmail conta "não lidos" da aba Principal por mensagem (INBOX + UNREAD +
+# CATEGORY_PERSONAL). A busca "is:unread" por thread devolve falsos positivos
+# (threads sem nenhuma mensagem não lida): por isso o limite folgado e a
+# classificação final sempre pelos rótulos das mensagens (_ingest_thread).
+REFRESH_RECENT = 50
+REFRESH_UNREAD = 300
+
+
+def gmail_counts(service) -> dict[str, int | None]:
+    """Contadores do próprio Gmail (o número que aparece na aba Principal).
+    Uma chamada barata por rótulo; falha aqui não derruba o refresh."""
+    out: dict[str, int | None] = {"primary_unread": None, "inbox_unread": None}
+    for key, label in (("primary_unread", "CATEGORY_PERSONAL"), ("inbox_unread", "INBOX")):
+        try:
+            data = _execute(service.users().labels().get(userId="me", id=label))
+            out[key] = int(data.get("threadsUnread") or 0)
+        except HttpError:
+            continue
+    return out
+
+
+def refresh(recent: int = REFRESH_RECENT, unread: int = REFRESH_UNREAD) -> dict[str, int]:
     creds = load_credentials()
     if not creds:
         raise RuntimeError("Gmail nao autenticado.")
@@ -281,19 +315,32 @@ def refresh(recent: int = 50, unread: int = 200) -> dict[str, int]:
         return {"skipped": 1, "reason": "refresh_em_andamento"}
     try:
         service = _service(creds)
-        recent_ids = _list_ids(service, "in:inbox category:primary", recent)
-        unread_ids = _list_ids(service, "in:inbox category:primary is:unread", unread)
-        unread_set = set(unread_ids)
-        known = store.conferido_ids()
+        recent_list = _list_threads(service, "in:inbox category:primary", recent)
+        unread_list = _list_threads(service, "in:inbox category:primary is:unread", unread)
+        unread_set = {t["id"] for t in unread_list}
+        index = store.thread_sync_index()  # {id: {history_id, is_unread, visible}}
         ordered: list[str] = []
         seen: set[str] = set()
-        for thread_id in unread_ids + recent_ids:
+        for item in unread_list + recent_list:
+            thread_id = item["id"]
             if thread_id in seen:
                 continue
             seen.add(thread_id)
-            if thread_id in known and thread_id not in unread_set:
+            known = index.get(thread_id)
+            # Antes: thread conhecida e fora da lista de não lidos nunca era
+            # re-buscada -- mensagem nova lida no celular, resposta do Leo
+            # pelo Gmail etc. ficavam congeladas. Agora: re-busca quando o
+            # historyId do Gmail mudou (ou quando ainda não temos o historyId).
+            if known and known.get("history_id") and known["history_id"] == item["historyId"]:
                 continue
             ordered.append(thread_id)
+        # Não lido no banco que o Gmail não lista mais como não lido (lido no
+        # celular/Gmail web, arquivado, movido de aba): re-busca para limpar a
+        # flag velha em vez de mostrá-lo como pendente para sempre.
+        for thread_id, known in index.items():
+            if known.get("is_unread") and known.get("visible") and thread_id not in unread_set and thread_id not in seen:
+                seen.add(thread_id)
+                ordered.append(thread_id)
         ingested = 0
         for thread_id in ordered:
             try:
@@ -307,8 +354,18 @@ def refresh(recent: int = 50, unread: int = 200) -> dict[str, int]:
                         "last_refresh", datetime.now(TZ).strftime("%H:%M")
                     )
                     raise QuotaPartial(ingested, len(ordered)) from exc
+                if exc.resp.status == 404:
+                    # thread apagada/sumiu entre a lista e o get: segue o resto
+                    continue
                 raise
-        store.set_meta("last_refresh", datetime.now(TZ).strftime("%H:%M"))
+        counts = gmail_counts(service)
+        now = datetime.now(TZ)
+        store.set_meta("last_refresh", now.strftime("%H:%M"))
+        store.set_meta("last_sync_at", now.isoformat(timespec="seconds"))
+        store.set_meta(
+            "gmail_counts",
+            json.dumps({**counts, "at": now.isoformat(timespec="seconds")}),
+        )
         store.set_meta(
             "last_scope",
             json.dumps(
@@ -321,9 +378,10 @@ def refresh(recent: int = 50, unread: int = 200) -> dict[str, int]:
             ),
         )
         return {
-            "recent": len(recent_ids),
-            "unread_query": len(unread_ids),
+            "recent": len(recent_list),
+            "unread_query": len(unread_list),
             "fetched": ingested,
+            "primary_unread_gmail": counts.get("primary_unread"),
         }
     finally:
         _REFRESH_LOCK.release()
@@ -582,7 +640,10 @@ def get_recipients(thread_id: str) -> dict[str, list[dict[str, str]]]:
     }
 
 
-def send_reply(thread_id: str, body_text: str, cc: str = "") -> dict:
+def send_reply(thread_id: str, body_text: str, cc: str = "", only_files: list[str] | None = None) -> dict:
+    """only_files: nomes dos anexos (da pasta da thread) a mandar. None = todos
+    os que estão na pasta agora (comportamento de sempre); a fila de envio
+    passa a lista fotografada no momento em que o Leo confirmou o envio."""
     creds = load_credentials()
     if not creds:
         raise RuntimeError("Gmail nao autenticado.")
@@ -609,6 +670,9 @@ def send_reply(thread_id: str, body_text: str, cc: str = "") -> dict:
     message_id = headers.get("message-id") or ""
 
     files = attachments.list_files(thread_id)
+    if only_files is not None:
+        wanted = set(only_files)
+        files = [item for item in files if item["name"] in wanted]
     if files:
         msg = MIMEMultipart()
         msg.attach(MIMEText(body_text))

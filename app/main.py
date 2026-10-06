@@ -10,13 +10,13 @@ import time
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from googleapiclient.errors import HttpError
 
 from pydantic import BaseModel
 
-from . import assist, assistant, attachments, board, calendar_client, context_base, fs_browser, gmail_client, llm, metrics, people_client, rag, store, summary_templates
+from . import assist, assistant, attachments, board, calendar_client, copilot, context_base, fs_browser, gmail_client, learned, llm, metrics, netstatus, outbox, people_client, rag, store, summary_templates
 from .gmail_client import QuotaPartial
 from .preload import pick_preload
 from .config import ACCOUNT, CONTEXT_MD, ROOT, TZ
@@ -69,6 +69,10 @@ def _start_autopilot_loop() -> None:
     threading.Thread(target=_autopilot_loop, daemon=True).start()
     threading.Thread(target=_rag_initial_sync, daemon=True).start()
     threading.Thread(target=_warm_llm_catalog, daemon=True).start()
+    # Sync automático do Gmail (só leitura) e fila de envio. Antes não havia
+    # sync nenhum: a caixa só mudava no botão Atualizar do /mail.
+    threading.Thread(target=netstatus.sync_loop, daemon=True).start()
+    threading.Thread(target=outbox.worker_loop, daemon=True).start()
 
 
 class SetupBody(BaseModel):
@@ -79,11 +83,22 @@ class SetupBody(BaseModel):
 class DraftBody(BaseModel):
     instruction: str = ""
     comment: str = ""
+    # texto editado na caixa (copiloto): vira o "Rascunho anterior" do prompt
+    current_draft: str = ""
+
+
+class LearnedBody(BaseModel):
+    scope: str
+    text: str
+    thread_id: str = ""
+    person_email: str = ""
 
 
 class SendBody(BaseModel):
     text: str
     cc: str = ""
+    # de onde saiu o envio (/mail ou /copilot) -- só para o registro reply_edits
+    source: str = "mail"
 
 
 class ComposeBody(BaseModel):
@@ -132,6 +147,28 @@ class SettingsBody(BaseModel):
     autopilot_level: Optional[str] = None
     autopilot_buffer_minutes: Optional[int] = None
     autopilot_scan_minutes: Optional[int] = None
+
+
+class CopilotActionBody(BaseModel):
+    action: str
+    opcao: Optional[int] = None
+    para: str = ""
+    nome: str = ""
+    modo: str = ""
+    nota: str = ""
+    index: Optional[int] = None
+    feita: bool = True
+
+
+class CopilotPrefsBody(BaseModel):
+    skin: Optional[str] = None
+    digest_daily: Optional[str] = None
+    digest_weekly_day: Optional[int] = None
+    digest_weekly_time: Optional[str] = None
+    digest_enabled: Optional[bool] = None
+    show_all: Optional[bool] = None
+    show_tasks_card: Optional[bool] = None
+    show_facts_card: Optional[bool] = None
 
 
 class PathsBody(BaseModel):
@@ -186,9 +223,25 @@ def board_page():
     return FileResponse(STATIC / "board.html", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/copilot")
+def copilot_page():
+    return FileResponse(STATIC / "copilot.html", headers={"Cache-Control": "no-store"})
+
+
+# Detalhe do copiloto em página inteira (desktop) com deep link; o JS lê o id do path.
+@app.get("/copilot/{thread_id}")
+def copilot_thread_page(thread_id: str):
+    return copilot_page()
+
+
 @app.get("/settings")
 def settings_page():
     return _index()
+
+
+def _last_refresh_label() -> str | None:
+    """"18:19" sozinho escondia que o último sync era de outro dia."""
+    return netstatus.sync_label(store.get_meta("last_sync_at")) or store.get_meta("last_refresh")
 
 
 def _active_model_name() -> str:
@@ -208,7 +261,8 @@ def status():
         "account": ACCOUNT,
         "has_client": gmail_client.has_client(),
         "authenticated": bool(creds),
-        "last_refresh": store.get_meta("last_refresh"),
+        "last_refresh": _last_refresh_label(),
+        "sync_status": netstatus.status(),
         "hidden": store.hidden_count(),
         "cached": store.thread_count(),
         "can_mark_read": gmail_client.has_modify_scope(creds),
@@ -276,7 +330,7 @@ def callback(code: Optional[str] = None, error: Optional[str] = None):
 @app.post("/api/refresh")
 def refresh():
     try:
-        counts = gmail_client.refresh()
+        counts = netstatus.run_sync("manual")
     except QuotaPartial as exc:
         raise HTTPException(
             429,
@@ -286,9 +340,86 @@ def refresh():
                 "queued": exc.merged,
             },
         ) from exc
-    except RuntimeError as exc:
-        raise HTTPException(401, str(exc)) from exc
-    return {"ok": True, **counts, "last_refresh": store.get_meta("last_refresh")}
+    except Exception as exc:
+        kind = netstatus.kind_of(exc)
+        if kind == netstatus.AUTH_ERROR:
+            raise HTTPException(401, "O acesso ao Gmail expirou: entre no Gmail de novo.") from exc
+        if kind == netstatus.OFFLINE:
+            raise HTTPException(503, "Sem conexão com o Gmail: não consegui baixar e-mails novos.") from exc
+        if isinstance(exc, RuntimeError):
+            raise HTTPException(401, str(exc)) from exc
+        raise
+    return {"ok": True, **counts, "last_refresh": _last_refresh_label()}
+
+
+def _sync_status() -> dict:
+    return {**netstatus.snapshot(), "outbox": outbox.counts()}
+
+
+@app.get("/api/sync/status")
+def sync_status():
+    return _sync_status()
+
+
+@app.post("/api/sync/now")
+def sync_now():
+    """Botão "Tentar agora"/⟳: um sync na hora. Nunca levanta erro -- o
+    estado (online/offline/auth_error) volta no corpo."""
+    counts: dict = {}
+    try:
+        counts = netstatus.run_sync("manual")
+    except QuotaPartial as exc:
+        counts = {"fetched": exc.ingested, "quota": True}
+    except Exception:
+        pass
+    if netstatus.is_online():
+        try:
+            outbox.flush()
+        except Exception:
+            pass
+    return {**_sync_status(), "result": counts}
+
+
+@app.get("/api/outbox")
+def outbox_list(all: bool = Query(False)):
+    return {"items": outbox.list_items(include_done=all), "counts": outbox.counts()}
+
+
+@app.post("/api/outbox/{item_id}/cancel")
+def outbox_cancel(item_id: str):
+    try:
+        return outbox.cancel(item_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/outbox/{item_id}/retry")
+def outbox_retry(item_id: str):
+    try:
+        return outbox.retry(item_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+_QUEUED_MSG = "Sem conexão com o Gmail: ficou na fila de envio e sai sozinho quando a conexão voltar."
+_AUTH_QUEUED_MSG = "O acesso ao Gmail expirou: ficou na fila de envio e sai depois que você entrar no Gmail de novo."
+
+
+def _queued_response(item: dict, kind: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=202,
+        content={
+            "ok": True,
+            "queued": True,
+            "outbox_id": item["id"],
+            "status": item["status"],
+            "message": _AUTH_QUEUED_MSG if kind == netstatus.AUTH_ERROR else _QUEUED_MSG,
+        },
+    )
 
 
 @app.get("/api/radar")
@@ -333,7 +464,7 @@ def radar(
 
     return {
         "account": ACCOUNT,
-        "last_refresh": store.get_meta("last_refresh"),
+        "last_refresh": _last_refresh_label(),
         "unanswered": unanswered,
         "needs_action": action,
         "hidden": store.hidden_count(),
@@ -406,11 +537,36 @@ def thread_original_preview(thread_id: str):
 @app.post("/api/threads/{thread_id}/draft")
 def thread_draft(thread_id: str, body: DraftBody):
     try:
-        return assistant.draft(thread_id, body.instruction, body.comment)
+        # current_draft só vai quando veio (o /mail não manda): chamada idêntica à de antes
+        extra = {"current_draft": body.current_draft} if body.current_draft.strip() else {}
+        return assistant.draft(thread_id, body.instruction, body.comment, **extra)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, str(exc)) from exc
+
+
+# ── Aprendizados (botão Aprender do copiloto): contexto p/ os próximos e-mails ──
+@app.get("/api/learned")
+def learned_list(thread_id: str = Query("")):
+    notes = learned.for_thread(thread_id) if thread_id else store.list_learned_notes()
+    return {"notes": notes}
+
+
+@app.post("/api/learned")
+def learned_add(body: LearnedBody):
+    try:
+        note = learned.add(body.scope, body.text, body.thread_id, body.person_email)
+    except learned.LearnedError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"note": note}
+
+
+@app.delete("/api/learned/{note_id}")
+def learned_delete(note_id: int):
+    if not learned.delete(note_id):
+        raise HTTPException(404, "Aprendizado não encontrado.")
+    return {"ok": True}
 
 
 @app.post("/api/threads/{thread_id}/chat/reset")
@@ -540,24 +696,36 @@ def thread_send(thread_id: str, body: SendBody):
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "Texto vazio.")
+    # rascunho da IA antes de enviar (o envio limpa o campo draft)
+    ai_draft = ((store.get_thread(thread_id) or {}).get("draft") or "").strip()
+    row = store.get_thread(thread_id) or {}
+
+    def enqueue(error: str = "") -> dict:
+        return outbox.enqueue(
+            kind="reply", thread_id=thread_id, body=text, cc=body.cc, subject=row.get("subject") or "",
+            to=row.get("from_email") or "", source=body.source, ai_draft=ai_draft, error=error,
+        )
+
+    # Sem conexão (ou sem acesso): o envio que o Leo confirmou vai para a
+    # fila em vez de falhar; o worker manda quando o Gmail voltar.
+    state = netstatus.status()
+    if state != netstatus.ONLINE:
+        return _queued_response(enqueue(), state)
     try:
         result = gmail_client.send_reply(thread_id, text, cc=body.cc)
-        gmail_client.mark_threads_read([thread_id])
-        gmail_client.refresh_thread(thread_id)
-    except RuntimeError as exc:
-        raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
+        kind = netstatus.kind_of(exc)
+        if kind != "error" and not netstatus.is_ambiguous_send_error(exc):
+            netstatus.mark_error(exc, "send")
+            return _queued_response(enqueue(netstatus.short_error(exc)), kind)
+        if netstatus.is_ambiguous_send_error(exc):
+            raise HTTPException(502, "A conexão caiu durante o envio: pode ter saído. Confira no Gmail antes de enviar de novo.") from exc
+        if isinstance(exc, RuntimeError):
+            raise HTTPException(400, str(exc)) from exc
         raise HTTPException(502, str(exc)) from exc
-    row = store.get_thread(thread_id) or {}
-    store.save_ai(
-        thread_id,
-        draft="",
-        chat_anchor_date=row.get("internal_date") or 0,
-        sent_via_app_at=int(datetime.now().timestamp() * 1000),
-    )
-    store.log_event("sent", thread_id)
-    for item in attachments.list_files(thread_id):
-        attachments.delete_file(thread_id, item["name"])
+    # Saiu. Daqui pra baixo é melhor esforço: antes, falha ao marcar como
+    # lido/re-buscar virava 502 com o e-mail já enviado (e o Leo reenviava).
+    outbox.finalize_reply(thread_id, text, ai_draft, body.source)
     return {"ok": True, **result}
 
 
@@ -735,6 +903,67 @@ def board_data():
     return board.build()
 
 
+# ── Copiloto ── (rotas fixas antes de /api/copilot/{thread_id})
+@app.get("/api/copilot")
+def copilot_list(all: Optional[bool] = Query(None), user: Optional[str] = Query(None)):
+    # abrir o painel já põe a IA para ler o que falta, em segundo plano
+    copilot.ensure_batch()
+    data = copilot.list_items(show_all=all, user=user)
+    data["sync"] = _sync_status()
+    return data
+
+
+@app.get("/api/copilot/status")
+def copilot_status():
+    return copilot.job_status()
+
+
+@app.post("/api/copilot/run")
+def copilot_run(limit: int = Query(12, ge=1, le=40), force: bool = Query(False)):
+    return copilot.start(limit, force)
+
+
+@app.get("/api/copilot/digest")
+def copilot_digest(period: str = Query("daily"), user: Optional[str] = Query(None)):
+    try:
+        return copilot.digest(period, user)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/copilot/settings")
+def copilot_settings(user: Optional[str] = Query(None)):
+    return copilot.get_prefs(user)
+
+
+@app.post("/api/copilot/settings")
+def copilot_settings_save(body: CopilotPrefsBody, user: Optional[str] = Query(None)):
+    try:
+        return copilot.save_prefs(user, **body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/copilot/{thread_id}")
+def copilot_detail(thread_id: str, refresh: bool = Query(False), force: bool = Query(False)):
+    try:
+        return copilot.analyze(thread_id, force=True) if (refresh or force) else copilot.detail(thread_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/copilot/{thread_id}/action")
+def copilot_action(thread_id: str, body: CopilotActionBody):
+    try:
+        return copilot.act(thread_id, body.action, body.model_dump())
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @app.post("/api/autopilot/decisions/{decision_id}/dismiss")
 def autopilot_dismiss(decision_id: str):
     try:
@@ -802,20 +1031,26 @@ def compose_send(body: ComposeBody):
         raise HTTPException(400, "Texto vazio.")
     if not body.to.strip():
         raise HTTPException(400, "Informe pelo menos um destinatário.")
+    def enqueue(error: str = "") -> dict:
+        return outbox.enqueue(kind="new", to=body.to, cc=body.cc, subject=body.subject, body=text,
+                              source="compose", error=error)
+
+    state = netstatus.status()
+    if state != netstatus.ONLINE:
+        return _queued_response(enqueue(), state)
     try:
         result = gmail_client.send_new(body.to, body.cc, body.subject, text)
-    except RuntimeError as exc:
-        raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
+        kind = netstatus.kind_of(exc)
+        if kind != "error" and not netstatus.is_ambiguous_send_error(exc):
+            netstatus.mark_error(exc, "send")
+            return _queued_response(enqueue(netstatus.short_error(exc)), kind)
+        if netstatus.is_ambiguous_send_error(exc):
+            raise HTTPException(502, "A conexão caiu durante o envio: pode ter saído. Confira no Gmail antes de enviar de novo.") from exc
+        if isinstance(exc, RuntimeError):
+            raise HTTPException(400, str(exc)) from exc
         raise HTTPException(502, str(exc)) from exc
-    thread_id = result.get("thread_id")
-    if thread_id:
-        try:
-            gmail_client.refresh_thread(thread_id)
-            store.save_ai(thread_id, sent_via_app_at=int(datetime.now().timestamp() * 1000))
-        except Exception:
-            pass
-    store.log_event("compose_sent", thread_id or "")
+    outbox.finalize_new(result)
     return {"ok": True, **result}
 
 

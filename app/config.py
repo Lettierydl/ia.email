@@ -64,6 +64,11 @@ EMAIL_EXPORT_RETENTION_DAYS = 7
 LEARNING_BASE_DEFAULT = Path("/Users/leo/Learning Base/principal_agents/emails")
 LEARNING_BASE_GLOBAL_DEFAULT = Path("/Users/leo/Learning Base")
 
+# Espelho legivel dos "Aprendizados" (botao Aprender do copiloto): reescrito
+# inteiro a partir do banco a cada add/remocao. A fonte da verdade e o SQLite;
+# os testes apontam isso para uma pasta temporaria (tests/conftest.py).
+LEARNED_NOTES_MD = LEARNING_BASE_DEFAULT / "aprendizados.md"
+
 # lb-company/ e lb-personal/ -- usadas pelo roteamento de "Guardar no
 # cerebro" e "Exportar contexto" pra escolher destino em QUALQUER lugar da
 # Learning Base (nao so em principal_agents/*, que era o unico pedaco
@@ -115,3 +120,11 @@ def oauth_credentials_file() -> Path | None:
     if CLIENT_SECRETS_PATH.is_file():
         return CLIENT_SECRETS_PATH
     return None
+
+
+# Sync automático com o Gmail (app/netstatus.py): de quantos em quantos
+# minutos o servidor puxa a caixa sozinho (só leitura). 0 desliga.
+try:
+    SYNC_MINUTES = float(os.getenv("RADAR_SYNC_MINUTES", "3"))
+except ValueError:
+    SYNC_MINUTES = 3.0

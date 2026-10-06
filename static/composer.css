@@ -1,0 +1,99 @@
+/* Composer compartilhado (/mail, /compose e /copilot): destinatários, conversa
+   com a IA, caixa do rascunho, "Ideia principal / instrução" com chips de
+   citação + Gerar/Ajustar, linha de ícones e Enviar. As cores vêm das
+   variáveis da página (copilot.css: --accent/--lilac…; styles.css: --blue…). */
+.cmp{
+  --cmp-accent:var(--accent,var(--blue,#1a73e8));--cmp-accent-ink:var(--accent-ink,var(--blue-dark,#1557b0));
+  --cmp-soft:var(--lilac,var(--blue-soft,#e8f0fe));--cmp-mint:var(--mint,var(--green-soft,#e6f4ea));
+  --cmp-line:var(--line,#dadce0);--cmp-card:var(--card,#fff);--cmp-bg:var(--bg,#f6f8fc);
+  --cmp-ink:var(--ink,#202124);--cmp-muted:var(--muted,#5f6368);--cmp-fog:var(--fog,#f1f3f4);
+  --cmp-send:var(--green,var(--ink,#202124));
+  display:flex;flex-direction:column;gap:8px;color:var(--cmp-ink)
+}
+.cmp-rcpt{font-size:13px;color:var(--cmp-muted);overflow-wrap:anywhere;margin:0}
+.cmp-rcpt b{color:var(--cmp-ink);font-weight:600}
+
+/* conversa com a IA (instruções + respostas/rascunhos), recolhível */
+.cmp-chat{border:1px solid var(--cmp-line);border-radius:12px;background:var(--cmp-card)}
+.cmp-chat>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;padding:7px 10px;font-size:12.5px;color:var(--cmp-muted);user-select:none}
+.cmp-chat>summary::-webkit-details-marker{display:none}
+.cmp-chat>summary::after{content:"▸";margin-left:auto;font-size:11px}
+.cmp-chat[open]>summary::after{content:"▾"}
+.cmp-chat>summary b{font-weight:600;font-size:11px;background:var(--cmp-fog);border-radius:999px;padding:0 7px;color:var(--cmp-muted)}
+.cmp-chat>summary .ic{color:var(--cmp-accent)}
+.cmp-chat .chat-messages{border-top:1px solid var(--cmp-line)}
+
+/* caixa do rascunho (o que vai ser enviado) */
+.cmp-draft{width:100%;min-height:180px;resize:vertical;font:inherit;font-size:14px;line-height:1.5;border:1px solid var(--cmp-line);border-radius:12px;padding:12px;background:var(--cmp-bg);color:var(--cmp-ink)}
+.cmp-draft:focus{outline:2px solid var(--cmp-accent);outline-offset:-1px}
+.cmp-draft:disabled{opacity:.6}
+.cmp-status{margin:0;min-height:1.2em;font-size:12.5px;color:var(--cmp-muted)}
+
+/* ideia principal / instrução + citações numeradas */
+.cmp-instr{border:1px solid var(--cmp-line);border-radius:12px;background:var(--cmp-bg);padding:8px}
+.cmp-instr:focus-within{outline:2px solid var(--cmp-accent);outline-offset:-1px}
+.cmp-instr>label{display:block;font-size:12px;color:var(--cmp-muted);margin:0 2px 6px}
+.cmp-annots{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.cmp-annots:empty{display:none}
+.cmp-annot{display:inline-flex;align-items:center;gap:6px;max-width:100%;border-radius:999px;background:var(--cmp-soft);padding:3px 4px;font-size:12px;cursor:pointer}
+.cmp-annot.draft{background:var(--cmp-mint)}
+.cmp-annot>b{flex:none;width:18px;height:18px;border-radius:50%;background:var(--cmp-accent);color:#fff;display:grid;place-items:center;font-size:10.5px}
+.cmp-annot-q{min-width:0;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmp-annot-c{min-width:0;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--cmp-accent-ink);font-weight:500}
+.cmp-annot-x{flex:none;border:0;background:transparent;width:20px;height:20px;border-radius:50%;font-size:15px;line-height:1;color:var(--cmp-muted);padding:0;cursor:pointer}
+.cmp-annot-x:hover{background:var(--cmp-card);color:var(--cmp-ink)}
+.cmp-instr-row{display:flex;gap:8px;align-items:flex-end}
+.cmp-instr-row textarea{flex:1;min-width:0;resize:none;border:0;background:transparent;font:inherit;font-size:14px;line-height:1.45;padding:6px 4px;color:var(--cmp-ink);max-height:200px;min-height:0}
+.cmp-instr-row textarea:focus{outline:none}
+.cmp-gen{flex:none;display:inline-flex;align-items:center;gap:6px;height:40px;padding:0 14px;border-radius:12px;border:1px solid var(--cmp-ink);background:var(--cmp-ink);color:var(--cmp-card);font:inherit;font-size:14px;cursor:pointer}
+.cmp-gen:disabled{opacity:.45;cursor:default}
+.cmp-gen .ic{color:#fbbc04}
+.cmp-hint{margin:0 2px;font-size:11.5px;color:var(--cmp-muted)}
+
+/* linha de ícones + Enviar */
+.cmp-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.cmp-tool{position:relative;width:40px;height:40px;padding:0;display:inline-grid;place-items:center;border:1px solid var(--cmp-line);border-radius:12px;background:var(--cmp-card);color:var(--cmp-muted);cursor:pointer;text-decoration:none}
+.cmp-tool:hover{background:var(--cmp-fog);color:var(--cmp-ink)}
+.cmp-tool:disabled{opacity:.4;cursor:not-allowed}
+.cmp-tool .ic{display:block}
+.cmp-sendwrap{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0}
+.cmp-send{display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 18px;border-radius:12px;border:0;background:var(--cmp-send);color:#fff;font:inherit;font-size:14px;font-weight:500;cursor:pointer}
+.cmp-send:disabled{opacity:.45;cursor:default}
+
+/* ── bolhas do chat (mesmo desenho em todas as páginas) ── */
+.chat-messages{max-height:300px;overflow-y:auto;padding:8px 12px;display:flex;flex-direction:column;gap:8px}
+.chat-messages:empty{display:none}
+.chat-msg{max-width:85%;padding:8px 12px;border-radius:12px;font-size:14px;line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-msg.user{align-self:flex-end;background:var(--cmp-accent,var(--blue,#1a73e8));color:#fff;border-bottom-right-radius:4px}
+.chat-msg.ai{align-self:flex-start;background:var(--cmp-fog,#f1f3f4);color:var(--cmp-ink,#202124);border-bottom-left-radius:4px}
+.chat-msg.ai.muted-msg{background:transparent;border:1px dashed var(--cmp-line,#dadce0);color:var(--cmp-muted,#5f6368);font-size:13px}
+.chat-msg.ai .draft-label{display:flex;align-items:center;gap:5px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--cmp-muted,#5f6368);margin-bottom:4px;white-space:normal}
+.chat-msg.ai .draft-label small{text-transform:none;letter-spacing:0;font-size:11px}
+.chat-msg.ai.answer{background:var(--cmp-soft,#e8f0fe)}
+.chat-msg.ai.answer .draft-label{color:var(--cmp-accent-ink,#1557b0)}
+/* rascunho resumido: o texto inteiro está na caixa do composer */
+.chat-msg.ai.draft.compact{background:transparent;border:1px solid var(--cmp-line,#dadce0);white-space:normal}
+.chat-msg.ai.draft.compact.latest{border-color:var(--cmp-accent,#1a73e8)}
+.chat-draft-preview{white-space:pre-wrap;font-size:13px;color:var(--cmp-muted,#5f6368);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.chat-use{margin-top:6px;border:1px solid var(--cmp-line,#dadce0);background:var(--cmp-card,#fff);border-radius:10px;padding:2px 10px;font:inherit;font-size:12px;cursor:pointer;color:var(--cmp-accent-ink,#1557b0)}
+.chat-use:hover{border-color:var(--cmp-accent,#1a73e8)}
+.chat-msg.ai.typing{display:grid;gap:7px;min-width:220px;padding:14px 16px}
+.chat-msg.ai.typing .bar{height:9px;border-radius:5px;background:linear-gradient(90deg,#e3e6ea 25%,#f3f5f7 45%,#e3e6ea 65%);background-size:300% 100%;animation:cmp-skel 1.3s ease-in-out infinite}
+.chat-msg.ai.typing .bar:nth-child(1){width:92%}
+.chat-msg.ai.typing .bar:nth-child(2){width:100%;animation-delay:.12s}
+.chat-msg.ai.typing .bar:nth-child(3){width:58%;animation-delay:.24s}
+@keyframes cmp-skel{0%{background-position:100% 50%}100%{background-position:0 50%}}
+@media (prefers-reduced-motion:reduce){.chat-msg.ai.typing .bar{animation:none}}
+.cc-resolution{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.cc-resolution-row{font-size:12px}
+.cc-resolution-row.done{color:var(--green,#188038);font-weight:500}
+.cc-resolution-row.muted{color:var(--cmp-muted,#5f6368);font-style:italic}
+.cc-resolution-q{display:block;margin-bottom:4px;color:var(--cmp-muted,#5f6368)}
+.cc-resolution-opts{display:flex;flex-wrap:wrap;gap:6px}
+.cc-resolution-opts button{background:var(--cmp-card,#fff);border:1px solid var(--cmp-line,#dadce0);border-radius:12px;padding:3px 10px;font-size:12px;cursor:pointer}
+.cc-resolution-opts button:hover{background:var(--cmp-soft,#e8f0fe);border-color:var(--cmp-accent,#1a73e8)}
+
+/* ícones do módulo static/icons.js */
+.ic{flex:none;vertical-align:middle}
+.ic-slot{display:inline-flex;align-items:center;justify-content:center;line-height:0;vertical-align:middle}
+.ic-inline{margin-right:3px}

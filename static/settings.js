@@ -4,15 +4,11 @@
 (function () {
   if (location.pathname !== "/settings") return;
 
+  // Ícones do módulo compartilhado (static/icons.js), o mesmo de todas as páginas
+  const ico = (n) => window.Icons.svg(n);
   const ICON = {
-    folder: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>',
-    file: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 7V3.5L18.5 9H13z"/></svg>',
-    up: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg>',
-    down: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>',
-    close: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>',
-    check: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>',
-    chevron: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>',
-    trash: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>',
+    folder: ico("folder"), file: ico("file"), up: ico("chevron-up"), down: ico("chevron-down"),
+    close: ico("close"), check: ico("check"), chevron: ico("chevron-right"), trash: ico("trash"),
   };
 
   const PROVIDER_LABEL = { gemini: "Google (direto)", anthropic: "Anthropic (direto)", openrouter: "OpenRouter" };
@@ -680,6 +676,24 @@
     };
   }
 
+  // ── 5b. Copiloto: cards laterais do detalhe (preferência por usuário) ──
+  async function initCopilotCards() {
+    const prefs = await getJSON("/api/copilot/settings", null);
+    const tasks = $("st-cp-tasks"), facts = $("st-cp-facts"), status = $("st-cp-status");
+    if (!prefs) { status.textContent = "Não consegui ler as preferências do copiloto."; return; }
+    tasks.checked = prefs.show_tasks_card !== false;
+    facts.checked = prefs.show_facts_card !== false;
+    const save = async (field, value) => {
+      status.textContent = "Salvando…";
+      try {
+        const res = await fetch("/api/copilot/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ [field]: value }) });
+        status.textContent = res.ok ? "Salvo." : "Não salvou.";
+      } catch { status.textContent = "Sem conexão: não salvou."; }
+    };
+    tasks.onchange = () => save("show_tasks_card", tasks.checked);
+    facts.onchange = () => save("show_facts_card", facts.checked);
+  }
+
   // ── 6. Piloto ──
   function initAutopilot() {
     const levels = { conservador: "Conservador", moderado: "Moderado", autonomo: "Autônomo" };
@@ -827,7 +841,36 @@
     };
   }
 
-  // ── 8. Arquivos gerados ──
+  // ── 8. Aprendizados (botão Aprender do copiloto) ──
+  const LEARNED_SCOPE = { general: "Geral", person: "Pessoa", thread: "Assunto" };
+
+  async function loadLearned() {
+    const data = await getJSON("/api/learned", { notes: [] });
+    const el = $("st-learned");
+    const notes = data.notes || [];
+    el.innerHTML = notes.length
+      ? notes
+          .map((n) => {
+            const where = n.scope === "person" ? n.person_email : n.scope === "thread" ? n.subject || "(sem assunto)" : "vale sempre";
+            return `<div class="st-list-row">
+              <span class="st-list-main">${escHtml(n.text)}</span>
+              <span class="st-list-meta">${LEARNED_SCOPE[n.scope] || n.scope} · ${escHtml(where || "")} · ${fmtWhen(Date.parse(n.created_at) / 1000)}</span>
+              <button type="button" class="st-icon danger" data-learned="${n.id}" aria-label="Remover este aprendizado">${ICON.trash}</button>
+            </div>`;
+          })
+          .join("")
+      : '<p class="st-empty">Nada aprendido ainda. Use o botão Aprender no detalhe do copiloto.</p>';
+    el.querySelectorAll("[data-learned]").forEach((b) => {
+      b.onclick = async () => {
+        if (!window.confirm("Remover este aprendizado? A IA deixa de usá-lo nos próximos e-mails.")) return;
+        const res = await fetch(`/api/learned/${b.dataset.learned}`, { method: "DELETE" }).catch(() => null);
+        toast(res && res.ok ? "Aprendizado removido" : "Não consegui remover.", !(res && res.ok));
+        loadLearned();
+      };
+    });
+  }
+
+  // ── 9. Arquivos gerados ──
   async function loadGenerated() {
     const data = await getJSON("/api/settings/generated-files", { exports: [], context_md: null });
     $("st-context-md").textContent = data.context_md
@@ -914,7 +957,9 @@
     initNav();
     initWriting();
     initAutopilot();
+    initCopilotCards();
     initAliases();
+    loadLearned();
     initGenerated();
     await Promise.allSettled([initMetrics(), initModels(), initSummary(), initKnowledge()]);
   }

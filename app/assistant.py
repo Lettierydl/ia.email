@@ -6,7 +6,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from . import attachments, context_base, gmail_client, llm, rag, secrets_guard, store, summary_templates
+from . import attachments, context_base, copilot, gmail_client, learned, llm, rag, secrets_guard, store, summary_templates
 from .config import (
     ACCOUNT,
     CONTEXT_GLOBAL_MAX_CHARS,
@@ -449,7 +449,9 @@ def _chat_context(chat: list[dict], max_chars: int = 6000) -> str:
     return "\n".join(reversed(out))
 
 
-def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
+def draft(thread_id: str, instruction: str, comment: str = "", current_draft: str = "") -> dict:
+    """current_draft: o texto que o Leo tem na caixa agora (o copiloto manda o
+    rascunho editado à mão). Vazio = usa o último rascunho salvo na thread."""
     with _lock_for(thread_id):
         row = store.get_thread(thread_id) or {}
         chat = _load_chat(row)
@@ -493,7 +495,7 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
             }
 
         body = _ensure_body(thread_id)
-        previous = row.get("draft") or ""
+        previous = (current_draft or "").strip() or row.get("draft") or ""
         if not llm.has_key():
             raise RuntimeError("Falta chave de LLM (Claude/Gemini/OpenRouter) para gerar rascunho.")
         chat_context = _chat_context(chat)
@@ -502,6 +504,7 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
             f"{row.get('subject') or ''}\n{_recent_body(body, 3000)}",
             exclude_ref=f"mail:{thread_id}",
         )
+        learned_block = learned.notes_block(thread_id, row.get("subject") or "", learned.thread_emails(row))
         raw = llm.complete(
             'Responda em JSON: {"kind": "draft" ou "answer", "text": "...", "cc_names": [...]}.\n'
             'kind="draft" é o PADRÃO. Use "draft" sempre que o Leo explicar, decidir, corrigir, '
@@ -523,12 +526,16 @@ def draft(thread_id: str, instruction: str, comment: str = "") -> dict:
             "trecho. Responda a quem escreveu o trecho citado. Reaproveite os argumentos do próprio Leo "
             "(inclusive \"já fechamos isso\" ou \"já rediscutimos\"), de forma cordial, e NÃO acrescente "
             "parágrafos que ele não pediu (próximos passos, \"precisamos alinhar\", etc.).\n"
+            'Já "[n] Sobre o trecho do rascunho \\"...\\": ..." cita o Rascunho anterior (abaixo), não o '
+            "e-mail recebido: o Leo pede para mudar AQUELE trecho conforme o comentário. Parta do "
+            "Rascunho anterior, aplique a mudança nesse trecho e mantenha o resto como está.\n"
             "cc_names: se a instrução pedir pra adicionar, copiar, incluir ou envolver alguém no "
             "e-mail (Cc), liste cada nome/apelido mencionado como uma string nesse array (pode ser "
             "mais de um nome). NÃO invente e-mail, NÃO escreva e-mail nesse campo, só o nome como o "
             "Leo escreveu. Não inclua o próprio Leo. Array vazio se ninguém foi pedido pra ser "
             "adicionado.\n\n"
             f"{extra_context}"
+            f"{learned_block}"
             + (
                 "Conversa até agora entre você (IA) e o Leo sobre ESTE e-mail -- o que ele já explicou ou "
                 "decidiu aqui vale para o pedido atual, e a instrução mais recente tem prioridade se "
@@ -606,6 +613,8 @@ def compose_draft(to: str, subject: str, instruction: str, comment: str, chat: l
         }
 
     compose_context = _draft_extra_context(instruction, subject + "\n" + to)
+    # e-mail novo: aprendizados gerais + os das pessoas no "Para"
+    compose_context += learned.notes_block("", "", [m.group(0).lower() for m in _EMAIL_RE.finditer(to or "")])
     raw = llm.complete(
         'Responda em JSON: {"kind": "draft" ou "answer", "text": "...", "cc_names": [...]}.\n'
         'Use kind="draft" quando a instrução pede pra escrever/ajustar o e-mail -- text deve ser '
@@ -1036,7 +1045,7 @@ def _hard_exclusions(row: dict, body: str, draft_text: str) -> str | None:
         return "assunto jurídico ou de RH"
     if _ATTACH_MENTION_RE.search(draft_text or "") and not attachments.list_files(row.get("id") or ""):
         return "rascunho menciona anexo sem anexo real confirmado"
-    return None
+    return copilot.pilot_block_reason(row.get("id") or "")
 
 
 def decide_autopilot_action(thread_id: str) -> dict:

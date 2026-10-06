@@ -90,3 +90,8 @@ box-shadow:-4px 0 16px rgba(60,64,67,.15);display:flex;flex-direction:column;z-i
   .bd-top{padding:8px 12px}.bd-zoom{display:none}.bd-sep{display:none}
   .bd-drawer{top:auto;height:82%;width:100%;border-left:0;border-top:1px solid var(--line);border-radius:16px 16px 0 0}
 }
+
+/* ícones do módulo compartilhado (static/icons.js) */
+.ic-slot{display:inline-flex;align-items:center;justify-content:center;line-height:0;vertical-align:middle}
+.ic{flex:none;vertical-align:middle}
+.ic-mail{color:#1a73e8}

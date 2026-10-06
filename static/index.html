@@ -8,14 +8,15 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=93" />
+  <link rel="stylesheet" href="/static/styles.css?v=97" />
+  <link rel="stylesheet" href="/static/composer.css?v=2" />
 </head>
 <body>
   <header class="top">
     <div>
       <h1>
         <a id="back-inbox" class="back hidden" href="/">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+          <span class="ic-slot" data-icon="back"></span>
           Caixa
         </a>
         <span class="brand"><span class="logo">IA</span>.Email</span>
@@ -28,13 +29,24 @@
     <div class="top-actions">
       <span class="last-update" id="updated">—</span>
       <button type="button" id="btn-refresh" class="icon-btn" data-tooltip="Atualizar emails do Gmail">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+        <span class="ic-slot" data-icon="refresh"></span>
       </button>
-      <button type="button" id="btn-autopilot" class="icon-btn" data-tooltip="Piloto automático">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a1 1 0 011 1v2.06A8.94 8.94 0 0119.94 11H22a1 1 0 010 2h-2.06A8.94 8.94 0 0113 19.94V22a1 1 0 01-2 0v-2.06A8.94 8.94 0 014.06 13H2a1 1 0 010-2h2.06A8.94 8.94 0 0111 4.06V2a1 1 0 011-1zm0 5a7 7 0 100 14 7 7 0 000-14zm0 3a1 1 0 01.993.883L13 11v3.59l1.7 1.71a1 1 0 01-1.32 1.5l-.1-.08-2-2A1 1 0 0111 15v-4a1 1 0 011-1z"/></svg>
+      <!-- Copiloto = dois aviões em formação (você lidera, ele voa ao lado);
+           Piloto automático = um jato só, no horizonte, voando sozinho. -->
+      <a href="/copilot" id="btn-copilot" class="icon-btn" data-tooltip="Copiloto: o que precisa de você" aria-label="Copiloto: o que precisa de você">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <g transform="translate(10.6 -0.4) scale(.6)"><path d="M21 16v-2l-8-5V3.5C13 2.67 12.33 2 11.5 2S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></g>
+          <g transform="translate(-0.4 9.8) scale(.6)" opacity=".55"><path d="M21 16v-2l-8-5V3.5C13 2.67 12.33 2 11.5 2S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></g>
+        </svg>
+      </a>
+      <button type="button" id="btn-autopilot" class="icon-btn" data-tooltip="Piloto automático" aria-label="Piloto automático">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M21 14v-2l-8-5V2.5C13 1.67 12.33 1 11.5 1S10 1.67 10 2.5V7l-8 5v2l8-2.5V17l-2 1.5V20l3.5-1 3.5 1v-1.5L13 17v-5.5l8 2.5z"/>
+          <path d="M1.5 22.2h6.2M15.3 22.2h7.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/>
+        </svg>
       </button>
       <button type="button" id="btn-settings" class="icon-btn" data-tooltip="Configurações">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+        <span class="ic-slot" data-icon="settings"></span>
       </button>
       <button type="button" id="btn-auth" class="ghost hidden">Entrar no Gmail</button>
     </div>
@@ -60,7 +72,7 @@
 
   <section class="controls">
     <button type="button" id="btn-compose" class="icon-btn compose-btn" data-tooltip="Escrever um e-mail novo (não é resposta a nenhuma thread)">
-      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+      <span class="ic-slot" data-icon="pencil"></span>
     </button>
     <input id="q" type="search" placeholder="Buscar por remetente ou assunto" />
     <label><input type="checkbox" id="acao" /> só ação minha</label>
@@ -80,11 +92,11 @@
 
   <div class="mail-tab-actions">
     <button type="button" id="btn-auto-read" class="ghost hidden" data-tooltip="Marcar todos automáticos como lidos no Gmail">
-      <svg style="width:16px;height:16px;vertical-align:middle;margin-right:2px" viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
+      <span class="ic-slot" data-icon="check-circle-double" data-icon-size="16"></span>
       Marcar lidos
     </button>
     <button type="button" id="btn-promo-read" class="ghost hidden" data-tooltip="Marcar todas as promoções não lidas como lidas no Gmail">
-      <svg style="width:16px;height:16px;vertical-align:middle;margin-right:2px" viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
+      <span class="ic-slot" data-icon="check-circle-double" data-icon-size="16"></span>
       Marcar lidos
     </button>
   </div>
@@ -131,26 +143,31 @@
       </div>
       <div class="pane-actions">
         <button type="button" id="compose-close" class="icon-btn" data-tooltip="Fechar">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+          <span class="ic-slot" data-icon="close"></span>
         </button>
       </div>
     </div>
 
     <div class="pane-body-wrap">
-      <div class="compose-area">
-        <div id="compose-chat-messages" class="chat-messages"></div>
-        <div id="compose-send-bar" class="send-bar hidden">
-          <span id="compose-send-target" class="send-target"></span>
-          <button type="button" id="compose-send" class="primary send-mail-btn">
-            <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px;vertical-align:middle;margin-right:4px"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
-            Enviar e-mail
-          </button>
+      <div class="compose-area cmp" id="compose-composer">
+        <details class="cmp-chat" id="compose-chat-box" open>
+          <summary><span data-icon="chat" data-icon-size="15"></span>Conversa com a IA <b id="compose-chat-count">0</b></summary>
+          <div id="compose-chat-messages" class="chat-messages"></div>
+        </details>
+        <textarea id="compose-draft" class="cmp-draft" rows="9" placeholder="O rascunho da IA aparece aqui. Edite à vontade: nada sai sem você confirmar."></textarea>
+        <div class="cmp-instr">
+          <label for="compose-instr">Ideia principal / instrução para a IA</label>
+          <div class="cmp-instr-row">
+            <textarea id="compose-instr" rows="1" placeholder="Diga o que você quer escrever…"></textarea>
+            <button type="button" id="compose-gen" class="cmp-gen" data-tooltip="Gerar o rascunho com a instrução" disabled><span data-icon="sparkles" data-icon-size="16"></span><span id="compose-gen-label">Gerar</span></button>
+          </div>
         </div>
-        <div class="compose-input-row">
-          <textarea id="compose-instr" rows="3" placeholder="Diga o que você quer escrever..."></textarea>
-          <button type="button" id="compose-gen" class="send-btn" data-tooltip="Gerar rascunho" disabled>
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 7v4H5.83l3.58-3.59L8 6l-6 6 6 6 1.41-1.41L5.83 13H21V7z"/></svg>
-          </button>
+        <p class="cmp-hint">Enter gera · Shift+Enter quebra linha.</p>
+        <div class="cmp-tools">
+          <div id="compose-send-bar" class="cmp-sendwrap hidden">
+            <span id="compose-send-target" class="cmp-rcpt"></span>
+            <button type="button" id="compose-send" class="cmp-send send-mail-btn"><span data-icon="send" data-icon-size="17"></span>Enviar…</button>
+          </div>
         </div>
       </div>
     </div>
@@ -164,7 +181,7 @@
       </div>
       <div class="pane-actions">
         <button type="button" id="autopilot-close" class="icon-btn" data-tooltip="Fechar">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+          <span class="ic-slot" data-icon="close"></span>
         </button>
       </div>
     </div>
@@ -279,13 +296,13 @@
       </div>
       <div class="pane-actions">
         <a id="pane-open-gmail" class="icon-btn" href="#" target="_blank" rel="noopener" data-tooltip="Abrir no Gmail">
-          <svg viewBox="0 0 24 24"><path fill="#EA4335" d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-.904.732-1.636 1.636-1.636h.749L12 10.483l9.615-6.662h.749c.904 0 1.636.732 1.636 1.636Z"/></svg>
+          <span class="ic-slot" data-icon="gmail"></span>
         </a>
         <button type="button" id="pane-mark-read" class="icon-btn" data-tooltip="Marcar como lido">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
+          <span class="ic-slot" data-icon="check-circle-double"></span>
         </button>
         <button type="button" id="pane-close" class="icon-btn" data-tooltip="Fechar">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+          <span class="ic-slot" data-icon="close"></span>
         </button>
       </div>
     </div>
@@ -327,40 +344,33 @@
           </div>
         </div>
 
-        <div class="compose-area">
-          <div class="compose-toolbar">
-            <button type="button" id="pane-resumir" data-tooltip="Gerar resumo de novo">
-              <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
-            </button>
-            <span class="sep"></span>
-            <button type="button" id="pane-attach" data-tooltip="Anexar arquivo">
-              <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 015 0v10.5c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5V6H9v9.5a3 3 0 006 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg>
-            </button>
-            <input type="file" id="pane-file" multiple hidden />
-            <span class="sep"></span>
-            <button type="button" id="pane-export-ctx" data-tooltip="Exportar contexto pra outra IA (Cursor/Claude/Codex)">
-              <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
-            </button>
-            <span class="sep"></span>
-            <button type="button" id="pane-chat-reset" data-tooltip="Limpar conversa e recomeçar do zero" disabled>
-              <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-            </button>
-          </div>
+        <div class="compose-area cmp" id="pane-composer">
+          <p class="cmp-rcpt" id="send-target"></p>
           <div id="attach-list" class="attach-list hidden"></div>
-          <div id="chat-messages" class="chat-messages"></div>
-          <div id="send-bar" class="send-bar hidden">
-            <span id="send-target" class="send-target"></span>
-            <button type="button" id="pane-send" class="primary send-mail-btn">
-              <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px;vertical-align:middle;margin-right:4px"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
-              Enviar e-mail
-            </button>
+          <details class="cmp-chat" id="chat-box" open>
+            <summary><span data-icon="chat" data-icon-size="15"></span>Conversa com a IA <b id="chat-count">0</b></summary>
+            <div id="chat-messages" class="chat-messages"></div>
+          </details>
+          <textarea id="pane-draft" class="cmp-draft" rows="9" placeholder="O rascunho da IA aparece aqui. Edite à vontade: nada sai sem você confirmar."></textarea>
+          <p id="draft-status" class="cmp-status" role="status"></p>
+          <div class="cmp-instr">
+            <label for="pane-instr">Ideia principal / instrução para a IA</label>
+            <div class="cmp-annots" id="annot-chips"></div>
+            <div class="cmp-instr-row">
+              <textarea id="pane-instr" rows="1" placeholder="Diga o que quer responder…"></textarea>
+              <button type="button" id="pane-gen" class="cmp-gen" data-tooltip="Gerar o rascunho com a instrução" disabled><span data-icon="sparkles" data-icon-size="16"></span><span id="pane-gen-label">Gerar</span></button>
+            </div>
           </div>
-          <button type="button" id="annot-chip" class="annot-chip hidden"></button>
-          <div class="compose-input-row">
-            <textarea id="pane-instr" rows="3" placeholder="Diga o que quer responder..."></textarea>
-            <button type="button" id="pane-gen" class="send-btn" data-tooltip="Gerar rascunho" disabled>
-              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 7v4H5.83l3.58-3.59L8 6l-6 6 6 6 1.41-1.41L5.83 13H21V7z"/></svg>
-            </button>
+          <p class="cmp-hint">Enter gera · Shift+Enter quebra linha · selecione um trecho do e-mail ou do rascunho para citar.</p>
+          <div class="cmp-tools">
+            <button type="button" id="pane-resumir" class="cmp-tool" data-tooltip="Gerar resumo de novo"><span data-icon="refresh" data-icon-size="18"></span></button>
+            <button type="button" id="pane-attach" class="cmp-tool" data-tooltip="Anexar arquivo"><span data-icon="attach" data-icon-size="18"></span></button>
+            <input type="file" id="pane-file" multiple hidden />
+            <button type="button" id="pane-export-ctx" class="cmp-tool" data-tooltip="Exportar contexto pra outra IA (Cursor/Claude/Codex)"><span data-icon="export" data-icon-size="18"></span></button>
+            <button type="button" id="pane-chat-reset" class="cmp-tool" data-tooltip="Limpar conversa e recomeçar do zero" disabled><span data-icon="trash" data-icon-size="18"></span></button>
+            <div id="send-bar" class="cmp-sendwrap hidden">
+              <button type="button" id="pane-send" class="cmp-send send-mail-btn"><span data-icon="send" data-icon-size="17"></span>Enviar…</button>
+            </div>
           </div>
         </div>
       </div>
@@ -412,14 +422,14 @@
   </div>
 
   <div id="select-toolbar" class="select-toolbar hidden">
-    <button type="button" id="select-add-chat">💬 Adicionar ao chat</button>
+    <button type="button" id="select-add-chat"><span class="ic-slot" data-icon="chat" data-icon-size="15"></span> Adicionar ao chat</button>
   </div>
 
   <div id="annot-popup" class="annot-popup hidden">
     <textarea id="annot-popup-textarea" rows="2" placeholder="Comente sobre o trecho selecionado..."></textarea>
     <div class="annot-popup-actions">
       <button type="button" id="annot-delete" class="icon-btn" data-tooltip="Excluir anotação">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+        <span class="ic-slot" data-icon="trash"></span>
       </button>
       <span class="sep"></span>
       <button type="button" id="annot-cancel" class="ghost">Cancelar</button>
@@ -430,7 +440,7 @@
   <section id="settings-page" class="hidden" aria-label="Configurações">
     <div class="st-head">
       <a class="st-back" href="/" aria-label="Voltar para a caixa de entrada">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+        <span class="ic-slot" data-icon="back"></span>
         Caixa
       </a>
       <h2>Configurações</h2>
@@ -442,8 +452,10 @@
       <a href="#st-resumo">Resumo</a>
       <a href="#st-conhecimento">Conhecimento</a>
       <a href="#st-escrita">Escrita</a>
+      <a href="#st-copiloto">Copiloto</a>
       <a href="#st-piloto">Piloto</a>
       <a href="#st-contatos">Apelidos</a>
+      <a href="#st-aprendizados">Aprendizados</a>
       <a href="#st-arquivos">Arquivos gerados</a>
     </nav>
 
@@ -617,6 +629,14 @@
       </label>
     </section>
 
+    <section class="st-card" id="st-copiloto">
+      <h3>Copiloto</h3>
+      <p class="st-hint">Cards da coluna lateral no detalhe de um e-mail (/copilot). Vale só para a sua conta e salva sozinho.</p>
+      <label class="st-check"><input type="checkbox" id="st-cp-tasks" /> Mostrar o card “Tarefas” <small>(tarefas que a IA tirou do e-mail)</small></label>
+      <label class="st-check"><input type="checkbox" id="st-cp-facts" /> Mostrar o card “Quem pediu / Sem resposta / Depende de outros”</label>
+      <span class="st-status" id="st-cp-status" role="status"></span>
+    </section>
+
     <section class="st-card" id="st-piloto">
       <div class="st-card-head">
         <div>
@@ -646,6 +666,16 @@
       </div>
     </section>
 
+    <section class="st-card" id="st-aprendizados">
+      <div class="st-card-head">
+        <div>
+          <h3>Aprendizados</h3>
+          <p class="st-hint">O que você ensinou à IA pelo botão Aprender do copiloto: regras e contexto que valem para uma conversa/assunto, uma pessoa ou sempre. Entram no rascunho e na leitura do copiloto. Também ficam espelhados em aprendizados.md na Learning Base.</p>
+        </div>
+      </div>
+      <div id="st-learned" class="st-list"></div>
+    </section>
+
     <section class="st-card" id="st-arquivos">
       <div class="st-card-head">
         <div>
@@ -663,9 +693,15 @@
 
   <div id="original-email-popup" class="original-popup hidden"></div>
 
+  <script src="/static/icons.js?v=2"></script>
   <script src="/static/tooltip.js?v=93"></script>
-  <script src="/static/app.js?v=93"></script>
-  <script src="/static/settings.js?v=93"></script>
+  <script src="/static/chat.js?v=2"></script>
+  <script src="/static/composer.js?v=2"></script>
+  <script src="/static/annotate.js?v=96"></script>
+  <script src="/static/netstatus.js?v=2"></script>
+  <script src="/static/app.js?v=97"></script>
+  <script src="/static/settings.js?v=95"></script>
   <script src="/static/assist.js?v=93"></script>
+  <script>window.NetStatus && window.NetStatus.init();</script>
 </body>
 </html>
