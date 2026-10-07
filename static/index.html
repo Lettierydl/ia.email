@@ -8,8 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=97" />
-  <link rel="stylesheet" href="/static/composer.css?v=2" />
+  <link rel="stylesheet" href="/static/styles.css?v=99" />
+  <link rel="stylesheet" href="/static/composer.css?v=5" />
 </head>
 <body>
   <header class="top">
@@ -154,15 +154,15 @@
           <summary><span data-icon="chat" data-icon-size="15"></span>Conversa com a IA <b id="compose-chat-count">0</b></summary>
           <div id="compose-chat-messages" class="chat-messages"></div>
         </details>
-        <textarea id="compose-draft" class="cmp-draft" rows="9" placeholder="O rascunho da IA aparece aqui. Edite à vontade: nada sai sem você confirmar."></textarea>
         <div class="cmp-instr">
-          <label for="compose-instr">Ideia principal / instrução para a IA</label>
+          <label for="compose-instr"><span data-icon="sparkles" data-icon-size="14"></span>Peça à IA <small>(não vai no e-mail)</small></label>
           <div class="cmp-instr-row">
-            <textarea id="compose-instr" rows="1" placeholder="Diga o que você quer escrever…"></textarea>
-            <button type="button" id="compose-gen" class="cmp-gen" data-tooltip="Gerar o rascunho com a instrução" disabled><span data-icon="sparkles" data-icon-size="16"></span><span id="compose-gen-label">Gerar</span></button>
+            <textarea id="compose-instr" rows="1" placeholder="Peça à IA: ex. convide para uma reunião amanhã às 14h…" title="Enter gera · Shift+Enter quebra linha"></textarea>
+            <button type="button" id="compose-gen" class="cmp-gen" data-tooltip="Gerar o rascunho com o pedido" disabled><span data-icon="sparkles" data-icon-size="16"></span><span id="compose-gen-label">Gerar</span></button>
           </div>
         </div>
-        <p class="cmp-hint">Enter gera · Shift+Enter quebra linha.</p>
+        <div class="cmp-draft-head"><label for="compose-draft">Rascunho do e-mail <small>(vai ser enviado)</small></label></div>
+        <textarea id="compose-draft" class="cmp-draft" rows="9" placeholder="O texto que vai para o destinatário. Para pedir algo à IA, use o campo acima."></textarea>
         <div class="cmp-tools">
           <div id="compose-send-bar" class="cmp-sendwrap hidden">
             <span id="compose-send-target" class="cmp-rcpt"></span>
@@ -351,17 +351,23 @@
             <summary><span data-icon="chat" data-icon-size="15"></span>Conversa com a IA <b id="chat-count">0</b></summary>
             <div id="chat-messages" class="chat-messages"></div>
           </details>
-          <textarea id="pane-draft" class="cmp-draft" rows="9" placeholder="O rascunho da IA aparece aqui. Edite à vontade: nada sai sem você confirmar."></textarea>
-          <p id="draft-status" class="cmp-status" role="status"></p>
           <div class="cmp-instr">
-            <label for="pane-instr">Ideia principal / instrução para a IA</label>
+            <label for="pane-instr"><span data-icon="sparkles" data-icon-size="14"></span>Peça à IA <small>(não vai no e-mail)</small></label>
             <div class="cmp-annots" id="annot-chips"></div>
             <div class="cmp-instr-row">
-              <textarea id="pane-instr" rows="1" placeholder="Diga o que quer responder…"></textarea>
-              <button type="button" id="pane-gen" class="cmp-gen" data-tooltip="Gerar o rascunho com a instrução" disabled><span data-icon="sparkles" data-icon-size="16"></span><span id="pane-gen-label">Gerar</span></button>
+              <textarea id="pane-instr" rows="1" placeholder="Peça à IA: ex. diga que posso hoje às 14h…" title="Enter gera · Shift+Enter quebra linha · selecione um trecho do e-mail ou do rascunho para citar"></textarea>
+              <button type="button" id="pane-gen" class="cmp-gen" data-tooltip="Gerar o rascunho com o pedido" disabled><span data-icon="sparkles" data-icon-size="16"></span><span id="pane-gen-label">Gerar</span></button>
             </div>
           </div>
-          <p class="cmp-hint">Enter gera · Shift+Enter quebra linha · selecione um trecho do e-mail ou do rascunho para citar.</p>
+          <div class="cmp-draft-head">
+            <label for="pane-draft">Rascunho do e-mail <small>(vai ser enviado)</small></label>
+            <span id="draft-chip" class="cmp-draft-chip hidden" role="status">Rascunho salvo</span>
+          </div>
+          <div class="cmp-draft-wrap" id="pane-draft-wrap">
+            <textarea id="pane-draft" class="cmp-draft" rows="9" placeholder="O texto que vai para o destinatário. Para pedir algo à IA, use o campo acima."></textarea>
+            <div class="cmp-draft-skel" aria-hidden="true"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div>
+          </div>
+          <p id="draft-status" class="cmp-status" role="status"></p>
           <div class="cmp-tools">
             <button type="button" id="pane-resumir" class="cmp-tool" data-tooltip="Gerar resumo de novo"><span data-icon="refresh" data-icon-size="18"></span></button>
             <button type="button" id="pane-attach" class="cmp-tool" data-tooltip="Anexar arquivo"><span data-icon="attach" data-icon-size="18"></span></button>
@@ -696,10 +702,10 @@
   <script src="/static/icons.js?v=2"></script>
   <script src="/static/tooltip.js?v=93"></script>
   <script src="/static/chat.js?v=2"></script>
-  <script src="/static/composer.js?v=2"></script>
+  <script src="/static/composer.js?v=5"></script>
   <script src="/static/annotate.js?v=96"></script>
   <script src="/static/netstatus.js?v=2"></script>
-  <script src="/static/app.js?v=97"></script>
+  <script src="/static/app.js?v=100"></script>
   <script src="/static/settings.js?v=95"></script>
   <script src="/static/assist.js?v=93"></script>
   <script>window.NetStatus && window.NetStatus.init();</script>

@@ -8,6 +8,16 @@ if ("scrollRestoration" in history) history.scrollRestoration = "manual";
 const LIST_SCROLL_KEY = "ia_email_list_scroll";
 window.addEventListener("pagehide", () => {
   if (location.pathname === "/") sessionStorage.setItem(LIST_SCROLL_KEY, String(window.scrollY));
+  if (paneId && window.DraftPersist) {
+    const ta = $("pane-draft");
+    if (ta) window.DraftPersist.flushBeacon(paneId, ta.value);
+  }
+});
+window.addEventListener("beforeunload", () => {
+  if (paneId && window.DraftPersist) {
+    const ta = $("pane-draft");
+    if (ta) window.DraftPersist.flushBeacon(paneId, ta.value);
+  }
 });
 
 let restoreHidden = false;
@@ -1000,6 +1010,36 @@ function gmailThreadUrl(id) {
   return `https://mail.google.com/mail/${authuser}#all/${encodeURIComponent(id)}`;
 }
 
+
+function showDraftChip(on, loading) {
+  const chip = $("draft-chip");
+  if (!chip) return;
+  chip.classList.toggle("hidden", !on);
+  chip.classList.toggle("loading", !!loading);
+  chip.textContent = "Rascunho salvo";
+}
+
+function setPaneDraftLoading(on) {
+  const wrap = $("pane-draft-wrap");
+  if (wrap) wrap.classList.toggle("loading", !!on);
+}
+
+function applySavedDraft(id, text, fromAi) {
+  const body = text || "";
+  if (body) {
+    setDraft(body, !!fromAi);
+    showDraftChip(true, false);
+    setPaneDraftLoading(false);
+    $("draft-status").textContent = draftEdited() ? "Rascunho salvo (editado por você)." : "Rascunho salvo.";
+    if (window.DraftPersist) window.DraftPersist.remember(id, body);
+  } else {
+    showDraftChip(false, false);
+    setPaneDraftLoading(false);
+  }
+  updateSendBar();
+  updateGenButtonState();
+}
+
 async function openPane(id, force) {
   paneId = id;
   $("pane-open-gmail").href = gmailThreadUrl(id);
@@ -1015,8 +1055,27 @@ async function openPane(id, force) {
   $("pane-instr").style.height = "auto";
   $("pane-gen").disabled = true;
   draftAi = "";
-  setDraft("", false);
+  // Rascunho: pinta na hora se já temos cache; senão skeleton + chip até a API.
+  const cachedDraft = window.DraftPersist ? window.DraftPersist.cacheGet(id) : null;
+  setDraft(cachedDraft || "", false);
   $("draft-status").textContent = "";
+  if (cachedDraft) {
+    showDraftChip(true, false);
+    setPaneDraftLoading(false);
+    $("draft-status").textContent = "Rascunho salvo.";
+  } else {
+    // Sem cache: skeleton na caixa (sem chip ainda — chip só quando API/cache confirma).
+    showDraftChip(false, false);
+    setPaneDraftLoading(true);
+  }
+  // Prefetch paralelo (GET /draft sqlite, ou cache) — não espera o analyze.
+  const draftPrefetch = window.DraftPersist
+    ? window.DraftPersist.prefetch(id).then((text) => {
+        if (paneId !== id || text == null) return;
+        if (text) applySavedDraft(id, text, false);
+        else if (!currentDraft()) { showDraftChip(false, false); setPaneDraftLoading(false); }
+      }).catch(() => {})
+    : Promise.resolve();
   annot.reset(); // e-mail novo: esquece as anotações (as marcas sumiram com o conteúdo)
   pendingCc = [];
   lastRecipients = { to: [], cc: [] };
@@ -1029,6 +1088,7 @@ async function openPane(id, force) {
 
   // Corpo cru primeiro (sem LLM, rápido) pra já mostrar o e-mail completo
   // na tela enquanto o resumo (mais lento) ainda carrega por baixo.
+  // Depois do restart: original-preview também traz draft.
   fetch(`/api/threads/${encodeURIComponent(id)}/original-preview`)
     .then((res) => res.json())
     .then((data) => {
@@ -1038,6 +1098,12 @@ async function openPane(id, force) {
       currentTo = data.from_email || "";
       renderBody(data.body || "");
       if (data.subject) document.title = data.subject + " · IA.Email";
+      if (data.draft != null && data.draft !== "" && !draftEdited()) {
+        applySavedDraft(id, data.draft, data.draft === lastDraft());
+      } else if (data.has_draft === false && !currentDraft()) {
+        showDraftChip(false, false);
+        setPaneDraftLoading(false);
+      }
     })
     .catch(() => {});
 
@@ -1070,6 +1136,18 @@ async function openPane(id, force) {
       });
     }
     renderChat();
+    await draftPrefetch;
+    // Prefer the sqlite draft (edits do Leo) over the last chat AI draft when they differ.
+    if (data.draft) {
+      if (data.draft !== currentDraft()) applySavedDraft(id, data.draft, data.draft === lastDraft());
+      else { showDraftChip(true, false); setPaneDraftLoading(false); if (window.DraftPersist) window.DraftPersist.remember(id, data.draft); }
+    } else if (!currentDraft()) {
+      showDraftChip(false, false);
+      setPaneDraftLoading(false);
+      if (window.DraftPersist) window.DraftPersist.cacheClear(id);
+    } else {
+      setPaneDraftLoading(false);
+    }
     renderCaptureSuggestion(data.capture_note, data.capture_status);
     loadInvite(id);
     if (data.subject) document.title = data.subject + " · IA.Email";
@@ -1252,20 +1330,21 @@ function renderAttachments(files) {
     return;
   }
   el.classList.remove("hidden");
-  el.innerHTML = files
-    .map(
-      (f) => `<span class="attach-chip" data-name="${escHtml(f.name)}">
-        📎 ${escHtml(f.name)} <span class="size">${(f.size / 1024).toFixed(0)}KB</span>
-        <button type="button" data-remove="${escHtml(f.name)}">×</button>
-      </span>`
-    )
-    .join("");
-  el.querySelectorAll("[data-remove]").forEach((btn) => {
+  el.innerHTML = window.Composer
+    ? window.Composer.attachChipsHTML(files)
+    : files.map((f) => `<span class="attach-chip">📎 ${escHtml(f.name)} <button type="button" data-attach-rm="${escHtml(f.name)}">×</button></span>`).join("");
+  el.querySelectorAll("[data-attach-rm]").forEach((btn) => {
     btn.onclick = async () => {
-      await fetch(`/api/threads/${paneId}/attachments/${encodeURIComponent(btn.dataset.remove)}`, {
+      await fetch(`/api/threads/${paneId}/attachments/${encodeURIComponent(btn.dataset.attachRm)}`, {
         method: "DELETE",
       });
       loadAttachments();
+    };
+  });
+  el.querySelectorAll("[data-attach-insert]").forEach((btn) => {
+    btn.onclick = () => {
+      if (window.Composer) window.Composer.insertAttachRef($("pane-draft"), btn.dataset.attachInsert);
+      updateSendBar();
     };
   });
 }
@@ -1288,10 +1367,11 @@ function formatSize(bytes) {
 
 let lastGmailAttachments = { files: [], message_ids: [] };
 
-function gmailAttachmentUrl(f) {
-  return `/api/threads/${paneId}/gmail-attachments/${encodeURIComponent(
-    f.message_id
-  )}/${encodeURIComponent(f.attachment_id)}?filename=${encodeURIComponent(f.filename)}`;
+function gmailAttachmentUrl(f, asDownload) {
+  const q = new URLSearchParams({ filename: f.filename || "anexo" });
+  if (asDownload) q.set("download", "1");
+  // Path clássico (já no ar). ?download=1 passa a forçar disposition após restart.
+  return `/api/threads/${encodeURIComponent(paneId)}/gmail-attachments/${encodeURIComponent(f.message_id)}/${encodeURIComponent(f.attachment_id)}?${q}`;
 }
 
 function renderBodyAttachments(data) {
@@ -1311,16 +1391,17 @@ function renderBodyAttachments(data) {
     holder.className = "msg-attachments";
     holder.innerHTML = list
       .map((f) => {
-        const url = gmailAttachmentUrl(f);
+        const url = gmailAttachmentUrl(f, false);
+        const urlDl = gmailAttachmentUrl(f, true);
         if ((f.mime_type || "").startsWith("image/")) {
-          return `<a class="msg-inline-image" href="${url}" target="_blank" rel="noopener" data-tooltip="Abrir imagem original">
+          return `<a class="msg-inline-image" href="${url}" target="_blank" rel="noopener" title="Abrir imagem original">
             <img src="${url}" alt="${escHtml(f.filename)}" loading="lazy" />
           </a>`;
         }
         return `<span class="attach-chip gmail">
           📎 ${escHtml(f.filename)} <span class="size">${formatSize(f.size)}</span>
-          <a href="${url}" target="_blank" rel="noopener" data-tooltip="Abrir em nova aba">Abrir</a>
-          <a href="${url}" download="${escHtml(f.filename)}" data-tooltip="Baixar">↓</a>
+          <a href="${url}" target="_blank" rel="noopener" title="Abrir">Abrir</a>
+          <a href="${urlDl}" download="${escHtml(f.filename)}" title="Baixar">Baixar</a>
         </span>`;
       })
       .join("");
@@ -1450,6 +1531,9 @@ $("pane-chat-reset").onclick = async () => {
     ];
     draftAi = "";
     setDraft("", false);
+    showDraftChip(false, false);
+    setPaneDraftLoading(false);
+    if (window.DraftPersist) window.DraftPersist.cacheClear(paneId);
     renderChat();
     $("pane-instr").value = "";
     $("pane-instr").style.height = "auto";
@@ -1497,6 +1581,8 @@ function currentAttachmentCount() {
 function openSendModal() {
   const text = currentDraft();
   if (!paneId || !text) return;
+  // Garante o texto no sqlite antes do modal (evita perda se o envio falhar / a página cair).
+  if (window.DraftPersist) window.DraftPersist.flush(paneId, text);
   const subject = $("pane-subject").textContent || "(sem assunto)";
   $("modal-to").textContent = currentTo;
   $("modal-cc").value = defaultCcSuggestion();
@@ -1539,7 +1625,11 @@ $("modal-confirm").onclick = async () => {
     const data = await res.json().catch(() => ({}));
     closeSendModal();
     if (!res.ok) {
-      $("pane-status").textContent = data.detail || "Falha ao enviar.";
+      const detail = typeof data.detail === "string" ? data.detail : "Falha ao enviar.";
+      const maybeSent = /pode ter|confira no gmail/i.test(detail);
+      $("pane-status").textContent = maybeSent
+        ? (/confira no gmail/i.test(detail) ? detail : "Pode ter sido enviado — confira no Gmail antes de reenviar. " + detail)
+        : detail;
       return;
     }
     // sem conexão: o servidor pôs na fila de envio (202 queued) -- sai sozinho depois
@@ -1550,6 +1640,9 @@ $("modal-confirm").onclick = async () => {
     $("send-bar").classList.add("hidden");
     draftAi = "";
     setDraft("", false);
+    showDraftChip(false, false);
+    setPaneDraftLoading(false);
+    if (window.DraftPersist && !data.queued) window.DraftPersist.cacheClear(paneId);
     renderAttachments([]);
     pendingCc = [];
     kickPreload();
@@ -1916,10 +2009,13 @@ const annot = Annotate.create({
 
 // caixa do rascunho: editar habilita Enviar e troca Gerar -> Ajustar
 $("pane-draft").addEventListener("input", () => {
-  $("draft-status").textContent = draftEdited() ? "Editado por você." : "";
+  $("draft-status").textContent = draftEdited() ? "Editado por você." : ($("pane-draft").value.trim() ? "Rascunho salvo." : "");
+  if ($("pane-draft").value.trim()) showDraftChip(true, false);
+  else showDraftChip(false, false);
   updateGenLabel();
   updateSendBar();
   updateChatResetState();
+  if (paneId && window.DraftPersist) window.DraftPersist.schedule(paneId, $("pane-draft").value);
 });
 
 function clearAllAnnotations() {

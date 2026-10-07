@@ -61,7 +61,38 @@
   let threadOpen = true; // conversa completa aberta no detalhe
   let summaryOpen = true; // camada 2 (resumo) visível por padrão
   // Composer "Responder": estado fora do HTML para sobreviver aos re-renders do detalhe.
-  let reply = null; // { tid, open, text, aiText, instr, extraCc, all, recipients, busy, status }
+  let reply = null; // { tid, open, text, aiText, instr, extraCc, all, recipients, busy, status, draftLoading }
+  function flushReplyDraft() {
+    // só texto editado aqui: rascunho da IA já está salvo, e caixa ainda carregando
+    // (vazia) apagava o rascunho salvo da thread
+    if (!reply || !window.DraftPersist || reply.draftLoading || reply.text === reply.aiText) return;
+    window.DraftPersist.flush(reply.tid, reply.text);
+  }
+  function knownDraftText(it) {
+    if (reply && reply.tid === it.thread_id && (reply.text || "").trim()) return reply.text;
+    if ((it.draft || "").trim()) return it.draft;
+    if (window.DraftPersist) {
+      const c = window.DraftPersist.cacheGet(it.thread_id);
+      if (c && c.trim()) return c;
+    }
+    return "";
+  }
+  function prefetchDraft(it) {
+    if (!it || !window.DraftPersist) return Promise.resolve(null);
+    return window.DraftPersist.prefetch(it.thread_id).then((text) => {
+      if (text == null) return null;
+      if (shown && shown.thread_id === it.thread_id) {
+        shown.draft = text;
+        if (reply && reply.tid === it.thread_id) {
+          const edited = reply.text.trim() && reply.text !== reply.aiText;
+          if (!edited) { reply.text = text; reply.aiText = text; }
+          reply.draftLoading = false;
+        }
+        if ($("cp-detail").classList.contains("open")) renderDetail(shown);
+      }
+      return text;
+    }).catch(() => null);
+  }
   // Citações (trecho do e-mail/resumo ou do próprio rascunho + comentário):
   // mesma mecânica do /mail (static/annotate.js); a lista vive no módulo,
   // aparece como chips numerados no composer e vai como instruction no /draft.
@@ -77,6 +108,77 @@
   let canSend = false; // /api/status.can_send (escopo gmail.send)
   let me = "";
   const readingNow = new Set(); // leituras individuais em andamento (abrir / Ler de novo)
+  // Anexos recebidos (Gmail) da thread aberta — mesma API do /mail.
+  let gmailAtt = { tid: null, files: [], message_ids: [] };
+  function gmailAttUrl(tid, f, asDownload) {
+    const q = new URLSearchParams({ filename: f.filename || "anexo" });
+    if (asDownload) q.set("download", "1");
+    return `/api/threads/${encodeURIComponent(tid)}/gmail-attachments/${encodeURIComponent(f.message_id)}/${encodeURIComponent(f.attachment_id)}?${q}`;
+  }
+  function formatAttSize(bytes) {
+    if (!bytes) return "";
+    if (bytes < 1024) return bytes + "B";
+    return (bytes / 1024).toFixed(0) + "KB";
+  }
+  // Tipo do anexo (pelo mime ou pela extensão) -> ícone colorido do pill, como no Gmail.
+  function attKind(f) {
+    const mime = (f.mime_type || "").toLowerCase();
+    const ext = ((f.filename || "").match(/\.([a-z0-9]+)$/i) || [])[1] || "";
+    const e = ext.toLowerCase();
+    if (mime === "application/pdf" || e === "pdf") return "pdf";
+    if (mime.startsWith("image/") || /^(png|jpe?g|gif|webp|bmp|heic|svg)$/.test(e)) return "img";
+    if (/spreadsheet|excel|csv/.test(mime) || /^(xlsx?|csv|ods)$/.test(e)) return "sheet";
+    if (/presentation|powerpoint/.test(mime) || /^(pptx?|odp|key)$/.test(e)) return "slides";
+    if (/word|opendocument\.text|rtf/.test(mime) || /^(docx?|odt|rtf|txt)$/.test(e)) return "doc";
+    if (/zip|compressed|x-rar|x-7z|tar|gzip/.test(mime) || /^(zip|rar|7z|tar|gz)$/.test(e)) return "zip";
+    return "file";
+  }
+  const ATT_ICON = {
+    pdf: '<rect width="16" height="16" rx="3" fill="#ea4335"/><text x="8" y="10.6" text-anchor="middle" font-size="5.6" font-weight="700" font-family="Arial,sans-serif" fill="#fff">PDF</text>',
+    img: '<rect width="16" height="16" rx="3" fill="#ea4335"/><path d="M3 12l3.2-4 2.3 2.8L10 9l3 3z" fill="#fff"/><circle cx="11" cy="5.2" r="1.3" fill="#fff"/>',
+    sheet: '<rect width="16" height="16" rx="3" fill="#188038"/><path d="M4 5h8v6.5H4zM4 8.2h8M8 5v6.5" stroke="#fff" stroke-width="1.1" fill="none"/>',
+    slides: '<rect width="16" height="16" rx="3" fill="#f9ab00"/><rect x="4" y="5" width="8" height="6" rx="1" fill="none" stroke="#fff" stroke-width="1.2"/>',
+    doc: '<rect width="16" height="16" rx="3" fill="#4285f4"/><path d="M4.5 5.5h7M4.5 8h7M4.5 10.5h4.5" stroke="#fff" stroke-width="1.2"/>',
+    zip: '<rect width="16" height="16" rx="3" fill="#5f6368"/><path d="M8 3v2M8 6v2M8 9v1.5" stroke="#fff" stroke-width="1.4"/><rect x="6.6" y="10.5" width="2.8" height="2.6" rx=".6" fill="#fff"/>',
+    file: '<rect width="16" height="16" rx="3" fill="#80868b"/><path d="M5 3.8h4l2.2 2.2v6.2H5z" fill="none" stroke="#fff" stroke-width="1.1"/>',
+  };
+  const ATT_DL = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>';
+  // Pills compactos (Gmail): ícone do tipo + nome truncado; o pill abre o
+  // anexo numa aba e a setinha discreta baixa.
+  function inboundAttHTML(tid, files) {
+    if (!files || !files.length) return "";
+    return `<div class="cp-att-pills">${files.map((f) => {
+      const name = f.filename || "anexo";
+      const size = formatAttSize(f.size);
+      const tip = `${name}${size ? ` (${size})` : ""}`;
+      return `<span class="cp-att-pill">
+        <a class="cp-att-open" href="${gmailAttUrl(tid, f, false)}" target="_blank" rel="noopener" title="Abrir ${esc(tip)}">
+          <svg class="cp-att-ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">${ATT_ICON[attKind(f)]}</svg>
+          <span class="cp-att-name">${esc(name)}</span>
+        </a>
+        <a class="cp-att-dl" href="${gmailAttUrl(tid, f, true)}" download="${esc(name)}" title="Baixar ${esc(tip)}" aria-label="Baixar ${esc(name)}">${ATT_DL}</a>
+      </span>`;
+    }).join("")}</div>`;
+  }
+  async function loadGmailAttachments(tid) {
+    if (!tid) return;
+    try {
+      const r = await api(`/api/threads/${encodeURIComponent(tid)}/gmail-attachments`);
+      if (!r.ok) return;
+      if (current !== tid && (!shown || shown.thread_id !== tid)) return;
+      gmailAtt = { tid, files: r.data.files || [], message_ids: r.data.message_ids || [] };
+      // Re-pinta a thread se o detalhe ainda estiver aberto nesta thread.
+      if (shown && shown.thread_id === tid) {
+        const root = $("cp-thread");
+        if (root) {
+          const msgs = shown.mensagens || [];
+          root.innerHTML = msgs.map((m, i) => messageHTML(m, i, msgs.length, tid)).join("");
+          bindThread(root);
+          hydrateAvatars(root);
+        }
+      }
+    } catch (_) { /* silencioso */ }
+  }
   const avatars = {};
   const layout = () => document.body.dataset.layout;
   // Ícones: módulo compartilhado static/icons.js (o mesmo do /mail, /settings, /board).
@@ -86,13 +188,68 @@
     // Resolvido: duplo check em círculo, em verde (CSS .ic-check-circle-double)
     done: ic("check-circle-double"), reopen: ic("reopen"), thread: ic("thread"), summary: ic("summary"),
     gmail: ic("gmail"), mail: ic("mail"), reply: ic("reply"), send: ic("send"), spark: ic("sparkles"),
-    learn: ic("learn"), chat: ic("chat"), trash: ic("trash"), back: ic("back"),
+    learn: ic("learn"), chat: ic("chat"), trash: ic("trash"), back: ic("back"), refresh: ic("refresh"),
   };
   const ROLE_ICON = { so_copia: "role-copia", mencionado_opiniao: "role-opiniao", demanda: "role-demanda", fyi: "role-fyi", pode_ignorar: "role-ignorar" };
   // tip: texto do tooltip (padrão = label); off: desabilitado mas com tooltip
   // (aria-disabled em vez de disabled, senão o navegador não mostra o hover).
   const iconBtn = (act, label, icon, extra = "", tip = "", off = false) =>
     `<button type="button" class="cp-btn cp-icon-act${act === "acompanhar" || act === "assumir" ? " primary" : ""}${off ? " is-off" : ""}" data-act="${act}" title="${esc(tip || label)}" aria-label="${esc(tip || label)}"${off ? ' aria-disabled="true"' : ""} ${extra}>${icon}<span class="cp-icon-tip">${esc(tip || label)}</span></button>`;
+  // "Responder com IA": CTA primário (fundo accent, ícone + texto) no card
+  // "O que eu faria" e fixo na barra inferior; no celular vira pílula larga.
+  const aiReplyBtn = (attrs, icon, primary) =>
+    `<button type="button" class="cp-btn cp-icon-act cp-ai-act${primary ? " primary" : ""}" ${attrs} title="Responder com IA (conversar com a IA e escrever o rascunho)" aria-label="Responder com IA">${icon}<span class="cp-ai-t">Responder com IA</span></button>`;
+
+  // Ações rápidas no card compacto (lista/kanban): mesmo resolver (marca lido +
+  // tira do quadro) e o mesmo Delegar do detalhe, sem abrir o detalhe antes.
+  function cardActsHTML(it) {
+    if (it.status === "resolvido") return "";
+    return `<div class="cp-card-acts" role="group" aria-label="Ações rápidas">
+      <button type="button" class="cp-card-act" data-card-act="resolver" title="Marcar como lido" aria-label="Marcar como lido">${ICO.done}</button>
+      <button type="button" class="cp-card-act" data-card-act="delegar" title="Delegar" aria-label="Delegar (passar para outra pessoa)">${ICO.share}</button>
+    </div>`;
+  }
+  function findCardItem(id) {
+    return (data.items || []).find((i) => i.thread_id === id)
+      || (hist || []).find((i) => i.thread_id === id)
+      || (found || []).find((i) => i.thread_id === id)
+      || (shown && shown.thread_id === id ? shown : null);
+  }
+  async function runCardAct(btn) {
+    const card = btn.closest("[data-id]");
+    if (!card || btn.getAttribute("aria-disabled") === "true") return;
+    const id = card.dataset.id;
+    const action = btn.dataset.cardAct;
+    let it = findCardItem(id);
+    if (!it) return;
+    if (action === "delegar") {
+      // lista/kanban não traz originarios: busca o detalhe só pra rotular o Cc
+      if (!Array.isArray(it.originarios)) {
+        btn.setAttribute("aria-disabled", "true");
+        const r = await api(`/api/copilot/${encodeURIComponent(id)}`);
+        btn.removeAttribute("aria-disabled");
+        if (!r.ok) { toast(r.data.detail || "Não deu certo."); return; }
+        it = r.data;
+      }
+      openDelegate(it);
+      return;
+    }
+    if (action === "resolver") {
+      btn.setAttribute("aria-disabled", "true");
+      card.classList.add("pending");
+      await act(it, "resolver");
+    }
+  }
+  // Clique/tecla em ação do card: não abre o detalhe.
+  function handleCardActEvent(e) {
+    const btn = e.target.closest("[data-card-act]");
+    if (!btn) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "keydown" && e.key !== "Enter" && e.key !== " ") return true;
+    runCardAct(btn);
+    return true;
+  }
 
   // A IA precisa ler? (não leu, ou chegou mensagem nova). Propaganda,
   // credencial e corpo ilegível ficam com a leitura por regra de propósito.
@@ -111,6 +268,7 @@
   }
 
   // ── fila "Analisando": o que a IA ainda não leu fica fora das colunas ──
+  const FILA_KEY = "analisando";
   const queueItems = () => data.items.filter((i) => i.pendente);
   function queueChip(it) {
     const job = data.job || {};
@@ -133,18 +291,19 @@
     box.classList.remove("hidden");
     box.innerHTML = `<button type="button" class="cp-queue-h" id="cp-queue-tog" aria-expanded="${queueOpen}">
         <span>${queueHead(items)}</span><small>${queueOpen ? "esconder" : "a IA ainda não leu — ver"}</small></button>
-      ${queueOpen ? `<ul class="cp-queue-list">${items.map(qcardHTML).join("")}</ul>` : ""}`;
+      ${queueOpen ? `<div class="cp-queue-acts">${resolveAllBtn(FILA_KEY)}</div><ul class="cp-queue-list">${items.map(qcardHTML).join("")}</ul>` : ""}`;
     $("cp-queue-tog").onclick = () => { queueOpen = !queueOpen; sessionStorage.setItem("cp_queue_open", queueOpen ? "1" : "0"); renderQueueList(); };
   }
   function queueStripHTML() {
     const items = queueItems();
     if (!items.length) return "";
     return `<section class="cp-qstrip" aria-label="Analisando">
-      <header><h2>${queueHead(items)}</h2><p>A IA ainda não leu: cada um entra na coluna certa quando a leitura terminar.</p></header>
+      <header><h2>${queueHead(items)}</h2>${resolveAllBtn(FILA_KEY)}<p>A IA ainda não leu: cada um entra na coluna certa quando a leitura terminar.</p></header>
       <ul class="cp-qstrip-list">${items.map(qcardHTML).join("")}</ul></section>`;
   }
   function bindQueue(root) {
     root.addEventListener("click", (e) => {
+      if (handleResolveAll(e)) return;
       const retry = e.target.closest("[data-retry]");
       if (retry) { e.stopPropagation(); readNow(retry.dataset.retry, true); return; }
       const c = e.target.closest(".cp-qcard");
@@ -255,16 +414,46 @@
     else if (answeredBy(it)) chips.push(`<span class="cp-chip soft ok">${esc(answeredBy(it))}</span>`);
     const ai = aiChip(it);
     if (ai) chips.push(ai);
+    if (query) chips.push(`<span class="cp-chip soft">${it.is_unread ? "não lido" : "lido"}</span>`); // busca mistura lidos e não lidos
     const bola = it.bola ? ballAvatarHTML(it) : "";
     return `<li class="cp-item u-${it.urgencia}${current === it.thread_id ? " sel" : ""}" data-id="${esc(it.thread_id)}" tabindex="0">
-      <div class="cp-item-main"><h3>${esc(it.subject)}</h3><p>${esc(it.o_que_aconteceu || it.from_name)}</p><div class="cp-meta">${chips.join("")}</div></div>${bola}</li>`;
+      <div class="cp-item-main"><h3>${esc(it.subject)}</h3><p>${esc(it.o_que_aconteceu || it.from_name)}</p><div class="cp-meta">${chips.join("")}</div>${cardActsHTML(it)}</div>${bola}</li>`;
   }
   const emptyHTML = () => `<li class="cp-empty">${data.show_all ? "Nada por aqui." : "Nenhum não lido aqui."} 🌿</li>`;
   // ── views: Quadro | Resolvidos | Marcados como lido ──
   const histKey = (i) => (i.status === "resolvido" ? "resolvido" : !i.is_unread && i.no_copiloto && !i.pendente ? "lidos" : "");
   // cabeçalho pastel + contador + subtítulo (o mesmo das colunas do quadro)
-  const secHead = (title, n, hint, color, tag = "h2") =>
-    `<header class="cp-col-h h-${color}"><${tag}>${esc(title)}${n == null ? "" : `<b>${n}</b>`}</${tag}>${hint ? `<p>${esc(hint)}</p>` : ""}</header>`;
+  const secHead = (title, n, hint, color, tag = "h2", act = "") =>
+    `<header class="cp-col-h h-${color}"><div class="cp-col-hrow"><${tag}>${esc(title)}${n == null ? "" : `<b>${n}</b>`}</${tag}>${act}</div>${hint ? `<p>${esc(hint)}</p>` : ""}</header>`;
+  // ── "Resolver todos" da coluna: o mesmo Resolvido de cada cartão (resolvido +
+  // lido no Gmail), num lote só no servidor. Não envia e-mail. Só no quadro.
+  const RESOLVE_ALL_TIP = "Marcar todos desta coluna como resolvidos (lidos no Gmail)";
+  const columnIds = (key) => data.items.filter((i) => i.tab === key && i.status !== "resolvido").map((i) => i.thread_id);
+  function resolveAllBtn(key) {
+    if (query || mode !== "quadro" || !columnIds(key).length) return "";
+    return `<button type="button" class="cp-resolve-all" data-resolve-col="${esc(key)}" title="${RESOLVE_ALL_TIP}" aria-label="${RESOLVE_ALL_TIP}">${ICO.done}<span>Resolver todos</span></button>`;
+  }
+  async function resolveColumn(btn) {
+    const key = btn.dataset.resolveCol;
+    const ids = columnIds(key);
+    if (!ids.length || btn.disabled) return;
+    if (!confirm(`Resolver ${ids.length} e-mail${ids.length === 1 ? "" : "s"} desta coluna? Serão marcados como lidos no Gmail.`)) return;
+    btn.disabled = true;
+    const r = await api("/api/copilot/resolve-column", "POST", { tab: key, thread_ids: ids });
+    if (!r.ok) { btn.disabled = false; toast(r.data.detail || "Não deu certo."); return; }
+    const n = r.data.resolvidos || 0;
+    toast(`${n} resolvido${n === 1 ? "" : "s"}.${r.data.gmail_ok === false ? " Não consegui marcar como lido no Gmail (reautorize o Gmail)." : ""}`);
+    if (current && (r.data.thread_ids || []).includes(current)) closeDetail();
+    load();
+  }
+  function handleResolveAll(e) {
+    const btn = e.target.closest("[data-resolve-col]");
+    if (!btn) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    resolveColumn(btn);
+    return true;
+  }
   function renderModes() {
     const counts = Object.fromEntries((data.historico || []).map((h) => [h.key, h.count]));
     const board = (data.tabs || []).reduce((a, t) => a + t.count, 0) + ((data.fila && data.fila.count) || 0);
@@ -296,14 +485,62 @@
     if (mode === "quadro") renderList();
     else { $("cp-hist").innerHTML = '<p class="cp-empty">Carregando…</p>'; load(); }
   }
+  // ── busca: filtro por cima de quadro/histórico, olhando lidos e resolvidos ──
+  let query = sessionStorage.getItem("cp_q") || "";
+  let found = null; // itens de /api/copilot?all=1&q= (null = ainda buscando)
+  let searchSeq = 0;
+  let searchTimer = null;
+  const FOUND_GROUPS = [
+    { key: "precisa_de_voce", title: "Precisa de você", color: "peach" },
+    { key: "bola_com_outros", title: "Aguardando outras pessoas", color: "lilac" },
+    { key: "so_conhecimento", title: "Só conhecimento", color: "sky" },
+    { key: "analisando", title: "Analisando", color: "fog" },
+    { key: "resolvido", title: "Resolvidos", color: "mint" },
+  ];
+  function renderSearch() {
+    const box = $("cp-found");
+    if (found == null) { box.innerHTML = '<p class="cp-empty">Buscando…</p>'; return; }
+    const head = `<p class="cp-found-h">${found.length} resultado${found.length === 1 ? "" : "s"} para “${esc(query)}” · inclui lidos e resolvidos</p>`;
+    if (!found.length) { box.innerHTML = `${head}<p class="cp-empty">Nada encontrado. Tente outra palavra do assunto ou o nome de quem mandou.</p>`; return; }
+    const secs = FOUND_GROUPS.map((g) => ({ ...g, items: found.filter((i) => i.tab === g.key) })).filter((s) => s.items.length);
+    box.innerHTML = head + `<div class="cp-hsecs">${secs
+      .map((s) => `<section class="cp-hsec" aria-label="${esc(s.title)}">${secHead(s.title, s.items.length, "", s.color)}
+        <ul class="cp-list cp-hlist">${s.items.map(itemHTML).join("")}</ul></section>`)
+      .join("")}</div>`;
+    hydrateAvatars(box);
+  }
+  async function runSearch() {
+    const q = query;
+    const seq = ++searchSeq;
+    if (!q) { found = null; return; }
+    const r = await api(`/api/copilot?all=1&q=${encodeURIComponent(q)}`);
+    if (seq !== searchSeq || q !== query) return; // digitou de novo enquanto buscava
+    found = r.ok ? r.data.items || [] : [];
+    if (!r.ok) toast(r.data.detail || "Falha na busca.");
+    renderList();
+  }
+  function setQuery(next) {
+    next = (next || "").replace(/\s+/g, " ").trim();
+    $("cp-q-x").classList.toggle("hidden", !$("cp-q").value);
+    if (next === query) return;
+    query = next;
+    sessionStorage.setItem("cp_q", query);
+    document.body.dataset.search = query ? "1" : "";
+    found = null;
+    clearTimeout(searchTimer);
+    renderList();
+    if (query) searchTimer = setTimeout(runSearch, 250);
+  }
   function renderList() {
+    if (query) { renderSearch(); return; }
     if (mode !== "quadro") { renderHistory(); return; }
     if (layout() === "kanban") { renderBoard(); return; }
     if (!data.tabs.some((t) => t.key === tab)) tab = "precisa_de_voce";
     renderTabs();
     renderQueueList();
     const items = data.items.filter((i) => i.tab === tab);
-    $("cp-list").innerHTML = items.length ? items.map(itemHTML).join("") : emptyHTML();
+    const all = resolveAllBtn(tab);
+    $("cp-list").innerHTML = items.length ? (all ? `<li class="cp-list-acts">${all}</li>` : "") + items.map(itemHTML).join("") : emptyHTML();
     hydrateAvatars($("cp-list"));
   }
 
@@ -328,7 +565,7 @@
     return `<li class="cp-kcard u-${it.urgencia}${current === it.thread_id ? " sel" : ""}" draggable="true" data-id="${esc(it.thread_id)}" tabindex="0">
       <div class="cp-k-top"><h3>${esc(it.subject)}</h3>${bola}</div>
       ${from ? `<div class="cp-k-from">${esc(from)}</div>` : ""}${layers}
-      ${meta.length ? `<div class="cp-k-meta">${meta.join("")}</div>` : ""}</li>`;
+      ${meta.length ? `<div class="cp-k-meta">${meta.join("")}</div>` : ""}${cardActsHTML(it)}</li>`;
   }
   function renderBoard() {
     const board = $("cp-board");
@@ -342,7 +579,7 @@
       .map((t) => {
         const items = data.items.filter((i) => i.tab === t.key);
         return `<section class="cp-col t-${t.key}" data-col="${t.key}" aria-label="${esc(t.title)}">
-          ${secHead(t.title, items.length, COL_HINT[t.key] || "", COL_COLOR[t.key] || "fog")}
+          ${secHead(t.title, items.length, COL_HINT[t.key] || "", COL_COLOR[t.key] || "fog", "h2", resolveAllBtn(t.key))}
           <ul class="cp-col-list">${items.length ? items.map(kcardHTML).join("") : emptyHTML()}</ul></section>`;
       })
       .join("");
@@ -369,6 +606,7 @@
     const board = $("cp-board");
     let dragId = null;
     board.addEventListener("dragstart", (e) => {
+      if (e.target.closest("[data-card-act],button,a,input")) { e.preventDefault(); return; }
       const card = e.target.closest(".cp-kcard");
       if (!card) return;
       dragId = card.dataset.id;
@@ -399,8 +637,16 @@
       col.classList.remove("over");
       moveTo(dragId, col.dataset.col);
     });
-    board.addEventListener("click", (e) => { const c = e.target.closest(".cp-kcard"); if (c) open(c.dataset.id); });
-    board.addEventListener("keydown", (e) => { const c = e.target.closest(".cp-kcard"); if (c && e.key === "Enter") open(c.dataset.id); });
+    board.addEventListener("click", (e) => {
+      if (handleResolveAll(e) || handleCardActEvent(e)) return;
+      const c = e.target.closest(".cp-kcard");
+      if (c) open(c.dataset.id);
+    });
+    board.addEventListener("keydown", (e) => {
+      if (handleCardActEvent(e)) return;
+      const c = e.target.closest(".cp-kcard");
+      if (c && e.key === "Enter") open(c.dataset.id);
+    });
     bindQueue(board);
   }
 
@@ -429,6 +675,7 @@
     $("cp-n-hoje").textContent = data.cards.hoje;
     $("cp-n-esp").textContent = data.cards.esperando_outros;
     renderList();
+    if (query) runSearch(); // ação feita com a busca aberta: resultados refletem o estado novo
     showJob(data.job);
     // o lote acabou de ler o item aberto: atualiza o detalhe sem o Leo pedir
     if (shown && current === shown.thread_id && $("cp-detail").classList.contains("open") && !readingNow.has(current)) {
@@ -562,11 +809,18 @@
     if (!raw || isNaN(d)) return raw || "";
     return d.toLocaleString("pt-BR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
   }
-  function messageHTML(m, i, n) {
+  function messageHTML(m, i, n, tid) {
     const { name, email } = parseFrom(m.de);
     const { main, quoted } = splitQuoted(m.texto || "");
     const last = i === n - 1;
-    return `<div class="msg-card${last ? " open" : ""}">
+    const threadId = tid || (shown && shown.thread_id) || "";
+    let att = "";
+    if (gmailAtt.tid === threadId && gmailAtt.message_ids.length) {
+      const msgId = gmailAtt.message_ids[i];
+      const files = msgId ? gmailAtt.files.filter((f) => f.message_id === msgId) : [];
+      att = inboundAttHTML(threadId, files);
+    }
+    return `<div class="msg-card${last ? " open" : ""}" data-idx="${i}">
       <div class="msg-head" role="button" tabindex="0" aria-expanded="${last}">
         ${avatarHTML(email, name, "sm", false)}
         <span class="msg-from">${esc(name || "—")}${email && email !== name.toLowerCase() ? ` <small>&lt;${esc(email)}&gt;</small>` : ""}</span>
@@ -574,7 +828,7 @@
         <span class="msg-date">${esc(fmtDate(m.data))}</span>
       </div>
       <div class="msg-text">${linkify(main)}${quoted ? `<div class="quote-toggle-row"><button type="button" class="quote-toggle">Ver texto completo</button></div>
-        <div class="msg-quoted hidden">${linkify(quoted)}</div>` : ""}</div></div>`;
+        <div class="msg-quoted hidden">${linkify(quoted)}</div>` : ""}</div>${att}</div>`;
   }
   function bindThread(root) {
     const toggleQuote = (card, show) => {
@@ -675,6 +929,7 @@
         ${!it.analisado && !it.lido_por_regra ? `<p class="cp-from">${reading ? "Resumo provisório: a IA está lendo…" : "Resumo provisório, pela regra."}</p>` : ""}</div></div>`;
     const head = headLine(it, ballLabel);
     const cobrarOk = it.bola.com === "outros" || !!(it.delegado && it.delegado.para);
+    const rereadTip = reading ? "Lendo…" : it.analisado ? "Ler de novo (reanalisar o e-mail)" : "Pedir leitura da IA (analisar o e-mail)";
     box.innerHTML = `<div class="cp-dbody">
       <div class="cp-dtop"><button type="button" class="cp-icon cp-back${page ? " cp-back-page" : ""}" id="cp-back" aria-label="${page ? "Voltar ao quadro" : layout() === "lista" ? "Fechar" : "Voltar à lista"}">${page ? `${ICO.back}<span>Copiloto</span>` : "←"}</button>
         <h2>${esc(it.subject)}</h2>${ballAvatarHTML(it, true)}</div>
@@ -692,15 +947,16 @@
           : it.analisado || it.lido_por_regra ? "Nada a sugerir: não pede ação sua."
           : data.llm ? "A leitura da IA falhou; peça de novo." : "Sem chave de IA: só a leitura por regra."}</p>` : ""}
         <div class="cp-row">
-          <button type="button" class="cp-btn cp-icon-act" id="cp-reread" title="${reading ? "Lendo…" : it.analisado ? "Ler de novo" : "Pedir leitura da IA"}" aria-label="${reading ? "Lendo…" : it.analisado ? "Ler de novo" : "Pedir leitura da IA"}" ${readingNow.has(it.thread_id) ? "disabled" : ""}>${ICO.spark}<span class="cp-icon-tip">${reading ? "Lendo…" : it.analisado ? "Ler de novo" : "Pedir leitura da IA"}</span></button>
+          ${aiReplyBtn('id="cp-ai-reply"', ICO.spark, true)}
+          <button type="button" class="cp-btn cp-icon-act" id="cp-reread" title="${rereadTip}" aria-label="${rereadTip}" ${readingNow.has(it.thread_id) ? "disabled" : ""}>${ICO.refresh}<span class="cp-icon-tip">${rereadTip}</span></button>
           <a class="cp-btn cp-icon-act" href="/mail/${encodeURIComponent(it.thread_id)}" style="text-decoration:none" title="Abrir e-mail" aria-label="Abrir e-mail">${ICO.mail}<span class="cp-icon-tip">Abrir e-mail</span></a>
-          <a class="cp-btn cp-icon-act" href="${esc(gmailThreadUrl(it.thread_id))}" target="_blank" rel="noopener" style="text-decoration:none" title="Abrir no Gmail" aria-label="Abrir no Gmail">${ICO.gmail}<span class="cp-icon-tip">Abrir no Gmail</span></a>
+          <a class="cp-btn cp-icon-act" href="${esc(gmailThreadUrl(it.thread_id))}" target="_blank" rel="noopener" style="text-decoration:none" title="Abrir no Gmail (o próprio Gmail marca como lido ao abrir lá)" aria-label="Abrir no Gmail">${ICO.gmail}<span class="cp-icon-tip">Abrir no Gmail · lá ele marca como lido</span></a>
         </div></div></div>
       ${outboxHTML(it)}
       ${replyHTML(it)}
       ${msgs.length ? `<div class="cp-block cp-block-h" id="cp-thread-block">
         <div class="cp-sec cp-sec-tog" id="cp-thread-tog" role="button" tabindex="0" aria-expanded="${threadOpen}" aria-controls="cp-thread">${secHead("Conversa completa", msgs.length, threadOpen ? "Clique numa mensagem para abrir ou recolher." : "Mostrar a thread inteira", "sky", "h3")}</div>
-        <div class="cp-thread${threadOpen ? "" : " hidden"}" id="cp-thread">${msgs.map((m, i) => messageHTML(m, i, msgs.length)).join("")}</div></div>` : ""}
+        <div class="cp-thread${threadOpen ? "" : " hidden"}" id="cp-thread">${msgs.map((m, i) => messageHTML(m, i, msgs.length, it.thread_id)).join("")}</div></div>` : ""}
       </div><div class="cp-dside">
       ${side ? layer2 : ""}
       ${showTasks ? `<div class="cp-block"><div class="cp-lbl">Tarefas</div><ul class="cp-tasks">${it.tarefas
@@ -712,7 +968,7 @@
         .join("")}</ul></div>` : ""}
       </div></div>
       <div class="cp-actions">
-        ${iconBtn("responder", "Responder", ICO.reply)}
+        ${!reply || !reply.open ? ((knownDraftText(it) || (reply && reply.draftLoading)) ? `<span class="cmp-draft-chip${reply && reply.draftLoading && !knownDraftText(it) ? " loading" : ""}" id="cp-draft-chip-bar" role="status">Rascunho salvo</span>` : "") : ""}
         ${iconBtn("acompanhar", "Acompanhar", ICO.eye)}
         ${cobrarOk ? iconBtn("cobrar", "Cobrar", ICO.bell, "", "Cobrar (prepara um rascunho, nada é enviado)") : iconBtn("cobrar", "Cobrar", ICO.bellOff, "", `Cobrar indisponível: ${cobrarOffReason(it)}`, true)}
         ${iconBtn("delegar", "Delegar", ICO.share, "", "Delegar (passar para outra pessoa)")}
@@ -720,6 +976,7 @@
         ${it.status === "resolvido"
           ? iconBtn("reabrir", "Reabrir", ICO.reopen)
           : iconBtn("resolver", "Resolvido", ICO.done, "", "Resolvido (marca como lido no Gmail)")}
+        ${aiReplyBtn('data-act="responder"', ICO.spark, true)}
       </div></div>`;
     box.classList.add("open");
     document.body.classList.toggle("cp-page", page);
@@ -727,6 +984,7 @@
     hydrateAvatars(box);
     $("cp-back").onclick = closeDetail;
     $("cp-reread").onclick = () => readNow(it.thread_id, true);
+    $("cp-ai-reply").onclick = () => openAiReply(it);
     const sumTog = $("cp-summary-tog");
     if (sumTog) sumTog.onclick = () => {
       summaryOpen = !summaryOpen;
@@ -752,10 +1010,11 @@
     box.querySelectorAll("[data-act]").forEach((b) => (b.onclick = () => (
       b.getAttribute("aria-disabled") === "true" ? toast(b.getAttribute("aria-label"))
       : b.dataset.act === "delegar" ? openDelegate(it)
-        : b.dataset.act === "responder" ? openReply(it)
+        : b.dataset.act === "responder" ? openAiReply(it)
           : b.dataset.act === "aprender" ? openLearn(it)
             : act(it, b.dataset.act))));
     bindReply(it);
+    if (msgs.length) loadGmailAttachments(it.thread_id);
     box.querySelectorAll("[data-outbox-cancel]").forEach((b) => (b.onclick = async () => {
       if (!window.confirm("Cancelar este envio? O texto não será enviado.")) return;
       b.disabled = true;
@@ -773,13 +1032,19 @@
 
   // ── responder: rascunho da IA (o mesmo do /mail) + envio com confirmação ──
   function syncReply(it) {
-    const draft = it.draft || "";
+    const cached = (window.DraftPersist && window.DraftPersist.cacheGet(it.thread_id)) || "";
+    const draft = (it.draft && it.draft.trim()) ? it.draft : (cached || "");
+    const waiting = !!(it._draftPending && !draft);
     if (!reply || reply.tid !== it.thread_id) {
       reply = { tid: it.thread_id, open: false, text: draft, aiText: draft, instr: "", extraCc: [], all: true, recipients: null, busy: false, status: "",
-        chat: Array.isArray(it.chat) ? it.chat.slice() : [], pending: "", chatOpen: true };
+        chat: Array.isArray(it.chat) ? it.chat.slice() : [], pending: "", chatOpen: true, draftLoading: waiting, files: [], hint: "", ask: "" };
+      if (draft && window.DraftPersist) window.DraftPersist.remember(it.thread_id, draft);
     } else if (!reply.busy && draft && draft !== reply.aiText && reply.text === reply.aiText) {
       // rascunho novo no servidor (Aplicar, /mail) e o texto não foi editado aqui
-      reply.text = draft; reply.aiText = draft;
+      reply.text = draft; reply.aiText = draft; reply.draftLoading = false;
+      if (window.DraftPersist) window.DraftPersist.remember(it.thread_id, draft);
+    } else if (draft) {
+      reply.draftLoading = false;
     }
     // conversa com a IA mais nova no servidor (gerada no /mail, Aplicar…)
     if (!reply.busy && Array.isArray(it.chat) && it.chat.length > reply.chat.length) reply.chat = it.chat.slice();
@@ -815,7 +1080,6 @@
   function replyHTML(it) {
     if (!reply || !reply.open) return "";
     const cc = replyCc(it);
-    const edited = reply.text.trim() && reply.text !== reply.aiText;
     const sendTip = canSend ? "Enviar (pede confirmação)" : "Reautorize o Gmail (Entrar no Gmail) para poder enviar.";
     const nChat = (reply.chat || []).filter((m) => !m.placeholder && !m.typing).length;
     return `<div class="cp-block cp-block-h cp-reply" id="cp-reply">
@@ -826,26 +1090,41 @@
           <button type="button" data-rmode="all" class="${reply.all ? "on" : ""}">Responder a todos</button>
         </div>
         <p class="cmp-rcpt cp-rcpt"><b>Para:</b> ${esc(replyTo(it) || "?")}${cc ? `<br><b>Cc:</b> ${esc(cc)}` : reply.recipients ? " · sem cópia" : " · carregando cópias…"}</p>
+        <div class="cmp-attach-list attach-list${(reply.files || []).length ? "" : " hidden"}" id="cp-attach-list">${window.Composer ? window.Composer.attachChipsHTML(reply.files || []) : ""}</div>
         <details class="cmp-chat" id="cp-chat-box" ${reply.chatOpen ? "open" : ""}>
           <summary>${ic("chat", { size: 15 })}Conversa com a IA <b>${nChat}</b></summary>
           <div id="cp-chat" class="chat-messages"></div>
         </details>
-        <textarea id="cp-reply-text" class="cmp-draft cp-reply-text" rows="9" placeholder="${reply.busy ? "A IA está escrevendo…" : "Escreva a resposta ou peça um rascunho à IA."}" ${reply.busy ? "disabled" : ""}>${esc(reply.text)}</textarea>
-        <p class="cmp-status" id="cp-reply-status" role="status">${esc(reply.busy ? "Gerando rascunho…" : reply.status || (edited ? "Editado por você." : reply.text ? "Sugestão da IA." : ""))}</p>
         <div class="cmp-instr">
-          <label for="cp-reply-instr">Ideia principal / instrução para a IA</label>
+          <label for="cp-reply-instr">${ic("sparkles", { size: 14 })}Peça à IA <small>(não vai no e-mail)</small></label>
+          ${reply.ask ? `<p class="cmp-hint cp-ai-ask">A IA precisa de contexto: <b>${esc(reply.ask)}</b></p>` : ""}
           <div class="cmp-annots" id="cp-annots">${annotsHTML()}</div>
           <div class="cmp-instr-row">
-            <textarea id="cp-reply-instr" rows="1" placeholder="Diga o que quer responder ou pergunte algo à IA…" ${reply.busy ? "disabled" : ""}>${esc(reply.instr)}</textarea>
-            <button type="button" class="cmp-gen" id="cp-reply-gen" title="${reply.text.trim() ? "Ajustar o rascunho com a instrução" : "Gerar o rascunho com a instrução"}" ${genReady() ? "" : "disabled"}>${ic("sparkles", { size: 16 })}<span>${reply.text.trim() ? "Ajustar" : "Gerar"}</span></button>
+            <textarea id="cp-reply-instr" rows="1" placeholder="${esc(reply.hint || (reply.text.trim() ? FOLLOW_UP_HINT : "Peça à IA: ex. diga que posso hoje às 14h…"))}" title="Enter gera · Shift+Enter quebra linha · selecione um trecho do e-mail ou do rascunho para citar" ${reply.busy ? "disabled" : ""}>${esc(reply.instr)}</textarea>
+            ${genBtnHTML()}
           </div>
         </div>
-        <p class="cmp-hint">Enter gera · Shift+Enter quebra linha · selecione um trecho do e-mail ou do rascunho para citar · perguntas viram resposta na conversa.</p>
+        <div class="cmp-instr-sug${instrSuggest() ? "" : " hidden"}" id="cp-instr-sug" role="status">
+          <span>Isso parece uma instrução — usar como pedido à IA?</span>
+          <button type="button" class="cmp-sug-yes" id="cp-instr-sug-yes">${ic("sparkles", { size: 14 })}Usar como pedido e gerar</button>
+          <button type="button" class="cmp-sug-no" id="cp-instr-sug-no" aria-label="Não, é o texto do e-mail">Não</button>
+        </div>
+        <div class="cmp-draft-head">
+          <label for="cp-reply-text">Rascunho do e-mail <small>(vai ser enviado)</small></label>
+          ${(reply.text.trim() || reply.draftLoading) ? `<span class="cmp-draft-chip${reply.draftLoading && !reply.text.trim() ? " loading" : ""}" id="cp-draft-chip" role="status">Rascunho salvo</span>` : ""}
+        </div>
+        <div class="cmp-draft-wrap${reply.draftLoading && !reply.text.trim() ? " loading" : ""}" id="cp-draft-wrap">
+          <textarea id="cp-reply-text" class="cmp-draft cp-reply-text" rows="9" placeholder="${reply.busy ? "A IA está escrevendo…" : reply.draftLoading ? "Carregando rascunho salvo…" : "O texto que vai para o destinatário. Para pedir algo à IA, use o campo acima."}" ${reply.busy ? "disabled" : ""}>${esc(reply.text)}</textarea>
+          <div class="cmp-draft-skel" aria-hidden="true"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div>
+        </div>
+        <p class="cmp-status" id="cp-reply-status" role="status">${esc(reply.busy ? "Gerando rascunho…" : reply.draftLoading && !reply.text.trim() ? "Carregando rascunho salvo…" : reply.status)}</p>
         <div class="cmp-tools">
           <button type="button" class="cmp-tool" id="cp-reply-regen" title="Regenerar (sem instrução)" aria-label="Regenerar" ${reply.busy ? "disabled" : ""}>${ic("refresh", { size: 18 })}</button>
           <button type="button" class="cmp-tool" id="cp-reply-learn" title="Aprender" aria-label="Aprender">${ic("learn", { size: 18 })}</button>
           <button type="button" class="cmp-tool" id="cp-chat-reset" title="Limpar a conversa com a IA e o rascunho" aria-label="Limpar conversa" ${reply.busy || (!nChat && !reply.text.trim()) ? "disabled" : ""}>${ic("trash", { size: 18 })}</button>
-          <a class="cmp-tool" href="/mail/${encodeURIComponent(it.thread_id)}" title="Abrir no /mail (anexos, exportar contexto)" aria-label="Abrir no /mail">${ic("mail", { size: 18 })}</a>
+          <button type="button" class="cmp-tool" id="cp-reply-attach" title="Anexar arquivo (vai no envio e a IA vê o conteúdo quando der)" aria-label="Anexar arquivo" ${reply.busy ? "disabled" : ""}>${ic("attach", { size: 18 })}</button>
+          <input type="file" id="cp-reply-file" multiple hidden />
+          <a class="cmp-tool" href="/mail/${encodeURIComponent(it.thread_id)}" title="Abrir no /mail (exportar contexto)" aria-label="Abrir no /mail">${ic("mail", { size: 18 })}</a>
           <div class="cmp-sendwrap">
             <button type="button" class="cmp-send cp-reply-send" id="cp-reply-send" title="${esc(sendTip)}" ${canSend && reply.text.trim() && !reply.busy ? "" : "disabled"}>${ic("send", { size: 17 })}<span>Enviar…</span></button>
           </div>
@@ -868,14 +1147,65 @@
       onUseDraft: (text) => { reply.text = text; reply.aiText = text; reply.status = "Versão anterior do rascunho na caixa."; renderDetail(shown); },
     });
   }
+  async function loadReplyAttachments(tid) {
+    if (!reply || reply.tid !== tid) return;
+    const r = await api(`/api/threads/${encodeURIComponent(tid)}/attachments`);
+    if (!reply || reply.tid !== tid) return;
+    reply.files = r.ok ? (r.data.files || []) : [];
+    const box = $("cp-attach-list");
+    if (!box) return;
+    box.classList.toggle("hidden", !reply.files.length);
+    box.innerHTML = window.Composer ? window.Composer.attachChipsHTML(reply.files) : "";
+    bindAttachChips(tid);
+  }
+  function bindAttachChips(tid) {
+    const box = $("cp-attach-list");
+    if (!box) return;
+    box.querySelectorAll("[data-attach-rm]").forEach((btn) => {
+      btn.onclick = async () => {
+        await api(`/api/threads/${encodeURIComponent(tid)}/attachments/${encodeURIComponent(btn.dataset.attachRm)}`, "DELETE");
+        loadReplyAttachments(tid);
+      };
+    });
+    box.querySelectorAll("[data-attach-insert]").forEach((btn) => {
+      btn.onclick = () => {
+        const ta = $("cp-reply-text");
+        if (window.Composer && ta) window.Composer.insertAttachRef(ta, btn.dataset.attachInsert);
+        if (ta) { reply.text = ta.value; $("cp-reply-send").disabled = !(canSend && reply.text.trim()); }
+      };
+    });
+  }
+  async function uploadReplyFiles(tid, fileList) {
+    const files = [...(fileList || [])];
+    if (!files.length) return;
+    for (const file of files) {
+      const form = new FormData();
+      form.append("file", file);
+      try {
+        await fetch(`/api/threads/${encodeURIComponent(tid)}/attachments`, { method: "POST", body: form });
+      } catch (_) { toast("Falha ao anexar " + (file.name || "arquivo") + "."); }
+    }
+    await loadReplyAttachments(tid);
+  }
   function bindReply(it) {
     if (!reply || !reply.open || !$("cp-reply")) return;
     const ta = $("cp-reply-text");
     ta.oninput = () => {
-      reply.text = ta.value; reply.status = "";
+      reply.text = ta.value; reply.status = ""; reply.draftLoading = false;
       $("cp-reply-send").disabled = !(canSend && reply.text.trim());
-      $("cp-reply-status").textContent = reply.text.trim() && reply.text !== reply.aiText ? "Editado por você." : "";
+      $("cp-reply-status").textContent = "";
+      syncGen();
+      if (window.DraftPersist) window.DraftPersist.schedule(reply.tid, reply.text);
     };
+    // "Isso parece uma instrução": o texto vai para o campo da IA, a caixa volta
+    // ao último rascunho da IA (ou vazia) e gera. Nada é enviado.
+    $("cp-instr-sug-yes").onclick = () => {
+      reply.instr = reply.text.trim();
+      reply.text = reply.aiText || "";
+      if (window.DraftPersist) window.DraftPersist.schedule(reply.tid, reply.text);
+      generate(it, true);
+    };
+    $("cp-instr-sug-no").onclick = () => { reply.sugOff = reply.text; syncGen(); };
     $("cp-reply").querySelectorAll("[data-rmode]").forEach((b) => (b.onclick = () => { reply.all = b.dataset.rmode === "all"; renderDetail(it); }));
     renderChatBox(it);
     $("cp-chat-box").ontoggle = () => { reply.chatOpen = $("cp-chat-box").open; };
@@ -883,7 +1213,8 @@
       if (!window.confirm("Limpar a conversa com a IA e o rascunho desta thread (também no /mail)?")) return;
       const r = await api(`/api/threads/${encodeURIComponent(it.thread_id)}/chat/reset`, "POST");
       if (!r.ok) { toast(r.data.detail || "Não deu para limpar."); return; }
-      reply.chat = []; reply.text = ""; reply.aiText = ""; reply.status = "Conversa limpa."; shown.draft = ""; shown.chat = [];
+      reply.chat = []; reply.text = ""; reply.aiText = ""; reply.status = "Conversa limpa."; reply.draftLoading = false; shown.draft = ""; shown.chat = [];
+      if (window.DraftPersist) window.DraftPersist.cacheClear(it.thread_id);
       annot.clear();
       renderDetail(shown);
     };
@@ -894,11 +1225,42 @@
     const instr = $("cp-reply-instr");
     const fit = () => { instr.style.height = "auto"; instr.style.height = `${Math.min(instr.scrollHeight, 200)}px`; };
     fit();
-    instr.oninput = () => { reply.instr = instr.value; fit(); $("cp-reply-gen").disabled = !genReady(); };
+    instr.oninput = () => { reply.instr = instr.value; fit(); syncGen(); };
     instr.onkeydown = (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (genReady()) generate(it, true); }
     };
-    $("cp-reply-gen").onclick = () => generate(it, true);
+    $("cp-reply-gen").onclick = () => {
+      if (genMode() === "instr") generate(it, true);
+      else if (genMode() === "improve") generate(it, true, { instruction: reply.text.trim(), currentDraft: reply.aiText });
+    };
+    // Anexos: mesmos endpoints do /mail (pasta draft-attachments).
+    const attachBtn = $("cp-reply-attach");
+    const fileInp = $("cp-reply-file");
+    if (attachBtn && fileInp) {
+      attachBtn.onclick = () => fileInp.click();
+      fileInp.onchange = async () => {
+        await uploadReplyFiles(it.thread_id, fileInp.files);
+        fileInp.value = "";
+      };
+    }
+    bindAttachChips(it.thread_id);
+    if (!reply.files || !reply.files.length) loadReplyAttachments(it.thread_id);
+    else bindAttachChips(it.thread_id);
+    // Colar imagem na instrução → vira anexo (texto puro não embute imagem).
+    instr.onpaste = async (e) => {
+      const items = [...(e.clipboardData ? e.clipboardData.items : [])];
+      const imgs = items.filter((x) => x.type.startsWith("image/"));
+      if (!imgs.length) return;
+      e.preventDefault();
+      const files = imgs.map((x, i) => {
+        const blob = x.getAsFile();
+        if (!blob) return null;
+        const ext = (blob.type || "").split("/")[1] || "png";
+        return new File([blob], `colado-${Date.now()}-${i}.${ext}`, { type: blob.type });
+      }).filter(Boolean);
+      await uploadReplyFiles(it.thread_id, files);
+      toast(files.length === 1 ? "Imagem anexada." : files.length + " imagens anexadas.");
+    };
   }
   // Chips numerados das citações: trecho curto + comentário; clicar edita, × remove
   // (os cliques são tratados no annotate.js via data-annot-open / data-annot-rm).
@@ -907,10 +1269,44 @@
   function renderAnnots() {
     const box = $("cp-annots");
     if (box) box.innerHTML = annotsHTML();
-    const gen = $("cp-reply-gen");
-    if (gen) gen.disabled = !genReady();
+    syncGen();
   }
+  const FOLLOW_UP_HINT = "Quer mudar algo? ex. mais curto, cite o CAF…";
   const genReady = () => !!reply && !reply.busy && !!(reply.instr.trim() || annot.count());
+  const draftEdited = () => !!reply && !!reply.text.trim() && reply.text !== reply.aiText;
+  // Botão da IA sempre visível: "Gerar"/"Ajustar" com texto no campo da IA;
+  // campo vazio mas rascunho editado → "Melhorar com IA" (o rascunho vira o pedido).
+  function genMode() {
+    if (!reply || reply.busy) return "off";
+    if (genReady()) return "instr";
+    return draftEdited() ? "improve" : "off";
+  }
+  function genLabel() {
+    if (reply && reply.busy) return [reply.text.trim() ? "Ajustando…" : "Gerando…", "A IA está escrevendo o rascunho"];
+    const mode = genMode();
+    if (mode === "improve") return ["Melhorar com IA", "Melhorar com IA: usa o texto do rascunho como pedido"];
+    return reply.text.trim() ? ["Ajustar", "Ajustar o rascunho com o pedido"] : ["Gerar", "Gerar o rascunho com o pedido"];
+  }
+  function genBtnHTML() {
+    const [label, tip] = genLabel();
+    return `<button type="button" class="cmp-gen${genMode() === "improve" ? " improve" : ""}${reply && reply.busy ? " busy" : ""}" id="cp-reply-gen" title="${esc(tip)}" ${genMode() === "off" ? "disabled" : ""}>${ic("sparkles", { size: 16 })}<span>${esc(label)}</span></button>`;
+  }
+  // Rascunho digitado com cara de pedido à IA (e o campo da IA vazio).
+  const instrSuggest = () => !!reply && !reply.busy && !reply.instr.trim() && draftEdited()
+    && reply.sugOff !== reply.text && !!(window.Composer && window.Composer.looksLikeInstruction(reply.text));
+  // Atualiza botão + chip sem re-renderizar (o foco/cursor continuam onde estão).
+  function syncGen() {
+    const gen = $("cp-reply-gen");
+    if (gen) {
+      const [label, tip] = genLabel();
+      gen.disabled = genMode() === "off";
+      gen.classList.toggle("improve", genMode() === "improve");
+      gen.title = tip;
+      gen.querySelector("span").textContent = label;
+    }
+    const sug = $("cp-instr-sug");
+    if (sug) sug.classList.toggle("hidden", !instrSuggest());
+  }
   async function loadRecipients(it) {
     if (reply.recipients) return;
     const r = await api(`/api/threads/${encodeURIComponent(it.thread_id)}/recipients`);
@@ -924,35 +1320,57 @@
     opts = opts || {};
     syncReply(it);
     reply.open = true;
-    if (opts.text) { reply.text = opts.text; reply.aiText = opts.text; reply.status = opts.status || ""; }
+    if (opts.text) { reply.text = opts.text; reply.aiText = opts.text; reply.status = opts.status || ""; reply.draftLoading = false; }
     if (opts.cc) reply.extraCc = opts.cc;
+    if (!reply.text.trim() && !opts.text) {
+      const known = knownDraftText(it);
+      if (known) { reply.text = known; reply.aiText = known; reply.draftLoading = false; }
+      else { reply.draftLoading = true; prefetchDraft(it); }
+    }
     renderDetail(shown && shown.thread_id === it.thread_id ? shown : it);
     loadRecipients(it);
     const box = $("cp-reply");
     if (box && !opts.noScroll) box.scrollIntoView({ behavior: "smooth", block: "start" });
-    if (!reply.text.trim() && !opts.noGenerate) regenerate(it);
+    if (!reply.text.trim() && !reply.draftLoading && !opts.noGenerate) regenerate(it);
+    else if (opts.focusInstr && $("cp-reply-instr")) $("cp-reply-instr").focus({ preventScroll: true });
     else if ($("cp-reply-text")) $("cp-reply-text").focus({ preventScroll: true });
+  }
+  // "Responder com IA" (card "O que eu faria" e barra inferior): abre o composer
+  // com a instrução focada. Se a IA precisa de contexto, não gera rascunho
+  // vazio: mostra a pergunta dela como dica e espera a ideia do Leo.
+  function openAiReply(it) {
+    if (!it.needs_context) { openReply(it, { focusInstr: true }); return; }
+    syncReply(it);
+    reply.hint = "Dê o contexto ou sua ideia e eu escrevo o rascunho";
+    reply.ask = it.pergunta || it.o_que_falta || "";
+    openReply(it, { focusInstr: true, noGenerate: true });
   }
   const regenerate = (it) => generate(it, false);
   // withInstruction=false: Regenerar (sem instrução). true: Gerar/Ajustar com a
   // ideia principal + citações numeradas (Annotate.compose, o mesmo texto do /mail).
-  async function generate(it, withInstruction) {
+  // o.instruction: "Melhorar com IA" -- o texto do rascunho vira o pedido e o
+  // último rascunho da IA (o.currentDraft) vai como "Rascunho anterior".
+  async function generate(it, withInstruction, o) {
     if (reply.busy) return;
-    const instruction = withInstruction ? window.Annotate.compose(reply.instr, annot.list()) : "";
+    o = o || {};
+    const fromDraft = !!o.instruction;
+    const instruction = fromDraft ? o.instruction : withInstruction ? window.Annotate.compose(reply.instr, annot.list()) : "";
     if (withInstruction && !instruction) return;
     const edited = reply.text.trim() && reply.text !== reply.aiText;
     const ask = withInstruction
       ? "A IA vai reescrever a partir do texto que você editou. Trocar o texto da caixa pelo resultado?"
       : "Trocar o texto que você editou por um rascunho novo da IA?";
-    if (edited && !window.confirm(ask)) return;
+    if (edited && !fromDraft && !window.confirm(ask)) return;
     const tid = it.thread_id;
     reply.busy = true; reply.status = "";
-    reply.pending = withInstruction ? (reply.instr.trim() || `${annot.count()} citação(ões)`) : "";
+    if (withInstruction) reply.chatOpen = true; // a bolha do pedido + "escrevendo" ficam à vista
+    reply.pending = fromDraft ? instruction : withInstruction ? (reply.instr.trim() || `${annot.count()} citação(ões)`) : "";
     renderDetail(shown);
     // mesma geração do /mail (assistant.draft): o rascunho fica salvo na thread.
     // Com instrução, o texto atual da caixa vai como "Rascunho anterior".
     const body = { instruction, comment: "" };
-    if (instruction && reply.text.trim()) body.current_draft = reply.text;
+    const prev = fromDraft ? (o.currentDraft || "") : reply.text;
+    if (instruction && prev.trim()) body.current_draft = prev;
     const r = await api(`/api/threads/${encodeURIComponent(tid)}/draft`, "POST", body);
     if (!reply || reply.tid !== tid) return;
     reply.busy = false; reply.pending = "";
@@ -961,10 +1379,23 @@
     if (!r.ok) reply.status = r.data.detail || "Falha no rascunho.";
     // pergunta pra IA (kind=answer): a resposta aparece na conversa, o rascunho fica
     else if (last && last.kind === "answer") { reply.chatOpen = true; reply.status = "A IA respondeu na conversa acima; o rascunho da caixa continua o mesmo."; }
-    else if (r.data.draft) { reply.text = r.data.draft; reply.aiText = r.data.draft; shown.draft = r.data.draft; }
+    else if (r.data.draft) {
+      reply.text = r.data.draft; reply.aiText = r.data.draft; shown.draft = r.data.draft; reply.draftLoading = false;
+      if (window.DraftPersist) window.DraftPersist.remember(tid, r.data.draft);
+      if (r.data.unchanged) reply.status = "A IA devolveu o mesmo texto. Tente pedir de outro jeito (ex. \"acrescente no fim: faz sentido?\").";
+    }
     else reply.status = (last && last.text) || "A IA não devolveu rascunho.";
-    if (r.ok && withInstruction) { reply.instr = ""; annot.clear(); }
-    if (shown && shown.thread_id === tid) renderDetail(shown);
+    if (r.ok && withInstruction) { reply.instr = ""; reply.hint = ""; reply.ask = ""; annot.clear(); }
+    if (!shown || shown.thread_id !== tid) return;
+    renderDetail(shown);
+    // pronto para o próximo pedido: campo da IA focado e a conversa no fim
+    const instr = $("cp-reply-instr");
+    if (r.ok && instr) {
+      instr.focus({ preventScroll: true });
+      if (instr.scrollIntoView) instr.scrollIntoView({ block: "nearest" });
+    }
+    const chat = $("cp-chat");
+    if (chat) chat.scrollTop = chat.scrollHeight;
   }
   // Mesma confirmação do /mail: Para, Cc editável, assunto, prévia, aviso de
   // anexo esquecido e "ação definitiva". Só envia no clique de "Enviar agora".
@@ -972,6 +1403,7 @@
     const text = reply.text.trim();
     if (!text) return;
     if (!canSend) { toast("Reautorize o Gmail (Entrar no Gmail) para poder enviar."); return; }
+    if (window.DraftPersist) await window.DraftPersist.flush(it.thread_id, text);
     const tid = it.thread_id;
     const att = await api(`/api/threads/${encodeURIComponent(tid)}/attachments`);
     const nFiles = att.ok ? (att.data.files || []).length : 0;
@@ -983,7 +1415,7 @@
       <label class="cp-field"><span>Cc</span><input id="sd-cc" type="text" value="${esc(replyCc(it))}" placeholder="opcional, e-mails separados por vírgula" autocomplete="off"></label>
       <p class="cp-mrow"><b>Assunto:</b> ${esc(/^re:/i.test(subject) ? subject : `Re: ${subject}`)}</p>
       <div class="cp-pre">${esc(text)}</div>
-      ${nFiles ? `<p class="cp-from">${nFiles} anexo(s) preparado(s) no /mail vão junto.</p>` : ""}
+      ${nFiles ? `<p class="cp-from">${nFiles} anexo(s) vão junto neste envio.</p>` : ""}
       ${mentions ? '<p class="cp-warn attach">⚠️ O texto menciona anexo, mas nenhum arquivo foi anexado a essa resposta.</p>' : ""}
       ${offline ? `<p class="cp-warn queued">${esc(window.NetStatus.message(window.NetStatus.state.status === "auth_error" ? "auth_error" : "offline"))}</p>` : ""}
       <p class="cp-warn">${offline ? "Ao confirmar, a resposta vai para a fila de envio e sai sozinha quando a conexão voltar (você pode cancelar até lá)." : "Essa ação é definitiva — o e-mail sai imediatamente e não pode ser desfeito."}</p>
@@ -1000,6 +1432,7 @@
       if (r.data.queued) toast(`Na fila de envio. ${r.data.message || "Sai quando a conexão voltar."}`);
       else toast(r.data.cc ? `Enviado para ${r.data.to} (Cc: ${r.data.cc}).` : `Enviado para ${r.data.to}.`);
       if (window.NetStatus) window.NetStatus.refresh();
+      if (!r.data.queued && window.DraftPersist) window.DraftPersist.cacheClear(tid);
       if (reply && reply.tid === tid) { reply = null; annot.clear(); }
       if (current === tid) open(tid, true);
       load();
@@ -1028,9 +1461,25 @@
   async function open(id, quiet) {
     current = id;
     if (!quiet) renderList();
+    // Prefetch do rascunho já ao abrir o detalhe (não espera Responder).
+    const listHit = findCardItem(id);
+    const cached = window.DraftPersist ? window.DraftPersist.cacheGet(id) : null;
+    if (listHit || cached) {
+      const seed = Object.assign({}, listHit || { thread_id: id, subject: "…" }, {
+        draft: cached || (listHit && listHit.draft) || "",
+        _draftPending: !(cached || (listHit && listHit.draft)),
+        chat: (listHit && listHit.chat) || [],
+      });
+      if (!shown || shown.thread_id !== id) renderDetail(seed);
+      else { shown.draft = seed.draft; syncReply(shown); }
+    }
+    const draftP = window.DraftPersist ? window.DraftPersist.prefetch(id) : Promise.resolve(null);
     const r = await api(`/api/copilot/${encodeURIComponent(id)}`);
     if (!r.ok) { toast(r.data.detail || "Falha ao abrir."); return; }
     if (current !== id) return; // outro cartão foi aberto enquanto carregava
+    const pre = await draftP;
+    if (pre != null && !(r.data.draft || "").trim() && pre.trim()) r.data.draft = pre;
+    if ((r.data.draft || "").trim() && window.DraftPersist) window.DraftPersist.remember(id, r.data.draft);
     renderDetail(r.data);
     if (!quiet) {
       // celular: #id (voltar do aparelho fecha). Desktop: /copilot/{id}, deep link
@@ -1053,12 +1502,14 @@
   }
   let pushedDetail = false; // abrimos o detalhe com pushState (Voltar = history.back)
   function hideDetail() {
+    flushReplyDraft();
     $("cp-detail").classList.remove("open");
     $("cp-scrim").classList.remove("open");
     document.body.classList.remove("cp-page");
     if (layout() === "kanban" || mode !== "quadro") { current = null; renderList(); }
   }
   function closeDetail() {
+    flushReplyDraft();
     hideDetail();
     if (location.hash) { history.back(); return; }
     if (pathId()) {
@@ -1269,6 +1720,7 @@
     tab = b.dataset.tab; sessionStorage.setItem("cp_tab", tab); renderList();
   };
   document.querySelectorAll(".cp-card").forEach((c) => (c.onclick = () => {
+    if (query) { $("cp-q").value = ""; setQuery(""); }
     if (mode !== "quadro") { setMode("quadro"); }
     if (layout() === "kanban") {
       const col = $("cp-board").querySelector(`[data-col="${c.dataset.tab}"]`);
@@ -1277,11 +1729,28 @@
     }
     tab = c.dataset.tab; sessionStorage.setItem("cp_tab", tab); renderList();
   }));
-  $("cp-views").onclick = (e) => { const b = e.target.closest("[data-mode]"); if (b) setMode(b.dataset.mode); };
-  $("cp-hist").onclick = (e) => { const li = e.target.closest("[data-id]"); if (li) open(li.dataset.id); };
-  $("cp-hist").onkeydown = (e) => { const li = e.target.closest("[data-id]"); if (li && e.key === "Enter") open(li.dataset.id); };
-  $("cp-list").onclick = (e) => { const li = e.target.closest("[data-id]"); if (li) open(li.dataset.id); };
-  $("cp-list").onkeydown = (e) => { const li = e.target.closest("[data-id]"); if (li && e.key === "Enter") open(li.dataset.id); };
+  $("cp-views").onclick = (e) => {
+    const b = e.target.closest("[data-mode]");
+    if (!b) return;
+    if (query) { $("cp-q").value = ""; setQuery(""); } // escolher uma view sai da busca
+    setMode(b.dataset.mode);
+  };
+  $("cp-hist").onclick = (e) => { if (handleCardActEvent(e)) return; const li = e.target.closest("[data-id]"); if (li) open(li.dataset.id); };
+  $("cp-hist").onkeydown = (e) => { if (handleCardActEvent(e)) return; const li = e.target.closest("[data-id]"); if (li && e.key === "Enter") open(li.dataset.id); };
+  $("cp-found").onclick = $("cp-hist").onclick;
+  $("cp-found").onkeydown = $("cp-hist").onkeydown;
+  $("cp-q").value = query;
+  document.body.dataset.search = query ? "1" : "";
+  $("cp-q-x").classList.toggle("hidden", !query);
+  if (query) runSearch();
+  $("cp-q").addEventListener("input", (e) => setQuery(e.target.value));
+  $("cp-q").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.target.value = ""; setQuery(""); }
+    else if (e.key === "Enter") { e.preventDefault(); clearTimeout(searchTimer); runSearch(); }
+  });
+  $("cp-q-x").onclick = () => { $("cp-q").value = ""; setQuery(""); $("cp-q").focus(); };
+  $("cp-list").onclick = (e) => { if (handleResolveAll(e) || handleCardActEvent(e)) return; const li = e.target.closest("[data-id]"); if (li) open(li.dataset.id); };
+  $("cp-list").onkeydown = (e) => { if (handleCardActEvent(e)) return; const li = e.target.closest("[data-id]"); if (li && e.key === "Enter") open(li.dataset.id); };
   document.querySelectorAll(".cp-viewtog [data-view]").forEach((b) => (b.onclick = () => {
     view = b.dataset.view;
     try { localStorage.setItem("cp_view", view); } catch { /* sem armazenamento */ }
@@ -1317,6 +1786,8 @@
     canSend = !!r.data.can_send; me = lower(r.data.account);
     if (shown && reply && reply.open) renderDetail(shown);
   });
+  window.addEventListener("pagehide", flushReplyDraft);
+  window.addEventListener("beforeunload", flushReplyDraft);
   load();
   // deep link /copilot/{id}: abre o detalhe direto (página inteira no desktop)
   if (pathId()) open(pathId(), true);

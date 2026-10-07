@@ -485,3 +485,84 @@ def test_compose_offline_is_queued(fake_send):
 def test_copilot_page_loads_netstatus_script():
     html = TestClient(app).get("/copilot").text
     assert "/static/netstatus.js" in html
+
+
+# ── rascunho: GET rápido + Resolvido após envio real ──
+def test_get_draft_and_preview_include_saved_text():
+    _thread("t1")
+    store.save_ai("t1", draft="Texto do Leo", body_text="corpo cache")
+    client = TestClient(app)
+    d = client.get("/api/threads/t1/draft").json()
+    assert d["has_draft"] is True and d["draft"] == "Texto do Leo"
+    prev = client.get("/api/threads/t1/original-preview").json()
+    assert prev["draft"] == "Texto do Leo" and prev["has_draft"] is True
+    store.save_ai("t1", draft="")
+    assert client.get("/api/threads/t1/draft").json() == {"draft": "", "has_draft": False}
+
+
+def test_successful_send_marks_copilot_resolvido(fake_send):
+    _thread("t1")
+    store.save_copilot_item("t1", status="aberto", papel="demanda", source="llm")
+    store.save_ai("t1", draft="Rascunho")
+    netstatus.mark_ok()
+    res = TestClient(app).post("/api/threads/t1/send", json={"text": "Enviado.", "source": "mail"})
+    assert res.status_code == 200 and res.json()["ok"]
+    assert len(fake_send) == 1
+    item = store.get_copilot_item("t1")
+    assert item["status"] == "resolvido"
+    assert store.get_thread("t1")["is_unread"] == 0
+
+
+def test_queued_send_does_not_resolve_until_worker_delivers(fake_send):
+    import time as _t
+
+    _thread("t1")
+    store.save_copilot_item("t1", status="aberto", papel="demanda", source="llm")
+    netstatus.mark_error(_gaierror())
+    client = TestClient(app)
+    body = client.post("/api/threads/t1/send", json={"text": "Depois.", "source": "copilot"}).json()
+    assert body["queued"] is True
+    assert store.get_copilot_item("t1")["status"] == "aberto"  # ainda não
+    outbox.flush(now=_t.time() + 3600)
+    assert len(fake_send) == 1
+    assert store.get_copilot_item("t1")["status"] == "resolvido"
+
+
+def test_attachment_extract_context_for_draft_prompt(tmp_path, monkeypatch):
+    from app import attachments, assistant
+
+    monkeypatch.setattr(attachments, "ROOT", tmp_path / "atts")
+    _thread("t1")
+    attachments.save_file("t1", "notas.txt", b"Prazo: 10/10. Valor: R$ 50.")
+    attachments.save_file("t1", "foto.png", b"\x89PNG\r\nfake")
+    block = attachments.extract_context("t1")
+    assert "notas.txt" in block and "Prazo: 10/10" in block
+    assert "foto.png" in block and "imagem" in block
+    # Sem anexo: vazio
+    attachments.delete_file("t1", "notas.txt")
+    attachments.delete_file("t1", "foto.png")
+    assert attachments.extract_context("t1") == ""
+
+
+def test_draft_prompt_includes_attachment_block(monkeypatch, tmp_path):
+    """Garante que assistant.draft injeta o bloco de anexos no prompt (sem enviar)."""
+    from app import attachments, assistant, llm
+
+    monkeypatch.setattr(attachments, "ROOT", tmp_path / "atts")
+    _thread("t1")
+    store.save_ai("t1", body_text="Oi Leo, tudo bem?", draft="")
+    attachments.save_file("t1", "briefing.txt", b"Reuniao amanha as 9h.")
+    captured = {}
+
+    def fake_complete(prompt, system=""):
+        captured["prompt"] = prompt
+        return '{"kind":"draft","text":"Segue o briefing.txt em anexo.\\n\\nAbs,\\nLeo","cc_names":[]}'
+
+    monkeypatch.setattr(llm, "has_key", lambda: True)
+    monkeypatch.setattr(llm, "complete", fake_complete)
+    monkeypatch.setattr(assistant, "_ensure_body", lambda tid: "Oi Leo, tudo bem?")
+    monkeypatch.setattr(assistant, "_draft_extra_context", lambda *a, **k: "")
+    result = assistant.draft("t1", "manda o briefing")
+    assert "briefing.txt" in captured["prompt"]
+    assert "Reuniao amanha" in captured["prompt"]
+    assert "Segue o briefing" in (result.get("draft") or "")

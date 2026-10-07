@@ -78,3 +78,78 @@ def test_thread_outline_points_to_latest_message_from_someone_else():
 
 def test_thread_outline_skipped_for_single_message():
     assert assistant._thread_outline("De: A <a@x.com>\nData: 1\noi") == ""
+
+
+def _two_turn_chat():
+    return [
+        {"role": "user", "text": "diga que vou chamar o Rodrigo da MTBank"},
+        {"role": "ai", "kind": "draft", "text": "Paulo,\n\nVou chamar o Rodrigo da MTBank.\n\nAbs"},
+    ]
+
+
+def test_follow_up_sends_history_previous_draft_and_revision_block(monkeypatch):
+    _thread(_two_turn_chat())
+    prompts = []
+
+    def fake_complete(prompt, **kwargs):
+        prompts.append(prompt)
+        return json.dumps({"kind": "draft", "text": "Paulo,\n\nVou chamar o Rodrigo. Faz sentido?\n\nAbs"})
+
+    monkeypatch.setattr(llm, "complete", fake_complete)
+    out = assistant.draft(
+        "t1", "Pergunta se faz sentido fazer isso", current_draft="Paulo,\n\nVou chamar o Rodrigo da MTBank.\n\nAbs"
+    )
+
+    assert len(prompts) == 1
+    p = prompts[0]
+    assert "diga que vou chamar o Rodrigo da MTBank" in p  # turno anterior do chat vai como contexto
+    assert "REVISÃO" in p and p.index("REVISÃO") < p.index("Instrução do Leo: Pergunta se faz sentido")
+    assert "Rascunho anterior:\nPaulo,\n\nVou chamar o Rodrigo da MTBank." in p
+    assert out["draft"].endswith("Faz sentido?\n\nAbs") and out["unchanged"] is False
+    users = [m["text"] for m in out["chat"] if m["role"] == "user"]
+    assert users == ["diga que vou chamar o Rodrigo da MTBank", "Pergunta se faz sentido fazer isso"]
+    assert store.get_thread("t1")["draft"] == out["draft"]
+
+
+def test_follow_up_retries_once_when_the_ai_returns_the_same_draft(monkeypatch):
+    _thread(_two_turn_chat())
+    same = "Paulo,\n\nVou chamar o Rodrigo da MTBank.\n\nAbs"
+    replies = iter([same, "Paulo,\n\nVou chamar o Rodrigo da MTBank. Faz sentido?\n\nAbs"])
+    prompts = []
+
+    def fake_complete(prompt, **kwargs):
+        prompts.append(prompt)
+        return json.dumps({"kind": "draft", "text": next(replies)})
+
+    monkeypatch.setattr(llm, "complete", fake_complete)
+    out = assistant.draft("t1", "Pergunta se faz sentido", current_draft=same)
+
+    assert len(prompts) == 2 and "ATENÇÃO" in prompts[1] and "Pergunta se faz sentido" in prompts[1]
+    assert "Faz sentido?" in out["draft"] and out["unchanged"] is False
+
+
+def test_follow_up_flags_unchanged_when_the_retry_is_still_the_same(monkeypatch):
+    _thread(_two_turn_chat())
+    same = "Paulo,\n\nVou chamar o Rodrigo da MTBank.\n\nAbs"
+    calls = []
+
+    def fake_complete(prompt, **kwargs):
+        calls.append(1)
+        return json.dumps({"kind": "draft", "text": same + "  "})
+
+    monkeypatch.setattr(llm, "complete", fake_complete)
+    out = assistant.draft("t1", "Pergunta se faz sentido", current_draft=same)
+    assert len(calls) == 2 and out["unchanged"] is True
+
+
+def test_first_draft_without_previous_has_no_revision_block_nor_retry(monkeypatch):
+    _thread([])
+    prompts = []
+
+    def fake_complete(prompt, **kwargs):
+        prompts.append(prompt)
+        return json.dumps({"kind": "draft", "text": "Olá"})
+
+    monkeypatch.setattr(llm, "complete", fake_complete)
+    out = assistant.draft("t1", "responda que sim")
+    assert len(prompts) == 1 and "REVISÃO" not in prompts[0] and out["unchanged"] is False

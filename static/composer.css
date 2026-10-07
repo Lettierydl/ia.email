@@ -1,6 +1,6 @@
 /* Composer compartilhado (/mail, /compose e /copilot): destinatários, conversa
-   com a IA, caixa do rascunho, "Ideia principal / instrução" com chips de
-   citação + Gerar/Ajustar, linha de ícones e Enviar. As cores vêm das
+   com a IA, caixa do rascunho (papel branco), "Peça à IA" com chips de
+   citação + Gerar/Ajustar/Melhorar, linha de ícones e Enviar. As cores vêm das
    variáveis da página (copilot.css: --accent/--lilac…; styles.css: --blue…). */
 .cmp{
   --cmp-accent:var(--accent,var(--blue,#1a73e8));--cmp-accent-ink:var(--accent-ink,var(--blue-dark,#1557b0));
@@ -24,15 +24,19 @@
 .cmp-chat .chat-messages{border-top:1px solid var(--cmp-line)}
 
 /* caixa do rascunho (o que vai ser enviado) */
-.cmp-draft{width:100%;min-height:180px;resize:vertical;font:inherit;font-size:14px;line-height:1.5;border:1px solid var(--cmp-line);border-radius:12px;padding:12px;background:var(--cmp-bg);color:var(--cmp-ink)}
+.cmp-draft{width:100%;min-height:180px;resize:vertical;font:inherit;font-size:14px;line-height:1.5;border:1px solid var(--cmp-line);border-radius:12px;padding:12px;background:var(--cmp-card);box-shadow:0 1px 3px rgba(32,33,36,.08);color:var(--cmp-ink)}
 .cmp-draft:focus{outline:2px solid var(--cmp-accent);outline-offset:-1px}
 .cmp-draft:disabled{opacity:.6}
 .cmp-status{margin:0;min-height:1.2em;font-size:12.5px;color:var(--cmp-muted)}
+.cmp-status:empty{display:none}
 
-/* ideia principal / instrução + citações numeradas */
-.cmp-instr{border:1px solid var(--cmp-line);border-radius:12px;background:var(--cmp-bg);padding:8px}
-.cmp-instr:focus-within{outline:2px solid var(--cmp-accent);outline-offset:-1px}
-.cmp-instr>label{display:block;font-size:12px;color:var(--cmp-muted);margin:0 2px 6px}
+/* pedido à IA + citações numeradas: estilo chat (✨, borda accent), grudado na conversa */
+.cmp-instr{border:1.5px solid var(--cmp-accent);border-radius:16px;background:color-mix(in srgb,var(--cmp-accent) 6%,var(--cmp-card));padding:8px 8px 8px 10px}
+.cmp-instr:focus-within{box-shadow:0 0 0 3px color-mix(in srgb,var(--cmp-accent) 20%,transparent)}
+.cmp-instr>label{display:flex;align-items:center;gap:5px;font-size:12.5px;font-weight:600;color:var(--cmp-accent-ink);margin:0 2px 2px}
+.cmp-instr>label .ic,.cmp-instr>label [data-icon]{color:var(--cmp-accent)}
+.cmp-instr>label small,.cmp-draft-head small{font-weight:400;color:var(--cmp-muted);font-size:11.5px}
+.cmp-chat+.cmp-instr{margin-top:-2px}
 .cmp-annots{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
 .cmp-annots:empty{display:none}
 .cmp-annot{display:inline-flex;align-items:center;gap:6px;max-width:100%;border-radius:999px;background:var(--cmp-soft);padding:3px 4px;font-size:12px;cursor:pointer}
@@ -45,9 +49,9 @@
 .cmp-instr-row{display:flex;gap:8px;align-items:flex-end}
 .cmp-instr-row textarea{flex:1;min-width:0;resize:none;border:0;background:transparent;font:inherit;font-size:14px;line-height:1.45;padding:6px 4px;color:var(--cmp-ink);max-height:200px;min-height:0}
 .cmp-instr-row textarea:focus{outline:none}
-.cmp-gen{flex:none;display:inline-flex;align-items:center;gap:6px;height:40px;padding:0 14px;border-radius:12px;border:1px solid var(--cmp-ink);background:var(--cmp-ink);color:var(--cmp-card);font:inherit;font-size:14px;cursor:pointer}
-.cmp-gen:disabled{opacity:.45;cursor:default}
-.cmp-gen .ic{color:#fbbc04}
+.cmp-gen{flex:none;display:inline-flex;align-items:center;gap:6px;height:40px;padding:0 14px;border-radius:12px;border:1px solid var(--cmp-accent);background:var(--cmp-accent);color:#fff;font:inherit;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
+.cmp-gen:disabled{opacity:.5;cursor:default}
+.cmp-gen .ic{color:#fff}
 .cmp-hint{margin:0 2px;font-size:11.5px;color:var(--cmp-muted)}
 
 /* linha de ícones + Enviar */
@@ -97,3 +101,38 @@
 .ic{flex:none;vertical-align:middle}
 .ic-slot{display:inline-flex;align-items:center;justify-content:center;line-height:0;vertical-align:middle}
 .ic-inline{margin-right:3px}
+
+/* Chip "Rascunho salvo" + skeleton enquanto o texto ainda não pintou */
+.cmp-draft-chip{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;font-size:12px;font-weight:600;color:#1e6b3a;background:var(--cmp-mint);border-radius:999px;padding:3px 10px;margin:0}
+.cmp-draft-chip.loading::before{content:"";width:7px;height:7px;border-radius:50%;background:#1e6b3a;flex:none;animation:cmp-chip-pulse 1.1s ease-in-out infinite}
+.cmp-draft-chip.hidden{display:none}
+.cmp-draft-wrap{position:relative}
+.cmp-draft-wrap.loading .cmp-draft{color:transparent;caret-color:transparent}
+.cmp-draft-skel{display:none;position:absolute;inset:12px;pointer-events:none;flex-direction:column;gap:8px}
+.cmp-draft-wrap.loading .cmp-draft-skel{display:flex}
+.cmp-draft-skel .bar{height:10px;border-radius:5px;background:linear-gradient(90deg,#e3e6ea 25%,#f3f5f7 45%,#e3e6ea 65%);background-size:300% 100%;animation:cmp-skel 1.3s ease-in-out infinite}
+.cmp-draft-skel .bar:nth-child(1){width:92%}
+.cmp-draft-skel .bar:nth-child(2){width:100%;animation-delay:.12s}
+.cmp-draft-skel .bar:nth-child(3){width:58%;animation-delay:.24s}
+@keyframes cmp-chip-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.cmp-draft-chip.loading::before,.cmp-draft-skel .bar{animation:none}}
+
+/* Anexos no composer: botão ↳ insere referência no rascunho */
+.cmp-attach-chip{display:inline-flex;align-items:center;gap:4px}
+.cmp-attach-ins{border:0;background:transparent;color:var(--cmp-accent-ink,#1557b0);font:inherit;font-size:14px;line-height:1;padding:2px 4px;border-radius:6px;cursor:pointer}
+.cmp-attach-ins:hover{background:var(--cmp-soft,#e8f0fe)}
+.attach-list,.cmp-attach-list{display:flex;flex-wrap:wrap;gap:6px;margin:0}
+.attach-list.hidden,.cmp-attach-list.hidden{display:none}
+
+/* rótulo do rascunho: "Rascunho do e-mail (vai ser enviado)" + chip salvo */
+.cmp-draft-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
+.cmp-draft-head>label{font-size:12.5px;font-weight:600;color:var(--cmp-ink)}
+.cmp-draft-head .cmp-draft-chip{margin-left:auto}
+/* "Isso parece uma instrução — usar como pedido à IA?" */
+.cmp-instr-sug{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:7px 10px;border-radius:12px;background:var(--cmp-soft);font-size:13px;color:var(--cmp-accent-ink)}
+.cmp-instr-sug.hidden{display:none}
+.cmp-instr-sug>span{flex:1 1 200px}
+.cmp-instr-sug button{display:inline-flex;align-items:center;gap:5px;min-height:34px;border-radius:999px;padding:0 12px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.cmp-sug-yes{border:0;background:var(--cmp-accent);color:#fff}
+.cmp-sug-yes .ic{color:#fff}
+.cmp-sug-no{border:1px solid var(--cmp-line);background:var(--cmp-card);color:var(--cmp-muted)}

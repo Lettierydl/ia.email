@@ -164,6 +164,15 @@ body[data-layout="kanban"] .cp-board{display:grid;grid-template-columns:repeat(3
 .cp-col-h h2{font:600 15px/1.3 var(--font-title);display:flex;align-items:center;gap:8px}
 .cp-col-h h2 b{font:600 12px var(--font);background:var(--card);border-radius:999px;padding:1px 8px;color:var(--muted)}
 .cp-col-h p{font-size:12px;color:var(--muted);margin-top:2px}
+.cp-col-hrow{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+/* "Resolver todos" da coluna (quadro, fila Analisando e lista mobile) */
+.cp-resolve-all{display:inline-flex;align-items:center;gap:5px;border:1px solid color-mix(in srgb,var(--ink) 14%,transparent);background:color-mix(in srgb,var(--card) 70%,transparent);color:var(--ink);border-radius:999px;padding:3px 10px 3px 7px;font:500 12px var(--font);cursor:pointer;white-space:nowrap}
+.cp-resolve-all:hover{background:var(--card)}
+.cp-resolve-all:disabled{opacity:.5;cursor:progress}
+.cp-resolve-all svg{width:15px;height:15px}
+.cp-list-acts{list-style:none;display:flex;justify-content:flex-end;padding:0 2px 4px}
+.cp-queue-acts{display:flex;justify-content:flex-end;padding:0 10px 8px}
+.cp-qstrip header .cp-resolve-all{align-self:center}
 .cp-col-h.h-peach{background:var(--peach)}.cp-col-h.h-lilac{background:var(--lilac)}.cp-col-h.h-sky{background:var(--sky)}
 .cp-col-h.h-mint{background:var(--mint)}.cp-col-h.h-fog{background:var(--fog)}.cp-col-h.h-butter{background:var(--butter)}
 .cp-col-h h3{font:600 15px/1.3 var(--font-title);display:flex;align-items:center;gap:8px}
@@ -309,7 +318,7 @@ body:not([data-layout="mobile"]) .cp-detail .cp-actions [data-act="reabrir"]{mar
 .cp-reply .cp-rmode{margin-bottom:10px}
 .cp-reply .cp-rmode button{padding:8px;font-size:13.5px}
 .cp-rcpt{margin:0 0 8px;overflow-wrap:anywhere}
-.cp-reply-text{width:100%;min-height:180px;resize:vertical;font:inherit;font-size:14px;line-height:1.5;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--bg);color:var(--ink)}
+.cp-reply-text{width:100%;min-height:180px;resize:vertical;font:inherit;font-size:14px;line-height:1.5;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--card);color:var(--ink)}
 .cp-reply-text:focus{outline:2px solid var(--accent);outline-offset:-1px}
 .cp-reply-text:disabled{opacity:.6}
 #cp-reply-status{margin:6px 0 0;min-height:1.2em}
@@ -403,3 +412,75 @@ body[data-layout="kanban"]:not(.cp-page) .cp-detail{display:none}
 .cp-reply .cmp{gap:8px}
 .cp-reply .cmp .cp-rmode{margin-bottom:2px}
 .cp-reply .cmp-tool{text-decoration:none}
+
+/* ── ações rápidas no card (lista/kanban) ── */
+.cp-card-acts{display:flex;gap:4px;justify-content:flex-end;align-items:center;margin-top:8px;min-height:28px}
+.cp-card-act{position:relative;width:28px;height:28px;padding:0;border:1px solid var(--line);border-radius:10px;background:var(--card);display:grid;place-items:center;color:var(--ink);flex:none}
+.cp-card-act svg{width:16px;height:16px;display:block}
+.cp-card-act .ic-check-circle-double{color:#1e8e3e}
+.cp-card-act:hover,.cp-card-act:focus-visible{background:var(--fog)}
+.cp-card-act[data-card-act="resolver"]:hover{background:#e6f4ea;border-color:#b7dfc3}
+.cp-card-act[aria-disabled="true"]{opacity:.45;pointer-events:none}
+.cp-card-act .cp-icon-tip{display:none;position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--ink);color:var(--card);font-size:11.5px;padding:4px 8px;border-radius:8px;white-space:nowrap;pointer-events:none;z-index:5}
+.cp-card-act .cp-icon-tip{display:none!important} /* title= nativo: overflow do card cortaria o tip */
+/* desktop com hover: ícones só no hover/focus do card (sem poluir) */
+@media (hover:hover) and (pointer:fine){
+  body:not([data-layout="mobile"]) .cp-card-acts{opacity:0;pointer-events:none;transition:opacity .12s}
+  body:not([data-layout="mobile"]) .cp-item:hover .cp-card-acts,
+  body:not([data-layout="mobile"]) .cp-kcard:hover .cp-card-acts,
+  body:not([data-layout="mobile"]) .cp-item:focus-within .cp-card-acts,
+  body:not([data-layout="mobile"]) .cp-kcard:focus-within .cp-card-acts{opacity:1;pointer-events:auto}
+}
+/* mobile / touch: sempre visíveis (2 ícones cabem sem menu overflow) */
+body[data-layout="mobile"] .cp-card-acts{opacity:1;pointer-events:auto}
+.cp-item.pending,.cp-kcard.pending{opacity:.6;pointer-events:none}
+
+/* Chip "Rascunho salvo" na barra de ações (composer ainda fechado) */
+.cp-actions .cmp-draft-chip{margin-right:4px;flex:0 0 auto}
+
+/* Anexos recebidos (Gmail) na Conversa completa — pills compactos como no Gmail */
+.cp-att-pills{display:flex;flex-wrap:wrap;gap:6px;padding:2px 12px 12px}
+.cp-att-pill{display:inline-flex;align-items:center;max-width:220px;height:30px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--ink);font-size:12.5px;overflow:hidden;transition:background .12s,border-color .12s}
+.cp-att-pill:hover{background:var(--fog);border-color:color-mix(in srgb,var(--muted) 35%,var(--line))}
+.cp-att-open{display:inline-flex;align-items:center;gap:7px;min-width:0;flex:1;height:100%;padding:0 4px 0 9px;color:inherit;text-decoration:none}
+.cp-att-ic{flex:none;display:block}
+.cp-att-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cp-att-dl{flex:none;display:grid;place-items:center;width:26px;height:100%;color:var(--muted);text-decoration:none;opacity:0;transition:opacity .12s}
+.cp-att-pill:hover .cp-att-dl,.cp-att-dl:focus-visible{opacity:1}
+.cp-att-dl:hover{color:var(--ink)}
+@media (hover:none){.cp-att-dl{opacity:1}}
+
+/* Busca (header): filtro transversal -- com texto, troca quadro/histórico pelos resultados (inclui lidos e resolvidos) */
+.cp-search{order:11;flex-basis:100%;display:flex;align-items:center;gap:6px;height:38px;margin:0 0 10px;padding:0 6px 0 12px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--muted)}
+.cp-search:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+.cp-search .ic-slot{display:grid;place-items:center}
+.cp-search input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:inherit;font-size:14px;color:var(--ink)}
+.cp-search input::-webkit-search-cancel-button{display:none}
+.cp-search-x{flex:none;width:26px;height:26px;border:0;border-radius:50%;background:transparent;color:var(--muted);font-size:18px;line-height:1;cursor:pointer}
+.cp-search-x:hover{background:var(--fog);color:var(--ink)}
+body:not([data-layout="mobile"]) .cp-search{order:0;flex:0 1 280px;flex-basis:280px;margin:0 6px}
+.cp-searchpane{display:none;padding:4px 16px 90px}
+.cp-found-h{margin:4px 2px 12px;color:var(--muted);font-size:13px}
+body[data-search="1"] .cp-listpane,body[data-search="1"] .cp-board,body[data-search="1"] .cp-histpane{display:none!important}
+body[data-search="1"] .cp-searchpane{display:block}
+body[data-layout="lista"] .cp-searchpane{overflow:auto;min-height:0;padding:14px 16px 30px 28px;border-right:1px solid var(--line)}
+body[data-layout="kanban"] .cp-searchpane{flex:1;min-height:0;overflow:auto;padding:16px 28px 20px}
+body[data-layout="kanban"].cp-page .cp-searchpane{display:none!important}
+/* "Responder com IA": CTA primário de verdade (fundo accent, ícone + texto, alvo >= 48px).
+   Card "O que eu faria": primeiro botão da linha. Barra inferior: último, à direita
+   (desktop) ou pílula larga em cima dos ícones (celular). */
+.cp-row .cp-icon-act.cp-ai-act,.cp-actions .cp-icon-act.cp-ai-act{width:auto;min-height:48px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:0 20px;font-weight:600;white-space:nowrap}
+.cp-ai-act .cp-ai-t{font-size:15px}
+.cp-btn.cp-ai-act.primary{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 2px 10px color-mix(in srgb,var(--accent) 35%,transparent)}
+.cp-btn.cp-ai-act.primary:hover{background:var(--accent-ink);border-color:var(--accent-ink)}
+.cp-btn.cp-ai-act.primary:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 40%,transparent);outline-offset:2px}
+.cp-ai-act.primary svg{color:#fff}
+body:not([data-layout="mobile"]) .cp-detail .cp-actions .cp-ai-act{margin-left:4px}
+body[data-layout="mobile"] .cp-row .cp-icon-act.cp-ai-act{flex:1 1 100%;width:100%;height:52px;border-radius:999px}
+body[data-layout="mobile"] .cp-actions{flex-wrap:wrap;row-gap:8px}
+body[data-layout="mobile"] .cp-actions .cp-icon-act.cp-ai-act{order:-1;flex:1 1 100%;height:52px;border-radius:999px}
+body[data-layout="mobile"] .cp-detail{padding-bottom:calc(168px + env(safe-area-inset-bottom))}
+.cp-ai-ask{margin:4px 0 6px}
+/* Gerando/Ajustando: botão da IA mostra que está trabalhando (não parece "cinza morto") */
+.cmp-gen.busy:disabled{opacity:.85;cursor:progress}
+.cmp-gen.busy .ic,.cmp-gen.busy [data-icon]{animation:cp-spin 1s linear infinite}

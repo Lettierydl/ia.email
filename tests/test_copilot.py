@@ -937,3 +937,295 @@ def test_pages_load_shared_icon_chat_and_composer_modules():
     assert "/static/icons.js" in client.get("/board").text
     # ícones vêm do módulo, nada de emoji/seta solta no cabeçalho do copiloto
     assert "⟳" not in cp and "⚙" not in cp
+
+
+def test_copilot_card_quick_actions_in_static():
+    """Cards do kanban/lista expõem Marcar como lido (resolver) e Delegar sem abrir detalhe."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "static"
+    js = (root / "copilot.js").read_text(encoding="utf-8")
+    css = (root / "copilot.css").read_text(encoding="utf-8")
+    html = (root / "copilot.html").read_text(encoding="utf-8")
+    assert 'data-card-act="resolver"' in js
+    assert 'data-card-act="delegar"' in js
+    assert "function cardActsHTML" in js
+    assert "function runCardAct" in js
+    assert "handleCardActEvent" in js
+    assert "Marcar como lido" in js
+    assert ".cp-card-acts" in css and ".cp-card-act" in css
+    assert "copilot.js?v=" in html and "copilot.css?v=" in html
+
+
+
+# ── só em Cc nunca vai para "Precisa de você" (regra do Leo) ──
+CC_BODY = (
+    "De: Ana <ana@x.com>\nData: x\n\n"
+    "Bia, pode verificar as pendências do boleto até amanhã? Leo segue em cópia para acompanhar."
+)
+CC_RULE = "Se eu fui só copiado não deveria tá na classificação da coluna de precisa de você. E sim apenas cópia."
+
+
+def test_only_cc_with_request_to_someone_else_is_so_copia():
+    row = _thread(to="bia@x.com", cc=ME, body=CC_BODY)
+    item = copilot.heuristic(row, row["body_text"])
+    assert item["papel"] == "so_copia"
+    assert copilot.tab_for({**item, "status": "aberto"}) == "so_conhecimento"
+
+
+def test_only_cc_quoted_history_mentioning_leo_is_not_a_request():
+    body = (
+        "De: Ana <ana@x.com>\nData: x\n\nBia, consegue revisar?\n\n"
+        "Em 01/10/2026, Carlos escreveu:\n> Leo, pode aprovar o layout?"
+    )
+    row = _thread(to="bia@x.com", cc=ME, body=body)
+    assert copilot.heuristic(row, body)["papel"] == "so_copia"
+
+
+def test_llm_cannot_promote_only_cc_to_demand():
+    row = _thread(to="bia@x.com", cc=ME, body=CC_BODY)
+    parsed = {
+        "papel_leo": "demanda", "urgencia": "alta", "bola": "leo",
+        "o_que_eu_faria": [{"acao": "pedir_contexto", "confianca": 0.8,
+                            "evidencias": [{"tipo": "mensagem", "citacao": "pode verificar as pendências do boleto"}]}],
+    }
+    item = copilot.interpret(row, row["body_text"], parsed, [])
+    assert item["papel"] == "so_copia"
+    assert item["bola"]["com"] == "ninguem" and item["urgencia"] != "alta"
+    assert copilot.tab_for({**item, "status": "aberto"}) == "so_conhecimento"
+
+
+def test_only_cc_with_explicit_ask_to_leo_is_at_most_opinion():
+    body = "De: Ana <ana@x.com>\nData: x\n\nBia, segue o boleto. Leo, você pode validar o layout?"
+    row = _thread(to="bia@x.com", cc=ME, body=body)
+    item = copilot.interpret(row, body, {"papel_leo": "demanda", "bola": "leo"}, [])
+    assert item["papel"] == "mencionado_opiniao"
+
+
+def test_direct_to_leo_with_request_stays_in_precisa_de_voce():
+    row = _thread()  # Para: Leo, pedido direto
+    item = copilot.interpret(row, row["body_text"], {"papel_leo": "demanda", "bola": "leo"}, [])
+    assert item["papel"] == "demanda"
+    assert copilot.tab_for({**item, "status": "aberto"}) == "precisa_de_voce"
+
+
+def test_prompt_states_only_cc_rule_and_learned_note(tmp_path, monkeypatch):
+    from app import learned
+
+    monkeypatch.setattr(config, "LEARNED_NOTES_MD", tmp_path / "lb" / "aprendizados.md")
+    _thread(to="bia@x.com", cc=ME, body=CC_BODY)
+    learned.add("general", CC_RULE)
+    learned.add("thread", CC_RULE, thread_id="t1")
+    seen = _llm(monkeypatch, {"papel_leo": "demanda", "bola": "leo"})
+    out = copilot.analyze("t1", force=True)
+    assert "SÓ em Cc" in seen["prompt"] and "NUNCA demanda" in seen["prompt"]
+    assert "(geral) " + CC_RULE in seen["prompt"] and "(neste assunto) " + CC_RULE in seen["prompt"]
+    assert out["papel"] == "so_copia" and out["tab"] == "so_conhecimento"
+
+
+def test_stale_only_cc_demand_is_healed_to_so_conhecimento():
+    row = _thread(to="bia@x.com", cc=ME, body=CC_BODY)
+    store.save_copilot_item(
+        "t1", papel="demanda", status="aberto", source="llm", urgencia="alta", internal_date_snapshot=row["internal_date"],
+        bola_json=json.dumps({"com": "leo", "email": ME, "nome": "Você"}), opcoes_json="[]",
+    )
+    it = next(i for i in copilot.list_items(show_all=True)["items"] if i["thread_id"] == "t1")
+    assert it["papel"] == "so_copia" and it["tab"] == "so_conhecimento"
+    assert store.get_copilot_item("t1")["papel"] == "so_copia", "corrigido no banco"
+
+
+def test_heal_keeps_leo_decision_when_he_took_it():
+    _thread(to="bia@x.com", cc=ME, body=CC_BODY)
+    store.save_copilot_item("t1", papel="demanda", status="assumido", source="llm",
+                            bola_json=json.dumps({"com": "leo", "email": ME, "nome": "Você"}))
+    it = next(i for i in copilot.list_items(show_all=True)["items"] if i["thread_id"] == "t1")
+    assert it["papel"] == "demanda" and it["tab"] == "precisa_de_voce"
+
+
+# ── busca ──
+def test_search_finds_read_and_resolved_beyond_unread_board(monkeypatch):
+    monkeypatch.setattr(gmail_client, "mark_threads_read", lambda ids: ids)
+    _thread("t1")
+    copilot.act("t1", "resolver")  # sai do quadro de não lidos
+    store.upsert_thread({**store.get_thread("t1"), "id": "t2", "subject": "Boleto MT Bank", "from_name": "Carlos",
+                         "from_email": "carlos@mt.com", "snippet": "pendências do boleto", "is_unread": 0, "internal_date": 20})
+    assert copilot.list_items(show_all=False)["items"] == []
+    hits = copilot.list_items(q="pix estatico")["items"]  # sem acento também acha
+    assert [i["thread_id"] for i in hits] == ["t1"] and hits[0]["tab"] == "resolvido"
+    assert [i["thread_id"] for i in copilot.list_items(q="carlos boleto")["items"]] == ["t2"]
+    assert copilot.list_items(q="nada-a-ver")["items"] == []
+    api = TestClient(app).get("/api/copilot", params={"q": "MT Bank"}).json()
+    assert [i["thread_id"] for i in api["items"]] == ["t2"] and api["q"] == "MT Bank"
+
+
+# ── abrir/ler NÃO marca como lido; só Resolvido ──
+def test_opening_or_reading_never_marks_read(monkeypatch):
+    calls = []
+    monkeypatch.setattr(gmail_client, "mark_threads_read", lambda ids: calls.append(("gmail", list(ids))) or ids)
+    real_local = store.mark_local_read
+    monkeypatch.setattr(store, "mark_local_read", lambda ids: calls.append(("local", list(ids))) or real_local(ids))
+    _thread()
+    _llm(monkeypatch, {"papel_leo": "demanda", "bola": "leo"})
+    client = TestClient(app)
+    assert client.get("/api/copilot/t1").status_code == 200
+    assert client.get("/api/copilot/t1?refresh=1").status_code == 200
+    copilot.detail("t1")
+    copilot.analyze("t1", force=True)
+    client.get("/api/copilot")
+    client.get("/api/copilot?all=1&q=pix")
+    assert calls == [], f"abrir/ler marcou lido: {calls}"
+    assert store.get_thread("t1")["is_unread"] == 1
+    assert any(i["thread_id"] == "t1" for i in copilot.list_items(show_all=False)["items"]), "continua no quadro de não lidos"
+    copilot.act("t1", "resolver")
+    assert ("gmail", ["t1"]) in calls and ("local", ["t1"]) in calls
+
+
+def test_copilot_frontend_open_paths_do_not_call_mark_read():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "static" / "copilot.js").read_text(encoding="utf-8")
+    assert "mark-read" not in js and "mark_read" not in js
+
+
+# ── alvo do pedido: pedido a outra pessoa não é demanda do Leo ──
+def test_ask_to_douglas_with_leo_only_cc_is_not_precisa_de_voce():
+    body = "De: Ana <ana@x.com>\nData: x\n\nDouglas, pode enviar o prazo da migração?"
+    row = _thread(to="Douglas Lima <douglas@x.com>", cc=ME, body=body)
+    item = copilot.heuristic(row, body)
+    assert copilot.tab_for({**item, "status": "aberto"}) != "precisa_de_voce"
+
+
+def test_ask_to_douglas_with_leo_in_to_is_not_demand():
+    body = "De: Ana <ana@x.com>\nData: x\n\nDouglas, pode enviar o prazo da migração?"
+    row = _thread(to=f"Douglas Lima <douglas@x.com>, Leo <{ME}>", body=body)
+    assert copilot._ask_target(row, body) == "outros"
+    item = copilot.heuristic(row, body)
+    assert item["papel"] not in ("demanda", "mencionado_opiniao")
+    assert copilot.tab_for({**item, "status": "aberto"}) != "precisa_de_voce"
+    # a IA insiste em demanda: o cap rebaixa (bola com o Douglas -> Aguardando outras)
+    parsed = {"papel_leo": "demanda", "urgencia": "alta", "bola": "outros", "bola_email": "douglas@x.com"}
+    item = copilot.interpret(row, body, parsed, [])
+    assert item["papel"] == "fyi" and item["urgencia"] != "alta"
+    assert copilot.tab_for({**item, "status": "aberto"}) == "bola_com_outros"
+    parsed = {"papel_leo": "demanda", "bola": "leo"}
+    item = copilot.interpret(row, body, parsed, [])
+    assert copilot.tab_for({**item, "status": "aberto"}) == "so_conhecimento"
+
+
+def test_ask_to_douglas_even_with_leo_only_recipient_in_to():
+    body = "De: Ana <ana@x.com>\nData: x\n\nOi Douglas, pode enviar o prazo?"
+    row = _thread(to=ME, body=body)
+    item = copilot.interpret(row, body, {"papel_leo": "demanda", "bola": "leo"}, [])
+    assert copilot.tab_for({**item, "status": "aberto"}) != "precisa_de_voce"
+
+
+def test_ask_to_leo_by_name_is_demand():
+    body = "De: Ana <ana@x.com>\nData: x\n\nLeo, pode revisar o contrato?"
+    row = _thread(to=f"Douglas Lima <douglas@x.com>, Leo <{ME}>", body=body)
+    assert copilot._ask_target(row, body) == "voce"
+    item = copilot.interpret(row, body, {"papel_leo": "demanda", "bola": "leo"}, [])
+    assert item["papel"] == "demanda"
+    assert copilot.tab_for({**item, "status": "aberto"}) == "precisa_de_voce"
+    assert copilot.heuristic(row, body)["papel"] in ("demanda", "mencionado_opiniao")
+
+
+def test_generic_ask_with_leo_sole_recipient_is_demand():
+    body = "De: Ana <ana@x.com>\nData: x\n\nPrezados, podem enviar o relatório de conciliação até 10/10?"
+    row = _thread(to=ME, body=body)
+    assert copilot._ask_target(row, body) == ""
+    item = copilot.heuristic(row, body)
+    assert item["papel"] == "demanda"
+    assert copilot.tab_for({**item, "status": "aberto"}) == "precisa_de_voce"
+
+
+def test_prompt_states_ask_target_rule(monkeypatch):
+    body = "De: Ana <ana@x.com>\nData: x\n\nDouglas, pode enviar o prazo?"
+    _thread(to=f"Douglas Lima <douglas@x.com>, Leo <{ME}>", body=body)
+    seen = _llm(monkeypatch, {"papel_leo": "demanda", "bola": "leo"})
+    out = copilot.analyze("t1", force=True)
+    assert "pedido a X ≠ demanda do Leo" in seen["prompt"]
+    assert "dirigido a OUTRA pessoa" in seen["prompt"]
+    assert out["tab"] != "precisa_de_voce"
+
+
+def test_stale_demand_asked_to_someone_else_is_healed():
+    body = "De: Ana <ana@x.com>\nData: x\n\nDouglas, pode enviar o prazo?"
+    row = _thread(to=f"Douglas Lima <douglas@x.com>, Leo <{ME}>", body=body)
+    store.save_copilot_item(
+        "t1", papel="demanda", status="aberto", source="llm", urgencia="alta", internal_date_snapshot=row["internal_date"],
+        bola_json=json.dumps({"com": "leo", "email": ME, "nome": "Você"}), opcoes_json="[]",
+    )
+    it = next(i for i in copilot.list_items(show_all=True)["items"] if i["thread_id"] == "t1")
+    assert it["papel"] == "fyi" and it["tab"] == "so_conhecimento"
+    assert store.get_copilot_item("t1")["papel"] == "fyi", "corrigido no banco"
+
+
+# ── "Resolver todos" da coluna ──
+def _llm_item(tid, papel, bola=None):
+    row = store.get_thread(tid)
+    store.save_copilot_item(
+        tid, papel=papel, status="aberto", source="llm", urgencia="media", internal_date_snapshot=row["internal_date"],
+        bola_json=json.dumps(bola or {"com": "leo", "email": ME, "nome": "Você"}), opcoes_json="[]",
+    )
+
+
+def test_resolve_column_resolves_only_that_tab(monkeypatch):
+    calls = []
+    monkeypatch.setattr(gmail_client, "mark_threads_read", lambda ids: calls.append(list(ids)) or ids)
+    _thread("t1")
+    _thread("t2", date=11)
+    _thread("t3", date=12, to="bia@x.com", cc=ME, body=CC_BODY)
+    _llm_item("t1", "demanda")
+    _llm_item("t2", "demanda")
+    _llm_item("t3", "so_copia", {"com": "ninguem", "email": "", "nome": ""})
+    tabs = {i["thread_id"]: i["tab"] for i in copilot.list_items(show_all=False)["items"]}
+    assert tabs == {"t1": "precisa_de_voce", "t2": "precisa_de_voce", "t3": "so_conhecimento"}
+
+    r = TestClient(app).post("/api/copilot/resolve-column", json={"tab": "precisa_de_voce"})
+    assert r.status_code == 200
+    assert r.json()["resolvidos"] == 2 and sorted(r.json()["thread_ids"]) == ["t1", "t2"]
+    assert sorted(calls[0]) == ["t1", "t2"]
+    for tid in ("t1", "t2"):
+        assert store.get_copilot_item(tid)["status"] == "resolvido"
+        assert store.get_thread(tid)["is_unread"] == 0
+    # a outra coluna não mexe
+    assert store.get_copilot_item("t3")["status"] == "aberto" and store.get_thread("t3")["is_unread"] == 1
+    left = copilot.list_items(show_all=False)["items"]
+    assert [i["thread_id"] for i in left] == ["t3"]
+
+
+def test_resolve_column_thread_ids_only_restrict_and_bad_tab_is_rejected(monkeypatch):
+    monkeypatch.setattr(gmail_client, "mark_threads_read", lambda ids: ids)
+    _thread("t1")
+    _thread("t2", date=11)
+    _thread("t3", date=12, to="bia@x.com", cc=ME, body=CC_BODY)
+    _llm_item("t1", "demanda")
+    _llm_item("t2", "demanda")
+    _llm_item("t3", "so_copia", {"com": "ninguem", "email": "", "nome": ""})
+    client = TestClient(app)
+    r = client.post("/api/copilot/resolve-column", json={"tab": "precisa_de_voce", "thread_ids": ["t1", "t3"]})
+    assert r.json()["thread_ids"] == ["t1"], "t3 é de outra coluna: não entra mesmo se o cliente mandar"
+    assert store.get_copilot_item("t2")["status"] == "aberto"
+    assert client.post("/api/copilot/resolve-column", json={"tab": "resolvido"}).status_code == 400
+    assert client.post("/api/copilot/resolve-column", json={"tab": "so_conhecimento", "thread_ids": []}).json()["resolvidos"] == 0
+
+
+def test_resolve_column_survives_gmail_failure(monkeypatch):
+    def boom(ids):
+        raise RuntimeError("sem scope")
+
+    monkeypatch.setattr(gmail_client, "mark_threads_read", boom)
+    _thread("t1")
+    _llm_item("t1", "demanda")
+    out = copilot.resolve_column("precisa_de_voce")
+    assert out["resolvidos"] == 1 and out["gmail_ok"] is False
+    assert store.get_copilot_item("t1")["status"] == "resolvido" and store.get_thread("t1")["is_unread"] == 0
+
+
+def test_frontend_has_resolve_all_button():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "static"
+    js = (root / "copilot.js").read_text(encoding="utf-8")
+    assert "/api/copilot/resolve-column" in js and "Resolver todos" in js
+    assert "Serão marcados como lidos no Gmail" in js

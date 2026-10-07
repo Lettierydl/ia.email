@@ -94,6 +94,11 @@ class LearnedBody(BaseModel):
     person_email: str = ""
 
 
+class SaveDraftBody(BaseModel):
+    """Persistência do rascunho editado (autosave). Sem LLM, sem envio."""
+    text: str = ""
+
+
 class SendBody(BaseModel):
     text: str
     cc: str = ""
@@ -158,6 +163,11 @@ class CopilotActionBody(BaseModel):
     nota: str = ""
     index: Optional[int] = None
     feita: bool = True
+
+
+class CopilotResolveColumnBody(BaseModel):
+    tab: str
+    thread_ids: Optional[list[str]] = None
 
 
 class CopilotPrefsBody(BaseModel):
@@ -526,12 +536,37 @@ def thread_original_preview(thread_id: str):
         body = assistant._ensure_body(thread_id)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
+    draft = row.get("draft") or ""
     return {
         "subject": row.get("subject") or "",
         "from_email": row.get("from_email") or "",
         "from_name": row.get("from_name") or "",
         "body": body,
+        "draft": draft,
+        "has_draft": bool(str(draft).strip()),
     }
+
+
+@app.get("/api/threads/{thread_id}/draft")
+def thread_get_draft(thread_id: str):
+    """Rascunho salvo (sqlite), sem LLM — para pintar o composer na hora."""
+    row = store.get_thread(thread_id)
+    if not row:
+        raise HTTPException(404, "Thread não encontrada.")
+    text = row.get("draft") or ""
+    return {"draft": text, "has_draft": bool(str(text).strip())}
+
+
+@app.post("/api/threads/{thread_id}/save-draft")
+def thread_save_draft(thread_id: str, body: SaveDraftBody):
+    """Autosave do textarea: grava em sqlite sem chamar a IA e sem enviar."""
+    row = store.get_thread(thread_id)
+    if not row:
+        raise HTTPException(404, "Thread não encontrada.")
+    text = body.text if body.text is not None else ""
+    store.save_ai(thread_id, draft=text)
+    store.log_event("draft_save", thread_id)
+    return {"ok": True, "len": len(text)}
 
 
 @app.post("/api/threads/{thread_id}/draft")
@@ -905,10 +940,12 @@ def board_data():
 
 # ── Copiloto ── (rotas fixas antes de /api/copilot/{thread_id})
 @app.get("/api/copilot")
-def copilot_list(all: Optional[bool] = Query(None), user: Optional[str] = Query(None)):
+def copilot_list(all: Optional[bool] = Query(None), user: Optional[str] = Query(None), q: str = Query("", max_length=200)):
     # abrir o painel já põe a IA para ler o que falta, em segundo plano
-    copilot.ensure_batch()
-    data = copilot.list_items(show_all=all, user=user)
+    if not q.strip():
+        copilot.ensure_batch()
+    # q = busca: olha lidos/resolvidos também (não só o quadro de não lidos)
+    data = copilot.list_items(show_all=all, user=user, q=q)
     data["sync"] = _sync_status()
     return data
 
@@ -940,6 +977,15 @@ def copilot_settings(user: Optional[str] = Query(None)):
 def copilot_settings_save(body: CopilotPrefsBody, user: Optional[str] = Query(None)):
     try:
         return copilot.save_prefs(user, **body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/copilot/resolve-column")
+def copilot_resolve_column(body: CopilotResolveColumnBody, user: Optional[str] = Query(None)):
+    # "Resolver todos" da coluna: marca resolvido + lido no Gmail; não envia nada
+    try:
+        return copilot.resolve_column(body.tab, body.thread_ids, user)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -1086,13 +1132,7 @@ def list_gmail_attachments(thread_id: str):
         raise HTTPException(400, str(exc)) from exc
 
 
-@app.get("/api/threads/{thread_id}/gmail-attachments/{message_id}/{attachment_id}")
-def download_gmail_attachment(
-    thread_id: str,
-    message_id: str,
-    attachment_id: str,
-    filename: str = Query("anexo"),
-):
+def _gmail_attachment_response(thread_id: str, message_id: str, attachment_id: str, filename: str, as_download: bool):
     try:
         data = gmail_client.get_attachment_bytes(thread_id, message_id, attachment_id)
     except RuntimeError as exc:
@@ -1101,12 +1141,36 @@ def download_gmail_attachment(
         raise HTTPException(404, "Anexo não encontrado.") from exc
     ctype, _ = mimetypes.guess_type(filename)
     safe_name = re.sub(r'[\r\n"]', "_", filename)
-    disposition = f"inline; filename=\"{safe_name}\"; filename*=UTF-8''{quote(filename)}"
+    kind = "attachment" if as_download else "inline"
+    disposition = f"{kind}; filename=\"{safe_name}\"; filename*=UTF-8''{quote(filename)}"
     return Response(
         content=data,
         media_type=ctype or "application/octet-stream",
         headers={"Content-Disposition": disposition},
     )
+
+
+@app.get("/api/threads/{thread_id}/gmail-attachments/{message_id}/file")
+def download_gmail_attachment_file(
+    thread_id: str,
+    message_id: str,
+    attachment_id: str = Query(...),
+    filename: str = Query("anexo"),
+    download: bool = Query(False),
+):
+    """attachment_id na query: IDs longos/com caracteres especiais não quebram a rota."""
+    return _gmail_attachment_response(thread_id, message_id, attachment_id, filename, download)
+
+
+@app.get("/api/threads/{thread_id}/gmail-attachments/{message_id}/{attachment_id}")
+def download_gmail_attachment(
+    thread_id: str,
+    message_id: str,
+    attachment_id: str,
+    filename: str = Query("anexo"),
+    download: bool = Query(False),
+):
+    return _gmail_attachment_response(thread_id, message_id, attachment_id, filename, download)
 
 
 @app.get("/api/threads/{thread_id}/attachments")

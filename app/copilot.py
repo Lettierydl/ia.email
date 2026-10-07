@@ -46,6 +46,7 @@ _MIN_QUOTE = 8
 _MAX_OPTIONS = 3
 DEFAULT_LIMIT = 12
 LIST_LIMIT = 200
+SEARCH_EXTRA = 60
 
 _LOCK = threading.Lock()
 _JOB: dict = {"running": False, "done": 0, "total": 0, "current": "", "current_id": "", "pending": [], "errors": 0, "finished_at": None, "cancel": False}
@@ -124,6 +125,86 @@ def _mentions_me(text: str) -> bool:
     return bool(re.search(r"\b(leo|lettiery)\b", text or "", re.IGNORECASE))
 
 
+def _only_cc(row: dict) -> bool:
+    """O Leo está só em Cc (não no Para) e não foi ele quem escreveu por último."""
+    me = _me()
+    to = {a["email"] for a in _addresses(row.get("to_header"))}
+    cc = {a["email"] for a in _addresses(row.get("cc_header"))}
+    return me in cc and me not in to and not row.get("last_from_me")
+
+
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+_LEO_VOCATIVE_RE = re.compile(r"^\s*(?:oi|ol[aá]|bom dia|boa tarde|boa noite)?[\s,]*(leo|lettiery)\s*[,!:]", re.IGNORECASE)
+
+
+def _asks_me(text: str) -> bool:
+    """Pedido dirigido ao Leo, explícito: uma frase do texto da própria pessoa
+    (sem o histórico citado) que cita o Leo e pede algo, ou o e-mail abre com
+    "Leo," e tem pedido. Pedido genérico a outra pessoa não conta."""
+    own = _own_text(text)
+    if _LEO_VOCATIVE_RE.match(own) and _PEDIDO_RE.search(own):
+        return True
+    return any(_mentions_me(s) and _PEDIDO_RE.search(s) for s in _SENTENCE_RE.split(own))
+
+
+# Palavras que abrem frase com vírgula mas não são gente ("Prezados, ...", "Então, pode...?")
+_NOT_A_NAME = {
+    "oi", "ola", "prezado", "prezados", "prezada", "prezadas", "caro", "caros", "cara", "caras", "pessoal",
+    "senhores", "senhoras", "time", "equipe", "galera", "gente", "todos", "todas", "amigos", "bom", "boa",
+    "obrigado", "obrigada", "grato", "grata", "segue", "seguem", "conforme", "favor", "ok", "certo", "perfeito",
+    "beleza", "entao", "sim", "nao", "agora", "hoje", "ontem", "amanha", "tambem", "porem", "contudo", "alem",
+    "enfim", "desculpe", "desculpa", "atenciosamente", "abracos", "abs", "att", "lembrando", "importante",
+    "urgente", "pois", "assim", "depois", "antes", "ainda", "logo", "aqui", "dessa", "desta", "nesse", "neste",
+}
+
+
+def _vocative_other(text: str, author_first: str = "") -> bool:
+    """O texto abre chamando outra pessoa pelo nome ("Douglas, pode...?") --
+    não o Leo, não o próprio autor, não um "Prezados,"."""
+    voc = _VOCATIVE_RE.match(text or "")
+    if not voc:
+        return False
+    name = _fold(voc.group(1))
+    return name not in _NOT_A_NAME and name not in ("leo", "lettiery") and name != _fold(author_first)
+
+
+def _ask_target(row: dict, body: str) -> str:
+    """Para quem é o pedido em aberto da conversa: "voce" (pede ao Leo pelo
+    nome), "outros" (pede só a outra pessoa -- "Douglas, pode enviar?") ou ""
+    (sem pedido aberto ou sem alvo nomeado). Pedido a X não é demanda do Leo."""
+    me = _me()
+    msgs = _messages(body)
+    if msgs:
+        conv = conversa(msgs, _participants(row))
+        s = (conv or {}).get("solicitante")
+        if not conv or conv["status"] != "aguardando" or not s or s["voce"]:
+            return ""
+        text, author = "", {"nome": s["nome"], "email": s["email"]}
+        for m in msgs:
+            if _who(m["de"])["email"] == s["email"] and _msg_ts(m["data"]) == s["em"]:
+                text = _own_text(m["texto"])
+                break
+    else:
+        text = _own_text(row.get("snippet") or "")
+        author = {"nome": row.get("from_name") or "", "email": (row.get("from_email") or "").lower()}
+    if not text or not _PEDIDO_RE.search(text):
+        return ""
+    if _asks_me(text):
+        return "voce"
+    if _vocative_other(text, _first_name(author["nome"], author["email"])):
+        return "outros"
+    # nome só citado no meio da frase: com o Leo único no Para, o pedido segue sendo dele
+    if {a["email"] for a in _addresses(row.get("to_header"))} == {me}:
+        return ""
+    names = {_fold(_first_name(a["name"], a["email"])) for a in _participants(row) if a["email"] not in (me, author["email"])}
+    names = {n for n in names if len(n) >= 3 and n not in _NOT_A_NAME}
+    for sent in _SENTENCE_RE.split(text):
+        folded = _fold(sent)
+        if _PEDIDO_RE.search(sent) and any(re.search(rf"\b{re.escape(n)}\b", folded) for n in names):
+            return "outros"
+    return ""
+
+
 def _short_name(name: str, email: str) -> str:
     name = (name or "").strip().strip('"')
     if name and "@" not in name:
@@ -172,7 +253,12 @@ def heuristic(row: dict, body: str = "") -> dict:
     elif row.get("last_from_me"):
         papel = "demanda"
     elif me in cc and me not in to:
-        papel = "mencionado_opiniao" if _mentions_me(last) else "so_copia"
+        # só copiado: nunca vira demanda; no máximo "pedem sua opinião", e só
+        # quando alguém pede algo ao Leo pelo nome
+        papel = "mencionado_opiniao" if _asks_me(last) else "so_copia"
+    elif _ask_target(row, body) == "outros":
+        # "Douglas, pode enviar o prazo?": o pedido é de outra pessoa, mesmo com o Leo no Para
+        papel = "fyi"
     elif row.get("needs_action_hint") or (me in to and _PEDIDO_RE.search(blob)):
         papel = "demanda"
     elif _mentions_me(last) and len(to) > 1:
@@ -256,6 +342,13 @@ def _prompt(row: dict, body: str, sources: list[dict], base: dict) -> str:
         f'- "papel_leo": um de {list(PAPEIS)}. so_copia = Leo só copiado sem pedido a ele; '
         "mencionado_opiniao = citam o Leo ou pedem a opinião dele; demanda = pedem algo que o Leo precisa fazer/decidir; "
         "fyi = informativo; pode_ignorar = ruído.\n"
+        "  Para/Cc importam: se o Leo está SÓ em Cc (não no Para), o papel é so_copia -- NUNCA demanda. "
+        "Só use mencionado_opiniao nesse caso se alguém pedir algo AO LEO pelo nome, e cite esse trecho como evidência; "
+        "pedido feito a outra pessoa da conversa não conta.\n"
+        "  Alvo do pedido: pedido a X ≠ demanda do Leo. Se o pedido em aberto é dirigido a outra pessoa "
+        '(ex.: "Douglas, pode enviar o prazo?"), NÃO é demanda nem mencionado_opiniao, mesmo com o Leo no Para: '
+        "use fyi (ou so_copia se ele está só em Cc). Só é demanda se o pedido for AO Leo (pelo nome) ou, sem "
+        "ninguém nomeado, se o Leo for o destinatário natural no Para.\n"
         '- "o_que_aconteceu": UMA linha humana (máx. 140 caracteres) sobre o estado atual da conversa, '
         "com suas palavras (resuma; não copie o texto do e-mail).\n"
         f'- "urgencia": um de {list(URGENCIAS)} (alta só com prazo real ou impacto claro).\n'
@@ -274,7 +367,10 @@ def _prompt(row: dict, body: str, sources: list[dict], base: dict) -> str:
         "NUNCA invente fato, nome, valor ou data.\n\n"
         f"{learned.notes_block(row.get('id') or '', row.get('subject') or '', learned.thread_emails(row))}"
         f"Leitura por regra (pode corrigir): papel={base['papel']}, bola={base['bola']['com']}.\n"
-        f"Para: {row.get('to_header') or '?'}\nCc: {row.get('cc_header') or '-'}\n\n"
+        f"Para: {row.get('to_header') or '?'}\nCc: {row.get('cc_header') or '-'}\n"
+        + ("O Leo está SÓ em Cc nesta conversa.\n" if _only_cc(row) else "")
+        + ("O pedido em aberto é dirigido a OUTRA pessoa, não ao Leo.\n" if _ask_target(row, body) == "outros" else "")
+        + "\n"
         f"Trechos disponíveis:\n{numbered}\n\n"
         f"Assunto: {row.get('subject') or ''}\n\nThread:\n{body[-12000:]}"
     )
@@ -349,6 +445,58 @@ def _options(raw_opts, body: str, sources: list[dict]) -> list[dict]:
     return out[:_MAX_OPTIONS]
 
 
+_NO_BALL = {"com": "ninguem", "email": "", "nome": ""}
+
+
+def _cap_only_cc(item: dict, row: dict, body: str) -> dict:
+    """Regra do Leo: "se eu fui só copiado não deveria estar em Precisa de
+    você, e sim apenas cópia". Só em Cc nunca vira demanda; vira no máximo
+    "pedem sua opinião", e só com pedido ao Leo pelo nome (no texto ou numa
+    citação literal que a IA trouxe como evidência). O resto cai em só cópia
+    -> coluna Só conhecimento."""
+    if not _only_cc(row) or item.get("papel") not in ("demanda", "mencionado_opiniao"):
+        return item
+    if _quoted_ask(item) or _asks_me(_last_message(body) or row.get("snippet") or ""):
+        item["papel"] = "mencionado_opiniao"
+        return item
+    item.update(papel="so_copia", bola=dict(_NO_BALL), depende_de_outros=False, sem_resposta_desde=None, needs_context=False)
+    if item.get("urgencia") == "alta":
+        item["urgencia"] = "baixa"
+    return item
+
+
+def _quoted_ask(item: dict) -> bool:
+    """A IA trouxe como evidência uma citação literal que pede algo ao Leo pelo nome."""
+    return any(
+        e.get("tipo") == "mensagem" and _mentions_me(e.get("trecho") or "") and _PEDIDO_RE.search(e.get("trecho") or "")
+        for o in item.get("opcoes") or [] for e in o.get("evidencias") or []
+    )
+
+
+def _cap_ask_others(item: dict, row: dict, body: str) -> dict:
+    """Pedido a X ≠ demanda do Leo: se o pedido em aberto é dirigido só a
+    outra pessoa ("Douglas, pode ver?"), sai de Precisa de você mesmo com o
+    Leo no Para. Vira so_copia (só em Cc) ou fyi; a bola fica com quem a IA
+    apontou se for outra pessoa (-> Aguardando outras), senão com ninguém."""
+    if row.get("last_from_me") or item.get("papel") not in ("demanda", "mencionado_opiniao"):
+        return item
+    if _quoted_ask(item) or _ask_target(row, body) != "outros":
+        return item
+    me = _me()
+    bola = item.get("bola") or {}
+    keep = bola.get("com") == "outros" and bool(bola.get("email")) and bola.get("email") != me
+    item.update(
+        papel="so_copia" if _only_cc(row) else "fyi",
+        bola=dict(bola) if keep else dict(_NO_BALL),
+        depende_de_outros=keep,
+        sem_resposta_desde=item.get("sem_resposta_desde") if keep else None,
+        needs_context=False,
+    )
+    if item.get("urgencia") == "alta":
+        item["urgencia"] = "baixa"
+    return item
+
+
 def interpret(row: dict, body: str, parsed: dict, sources: list[dict]) -> dict:
     """Transforma a resposta do modelo em item validado, completando com a
     leitura por regra onde o modelo falhar."""
@@ -386,6 +534,8 @@ def interpret(row: dict, body: str, parsed: dict, sources: list[dict]) -> dict:
     item["tarefas"] = [{"texto": _clip(str(t), 140), "feita": False} for t in tarefas if str(t).strip()][:5]
 
     item["opcoes"] = _options(parsed.get("o_que_eu_faria"), body, sources)
+    _cap_only_cc(item, row, body)
+    _cap_ask_others(item, row, body)
     item["needs_context"] = not item["opcoes"] and item["papel"] in ("demanda", "mencionado_opiniao")
     item["o_que_falta"] = _clip(str(parsed.get("o_que_falta") or ""), 300)
     item["pergunta"] = _clip(str(parsed.get("pergunta") or ""), 200)
@@ -731,7 +881,29 @@ def classified(item: dict, acted: bool = False) -> bool:
     return item["source"] in _FINAL or item["status"] != "aberto" or acted
 
 
+def _heal_papel(row: dict, db: dict | None) -> dict | None:
+    """Leitura antiga (antes das regras do só-Cc e do alvo do pedido) que pôs
+    em demanda um e-mail em que o Leo está só copiado ou em que o pedido é a
+    outra pessoa: corrige no banco na primeira vez que o item aparece. Só
+    mexe em item "aberto" -- se o Leo assumiu/arrastou, vale ele."""
+    if not db or (db.get("status") or "aberto") != "aberto" or db.get("papel") not in ("demanda", "mencionado_opiniao"):
+        return db
+    if row.get("last_from_me"):
+        return db
+    body = row.get("body_text") or ""
+    item = _cap_ask_others(_cap_only_cc(_from_db(row, db), row, body), row, body)
+    if item["papel"] == db.get("papel"):
+        return db
+    store.save_copilot_item(
+        row["id"], papel=item["papel"], bola_json=json.dumps(item["bola"], ensure_ascii=False),
+        depende_de_outros=int(item["depende_de_outros"]), sem_resposta_desde=item["sem_resposta_desde"],
+        needs_context=int(item["needs_context"]), urgencia=item["urgencia"],
+    )
+    return store.get_copilot_item(row["id"]) or db
+
+
 def _present(row: dict, db: dict | None, acted: bool = False, ai: bool | None = None) -> dict:
+    db = _heal_papel(row, db)
     item = _from_db(row, db)
     # quem pediu / sem resposta: das mensagens reais (corpo em cache), não do último remetente
     _apply_conversa(item, conversa(_messages(row.get("body_text") or ""), _participants(row)))
@@ -758,6 +930,7 @@ def _present(row: dict, db: dict | None, acted: bool = False, ai: bool | None = 
         "pendente": pendente,
         # a leitura deu erro: continua na fila até o Leo pedir de novo
         "falhou": pendente and row["id"] in _FAILED,
+        "has_draft": bool((row.get("draft") or "").strip()),
         **item,
     }
 
@@ -766,22 +939,54 @@ def _sort_key(it: dict):
     return (_URG_ORDER.get(it["urgencia"], 9), it["prazo"] or "9999", -(it["internal_date"] or 0))
 
 
-def list_items(show_all: bool | None = None, user: str | None = None) -> dict:
+def _search_terms(q: str | None) -> list[str]:
+    return _fold(" ".join((q or "").split())).split()
+
+
+def _matches(row: dict, item: dict, terms: list[str]) -> bool:
+    """Busca do painel: todos os termos (sem acento/caixa) no assunto, em
+    quem mandou, no trecho do Gmail, na linha da IA ou no corpo em cache."""
+    hay = _fold(" ".join(str(x or "") for x in (
+        row.get("subject"), row.get("from_name"), row.get("from_email"), row.get("last_from_header"),
+        row.get("snippet"), item.get("o_que_aconteceu"), (row.get("body_text") or "")[:6000],
+    )))
+    return all(t in hay for t in terms)
+
+
+def list_items(show_all: bool | None = None, user: str | None = None, q: str | None = None) -> dict:
     """Por padrão só os não lidos; a preferência "show_all" (ou o parâmetro)
-    devolve tudo. Abas, cartões Hoje/Esperando e contagens seguem o modo."""
-    if show_all is None:
+    devolve tudo. Abas, cartões Hoje/Esperando e contagens seguem o modo.
+    Com busca (q), olha tudo -- lidos, resolvidos e o que já saiu da caixa
+    visível -- e devolve só o que bate (o Leo acha o e-mail depois de agir)."""
+    terms = _search_terms(q)
+    if terms:
+        show_all = True
+    elif show_all is None:
         show_all = bool(get_prefs(user)["show_all"])
     stored = store.list_copilot_items()
     acted = store.copilot_acted_thread_ids()
     ai = llm.has_key()
-    items = [_present(row, stored.get(row["id"]), row["id"] in acted, ai) for row in store.list_visible()[:LIST_LIMIT]]
+    rows = store.list_visible()[:LIST_LIMIT]
+    items = [_present(row, stored.get(row["id"]), row["id"] in acted, ai) for row in rows]
     seen = {i["thread_id"] for i in items}
     # Resolvidos/delegados podem ter saído da caixa visível (respondidos): continuam na aba deles.
+    # Na busca entra tudo que o copiloto já leu, qualquer estado.
     for tid, db in stored.items():
-        if tid not in seen and db.get("status") in ("resolvido", "delegado", "cobrado", "aguardando"):
+        if tid not in seen and (terms or db.get("status") in ("resolvido", "delegado", "cobrado", "aguardando")):
             row = store.get_thread(tid)
             if row:
                 items.append(_present(row, db, tid in acted, ai))
+                seen.add(tid)
+    if terms:
+        by_id = {r["id"]: r for r in rows}
+        items = [i for i in items if _matches(by_id.get(i["thread_id"]) or store.get_thread(i["thread_id"]) or {}, i, terms)]
+        # e o resto da caixa (além das 200 recentes, respondidos/ocultos) que bater
+        extra = 0
+        for row in store.list_visible(include_hidden=True):
+            if extra >= SEARCH_EXTRA or row["id"] in seen or not _matches(row, {}, terms):
+                continue
+            items.append(_present(row, stored.get(row["id"]), row["id"] in acted, ai))
+            extra += 1
     total = len(items)
     # histórico conta sempre sobre a caixa inteira (resolvido = já lido no Gmail)
     historico = [
@@ -811,6 +1016,7 @@ def list_items(show_all: bool | None = None, user: str | None = None) -> dict:
         "fila": {**FILA, "count": len(fila), "falhas": sum(1 for i in fila if i["falhou"]), "ativa": ai},
         "items": items,
         "show_all": show_all,
+        "q": " ".join((q or "").split()),
         "total": total,
         "job": job_status(),
         "llm": llm.has_key(),
@@ -935,7 +1141,7 @@ def _fold(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c)).casefold()
 
 
-_VOCATIVE_RE = re.compile(r"^\s*(?:oi|ol[aá]|bom dia|boa tarde|boa noite)?[\s,]*([A-ZÀ-Ý][a-zà-ÿ]{2,})\s*[,!:]")
+_VOCATIVE_RE = re.compile(r"^\s*(?i:oi|ol[aá]|bom dia|boa tarde|boa noite)?[\s,]*([A-ZÀ-Ý][a-zà-ÿ]{2,})\s*[,!:]")
 
 
 def conversa(mensagens: list[dict], participantes: list[dict] | None = None) -> dict | None:
@@ -965,7 +1171,7 @@ def conversa(mensagens: list[dict], participantes: list[dict] | None = None) -> 
         if not m["voce"] and _mentions_me(m["texto"]):
             out.add(me)
         voc = _VOCATIVE_RE.match(m["texto"])  # "Denis, pode ver...?" sem o Denis na thread ainda
-        if not out and voc and _fold(voc.group(1)) != _fold(_first_name(m["nome"], m["email"])):
+        if not out and voc and _fold(voc.group(1)) not in _NOT_A_NAME and _fold(voc.group(1)) != _fold(_first_name(m["nome"], m["email"])):
             out.add("~" + _fold(voc.group(1)))
         return out or None
 
@@ -1243,6 +1449,29 @@ def _set_status(status):
     return run
 
 
+def resolve_after_send(thread_id: str) -> None:
+    """Pós-envio real (/mail ou /copilot, ou worker da outbox): igual a
+    'resolver' — status resolvido, lido local, some do quadro de não lidos.
+    Gmail já foi marcado lido em finalize_reply; aqui só o estado do copiloto.
+    Melhor esforço: nunca propaga erro (o e-mail já saiu)."""
+    try:
+        row, _item = _ensure_item(thread_id)
+    except Exception:
+        return
+    db = store.get_copilot_item(thread_id) or {}
+    if (db.get("status") or "") == "resolvido":
+        return
+    store.save_copilot_item(row["id"], status="resolvido")
+    try:
+        store.mark_local_read([row["id"]])
+    except Exception:
+        pass
+    try:
+        store.log_copilot_action(thread_id, "resolver", {"from_send": True})
+    except Exception:
+        pass
+
+
 def _aguardar(row, item, body):
     store.save_copilot_item(row["id"], status="aguardando", depende_de_outros=1)
     return {}
@@ -1279,6 +1508,34 @@ ACTIONS = {
     "so_saber": _so_saber,
     "tarefa": _tarefa,
 }
+
+
+def resolve_column(tab: str, thread_ids: list[str] | None = None, user: str | None = None) -> dict:
+    """"Resolver todos" de uma coluna do quadro: mesmo efeito do Resolvido
+    de cada cartão (status resolvido + lido no Gmail + lido local), sem enviar
+    nada. A coluna é recalculada aqui -- só entra o que está nela agora;
+    thread_ids (o que o Leo via na tela) restringe, nunca amplia."""
+    if tab not in {t["key"] for t in TABS} | {FILA["key"]}:
+        raise ValueError("Coluna inválida.")
+    items = list_items(user=user)["items"]
+    ids = [i["thread_id"] for i in items if i["tab"] == tab and i["status"] != "resolvido"]
+    if thread_ids is not None:
+        allowed = set(thread_ids)
+        ids = [t for t in ids if t in allowed]
+    for tid in ids:
+        if not store.get_copilot_item(tid):
+            _ensure_item(tid)  # item só da heurística: cria a linha antes de mudar o status
+        store.save_copilot_item(tid, status="resolvido")
+        store.log_copilot_action(tid, "resolver", {"lote": tab})
+    gmail_ok = True
+    if ids:
+        try:
+            from . import gmail_client
+            gmail_client.mark_threads_read(ids)
+        except Exception:
+            gmail_ok = False  # falha de scope/API não desfaz o resolve local (igual ao unitário)
+        store.mark_local_read(ids)
+    return {"ok": True, "tab": tab, "resolvidos": len(ids), "thread_ids": ids, "gmail_ok": gmail_ok}
 
 
 def act(thread_id: str, action: str, body: dict | None = None) -> dict:

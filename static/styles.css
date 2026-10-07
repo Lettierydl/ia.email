@@ -576,13 +576,14 @@ body.composing { max-width: 760px; }
   font-size: 12px;
 }
 .msg-attachments {
-  display: none;
+  display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   gap: 8px;
   padding: 0 12px 12px;
 }
-.msg-card.open .msg-attachments { display: flex; }
+/* Visíveis mesmo com o card recolhido — Leo precisa achar/abrir o anexo. */
+.msg-card:not(.open) .msg-attachments { padding-top: 0; }
 .msg-inline-image {
   display: block;
   border: 1px solid var(--line);

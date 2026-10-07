@@ -216,6 +216,13 @@ def finalize_reply(thread_id: str, text: str, ai_draft: str, source: str) -> Non
     store.log_event("sent", thread_id)
     for item in attachments.list_files(thread_id):
         attachments.delete_file(thread_id, item["name"])
+    # Envio real confirmado: marca Resolvido no Copiloto (igual à ação resolver).
+    # Não roda no enqueue/queued — só aqui e no worker após _deliver.
+    try:
+        from . import copilot
+        copilot.resolve_after_send(thread_id)
+    except Exception as exc:
+        print(f"[envio] resolvido pós-envio falhou ({thread_id}): {exc}")
 
 
 def finalize_new(result: dict[str, Any]) -> None:

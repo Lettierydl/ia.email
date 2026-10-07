@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#f6f5fb">
   <title>Copiloto · IA.Email</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/composer.css?v=2">
-  <link rel="stylesheet" href="/static/copilot.css?v=13">
+  <link rel="stylesheet" href="/static/composer.css?v=5">
+  <link rel="stylesheet" href="/static/copilot.css?v=22">
 </head>
 <body data-skin="clean" data-layout="mobile" data-mode="quadro">
   <div class="cp-app">
@@ -26,6 +26,11 @@
             <span class="cp-card-l">Aguardando outras pessoas</span><b id="cp-n-esp">0</b><small>esperando retorno</small>
           </button>
         </div>
+        <form class="cp-search" id="cp-search-form" role="search" onsubmit="return false">
+          <span class="ic-slot" data-icon="search" data-icon-size="17"></span>
+          <input type="search" id="cp-q" placeholder="Buscar e-mails…" aria-label="Buscar e-mails (assunto, remetente ou trecho), inclusive lidos e resolvidos" autocomplete="off" enterkeyhint="search">
+          <button type="button" id="cp-q-x" class="cp-search-x hidden" aria-label="Limpar busca" title="Limpar busca">×</button>
+        </form>
         <div class="cp-seg cp-viewtog" role="group" aria-label="Visualização">
           <button type="button" data-view="kanban">Kanban</button>
           <button type="button" data-view="lista">Lista</button>
@@ -43,6 +48,7 @@
       <ul id="cp-list" class="cp-list"></ul>
     </section>
     <section id="cp-hist" class="cp-histpane" aria-label="Histórico do copiloto"></section>
+    <section id="cp-found" class="cp-searchpane" aria-label="Resultados da busca" aria-live="polite"></section>
     <section id="cp-board" class="cp-board" aria-label="Quadro do copiloto"></section>
     <div id="cp-scrim" class="cp-scrim"></div>
     <section id="cp-detail" class="cp-detail" aria-label="Detalhe">
@@ -70,11 +76,11 @@
       <button type="button" id="annot-save" class="cp-btn primary">Salvar</button>
     </div>
   </div>
-  <script src="/static/icons.js?v=2"></script>
+  <script src="/static/icons.js?v=3"></script>
   <script src="/static/chat.js?v=2"></script>
-  <script src="/static/composer.js?v=2"></script>
+  <script src="/static/composer.js?v=5"></script>
   <script src="/static/annotate.js?v=96"></script>
   <script src="/static/netstatus.js?v=2"></script>
-  <script src="/static/copilot.js?v=12"></script>
+  <script src="/static/copilot.js?v=21"></script>
 </body>
 </html>

@@ -259,14 +259,20 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
         chat = _load_chat(row)
         if parsed["sugestao"] and not chat:
             chat = [{"role": "ai", "text": parsed["sugestao"]}]
+        # Não apaga rascunho já salvo/editado ao (re)gerar só o resumo.
+        existing_draft = (row.get("draft") or "").strip()
         save_kwargs = dict(
             summary=summary,
-            draft=parsed["sugestao"],
             chat_json=json.dumps(chat),
             needs_action_hint=1 if parsed["acao_leo"] else 0,
             fyi_only=1 if parsed["so_copia"] else 0,
             chat_anchor_date=row.get("internal_date") or 0,
         )
+        if existing_draft:
+            out_draft = existing_draft
+        else:
+            out_draft = parsed["sugestao"] or ""
+            save_kwargs["draft"] = out_draft
         if parsed["eh_propaganda"]:
             save_kwargs["is_marketing"] = 1
         if parsed["nota_captura"]:
@@ -279,7 +285,7 @@ def analyze(thread_id: str, *, force: bool = False) -> dict:
             "subject": row.get("subject") or "",
             "from_email": row.get("from_email") or "",
             "summary": summary,
-            "draft": parsed["sugestao"],
+            "draft": out_draft,
             "chat": chat,
             "fyi_only": parsed["so_copia"],
             "capture_note": parsed["nota_captura"],
@@ -449,6 +455,10 @@ def _chat_context(chat: list[dict], max_chars: int = 6000) -> str:
     return "\n".join(reversed(out))
 
 
+def _same_text(a: str, b: str) -> bool:
+    return " ".join((a or "").split()) == " ".join((b or "").split())
+
+
 def draft(thread_id: str, instruction: str, comment: str = "", current_draft: str = "") -> dict:
     """current_draft: o texto que o Leo tem na caixa agora (o copiloto manda o
     rascunho editado à mão). Vazio = usa o último rascunho salvo na thread."""
@@ -505,7 +515,19 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
             exclude_ref=f"mail:{thread_id}",
         )
         learned_block = learned.notes_block(thread_id, row.get("subject") or "", learned.thread_emails(row))
-        raw = llm.complete(
+        attach_block = attachments.extract_context(thread_id)
+        # Pedido de ajuste sobre um rascunho que já existe ("pergunta se faz sentido",
+        # "mais curto"...): sem isso, com o histórico e a fidelidade puxando pro texto
+        # anterior, a IA devolvia o MESMO rascunho e parecia que o pedido foi ignorado.
+        revision = (
+            "REVISÃO: o Leo já tem o Rascunho anterior (abaixo) e a instrução mais recente pede para "
+            "MUDÁ-LO. Parta dele, aplique exatamente o que foi pedido (acrescentar uma pergunta, "
+            "encurtar, citar algo, mudar o tom...) e devolva o e-mail inteiro já revisado. Devolver o "
+            "mesmo texto sem a mudança pedida é erro.\n"
+            if instruction and previous.strip()
+            else ""
+        )
+        prompt = (
             'Responda em JSON: {"kind": "draft" ou "answer", "text": "...", "cc_names": [...]}.\n'
             'kind="draft" é o PADRÃO. Use "draft" sempre que o Leo explicar, decidir, corrigir, '
             "comentar um trecho (instruções com [1], [2]... citando partes do e-mail), dar um "
@@ -536,6 +558,7 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
             "adicionado.\n\n"
             f"{extra_context}"
             f"{learned_block}"
+            f"{attach_block}"
             + (
                 "Conversa até agora entre você (IA) e o Leo sobre ESTE e-mail -- o que ele já explicou ou "
                 "decidiu aqui vale para o pedido atual, e a instrução mais recente tem prioridade se "
@@ -545,12 +568,23 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
                 if chat_context
                 else ""
             )
+            + revision
             + f"Instrução do Leo: {instruction or '(gerar a partir do contexto)'}\n"
             f"Ajuste pedido: {comment or '(nenhum)'}\n"
             f"Rascunho anterior:\n{previous or '(nenhum)'}\n\n"
             f"Assunto: {row.get('subject')}\n\n{_thread_outline(body)}Thread:\n{_recent_body(body)}"
         )
-        kind, text, cc_names = _parse_draft_response(raw)
+        kind, text, cc_names = _parse_draft_response(llm.complete(prompt))
+        # Voltou idêntico ao rascunho anterior: tenta uma vez mais, insistindo no pedido.
+        unchanged = bool(revision) and kind == "draft" and _same_text(text, previous)
+        if unchanged:
+            kind, text, cc_names = _parse_draft_response(
+                llm.complete(
+                    prompt + "\n\nATENÇÃO: sua resposta anterior devolveu o Rascunho anterior sem "
+                    f"nenhuma mudança. Aplique agora o pedido do Leo: {instruction}"
+                )
+            )
+            unchanged = kind == "draft" and _same_text(text, previous)
         cc_resolution = _resolve_cc_names(cc_names)
         store.log_event("draft" if kind == "draft" else "answer", thread_id)
 
@@ -573,6 +607,7 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
             "draft": text if kind == "draft" else (row.get("draft") or ""),
             "chat": chat,
             "summary": row.get("summary") or "",
+            "unchanged": unchanged,
         }
 
 
