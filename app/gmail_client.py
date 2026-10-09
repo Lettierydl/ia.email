@@ -613,9 +613,20 @@ def _split_addresses(header_value: str) -> list[dict[str, str]]:
     return out
 
 
-def get_recipients(thread_id: str) -> dict[str, list[dict[str, str]]]:
+def _reply_to_addr(headers: dict) -> str:
+    """Para padrão da resposta (o mesmo de sempre): o último remetente; se
+    foi o Leo, o Para da mensagem dele."""
+    _, from_addr = parseaddr(headers.get("from") or "")
+    if from_addr.lower() != ACCOUNT:
+        return from_addr
+    return parseaddr(headers.get("to") or "")[1] or ACCOUNT
+
+
+def get_recipients(thread_id: str) -> dict:
     """Para/Cc da ultima mensagem da thread -- pra mostrar quem mais foi
-    colocado no e-mail, alem do Leo."""
+    colocado no e-mail, alem do Leo. Também devolve o Para/Cc que o envio
+    usa por padrão (reply_to/reply_cc, "responder a todos") e todo mundo que
+    apareceu na thread (participants), para o composer editar os chips."""
     creds = load_credentials()
     if not creds:
         raise RuntimeError("Gmail nao autenticado.")
@@ -627,23 +638,154 @@ def get_recipients(thread_id: str) -> dict[str, list[dict[str, str]]]:
             userId="me",
             id=thread_id,
             format="metadata",
-            metadataHeaders=["To", "Cc"],
+            metadataHeaders=["From", "To", "Cc"],
         )
     )
     messages = raw.get("messages") or []
     if not messages:
-        return {"to": [], "cc": []}
+        return {"to": [], "cc": [], "reply_to": [], "reply_cc": [], "participants": []}
     headers = _header_map(messages[-1].get("payload") or {})
     return {
         "to": _split_addresses(headers.get("to") or ""),
         "cc": _split_addresses(headers.get("cc") or ""),
+        **reply_defaults([_header_map(m.get("payload") or {}) for m in messages]),
     }
 
 
-def send_reply(thread_id: str, body_text: str, cc: str = "", only_files: list[str] | None = None) -> dict:
+# Cabeçalhos por mensagem (De/Para/Cc/Cco/Data/Message-ID), na mesma ordem
+# de get_thread_text -> o índice casa com os cards da "Conversa completa".
+# Cache em memória por thread + internal_date (mensagem nova invalida).
+_META_CACHE: dict[str, tuple[float, Any, list[dict]]] = {}
+_META_TTL = 600.0
+
+
+def _meta_view(message: dict) -> dict:
+    headers = _header_map(message.get("payload") or {})
+    sender = _split_addresses(headers.get("from") or "")
+    return {
+        "id": message.get("id") or "",
+        "message_id": headers.get("message-id") or "",
+        "from": sender[0] if sender else {"name": headers.get("from") or "", "email": ""},
+        "to": _split_addresses(headers.get("to") or ""),
+        "cc": _split_addresses(headers.get("cc") or ""),
+        # Cco só aparece nas mensagens que o próprio Leo mandou
+        "bcc": _split_addresses(headers.get("bcc") or ""),
+        "date": headers.get("date") or "",
+        "subject": headers.get("subject") or "",
+    }
+
+
+def get_messages_meta(thread_id: str, *, force: bool = False) -> list[dict]:
+    """Uma entrada por mensagem da thread (format=metadata, só leitura)."""
+    anchor = (store.get_thread(thread_id) or {}).get("internal_date")
+    hit = _META_CACHE.get(thread_id)
+    if hit and not force and hit[1] == anchor and time.time() - hit[0] < _META_TTL:
+        return hit[2]
+    creds = load_credentials()
+    if not creds:
+        raise RuntimeError("Gmail nao autenticado.")
+    raw = _execute(
+        _service(creds)
+        .users()
+        .threads()
+        .get(
+            userId="me",
+            id=thread_id,
+            format="metadata",
+            metadataHeaders=["From", "To", "Cc", "Bcc", "Date", "Subject", "Message-ID"],
+        )
+    )
+    out = [_meta_view(m) for m in raw.get("messages") or []]
+    _META_CACHE[thread_id] = (time.time(), anchor, out)
+    return out
+
+
+def search_messages(query: str, max_results: int = 5) -> list[dict]:
+    """Busca na caixa do Leo (Verificador). SÓ LEITURA: messages.list com q +
+    messages.get format=metadata. Nunca modify/send/labels/trash. A query já
+    vem saneada (verify.sanitize_query)."""
+    creds = load_credentials()
+    if not creds:
+        raise RuntimeError("Gmail nao autenticado.")
+    messages = _service(creds).users().messages()
+    listed = _execute(messages.list(userId="me", q=query, maxResults=max(1, min(int(max_results), 10))))
+    out: list[dict] = []
+    for item in (listed.get("messages") or [])[:max_results]:
+        raw = _execute(
+            messages.get(
+                userId="me",
+                id=item["id"],
+                format="metadata",
+                metadataHeaders=["From", "To", "Cc", "Subject", "Date"],
+            )
+        )
+        headers = _header_map(raw.get("payload") or {})
+        out.append({
+            "message_id": raw.get("id") or item["id"],
+            "thread_id": raw.get("threadId") or item.get("threadId") or "",
+            "assunto": headers.get("subject") or "",
+            "de": headers.get("from") or "",
+            "para": headers.get("to") or "",
+            "cc": headers.get("cc") or "",
+            "data": headers.get("date") or "",
+            "internal_date": int(raw.get("internalDate") or 0),
+            "snippet": raw.get("snippet") or "",
+            "labels": list(raw.get("labelIds") or []),
+        })
+    return out
+
+
+def _find_target(messages: list[dict], reply_to_message_id: str) -> dict | None:
+    """Acha a mensagem pelo id do Gmail ou pelo Message-ID do cabeçalho."""
+    wanted = (reply_to_message_id or "").strip()
+    bare = wanted.strip("<>")
+    for m in messages:
+        if m.get("id") == wanted:
+            return m
+        mid = (_header_map(m.get("payload") or {}).get("message-id") or "").strip()
+        if mid and mid.strip("<>") == bare:
+            return m
+    return None
+
+
+def reply_defaults(all_headers: list) -> dict:
+    """Cabeçalhos de cada mensagem (a última por último) -> Para padrão,
+    Cc de "responder a todos" e participantes (nome + e-mail, sem o Leo)."""
+    last = all_headers[-1] if all_headers else {}
+    to_addr = _reply_to_addr(last).lower()
+    seen = {ACCOUNT, to_addr}
+    reply_cc = []
+    for a in _split_addresses(last.get("to") or "") + _split_addresses(last.get("cc") or ""):
+        email = a["email"].lower()
+        if email not in seen:
+            seen.add(email)
+            reply_cc.append(email)
+    people = {}
+    for h in all_headers:
+        for key in ("from", "to", "cc"):
+            for a in _split_addresses(h.get(key) or ""):
+                email = a["email"].lower()
+                if email == ACCOUNT:
+                    continue
+                if email not in people or (a["name"] and not people[email]["name"]):
+                    people[email] = {"email": email, "name": a["name"]}
+    return {"reply_to": [to_addr] if to_addr else [], "reply_cc": reply_cc, "participants": list(people.values())}
+
+
+def send_reply(thread_id: str, body_text: str, cc: str = "", only_files: list[str] | None = None,
+               to: str | list[str] | None = None, reply_to_message_id: str | None = None) -> dict:
     """only_files: nomes dos anexos (da pasta da thread) a mandar. None = todos
     os que estão na pasta agora (comportamento de sempre); a fila de envio
-    passa a lista fotografada no momento em que o Leo confirmou o envio."""
+    passa a lista fotografada no momento em que o Leo confirmou o envio.
+    to: Para escolhido no composer (lista ou "a@x, b@y"). Vazio/None = o de
+    sempre (último remetente; se foi o Leo, o Para dele). A resposta continua
+    na mesma conversa (In-Reply-To/References) em qualquer caso.
+    reply_to_message_id: responder a UMA mensagem da thread (id do Gmail ou
+    Message-ID), não à última: In-Reply-To = Message-ID dela, References =
+    References dela + Message-ID dela, e o Para padrão sai dela."""
+    from .recipients import clean_addresses
+
+    to_list = clean_addresses(to)  # inválido -> ValueError antes de falar com o Gmail
     creds = load_credentials()
     if not creds:
         raise RuntimeError("Gmail nao autenticado.")
@@ -655,15 +797,19 @@ def send_reply(thread_id: str, body_text: str, cc: str = "", only_files: list[st
     raw = _execute(
         service.users()
         .threads()
-        .get(userId="me", id=thread_id, format="metadata", metadataHeaders=["From", "To", "Subject", "Message-ID"])
+        .get(userId="me", id=thread_id, format="metadata",
+             metadataHeaders=["From", "To", "Subject", "Message-ID", "References"])
     )
     messages = raw.get("messages") or []
     if not messages:
         raise RuntimeError("Thread vazia.")
-    last = messages[-1]
-    headers = _header_map(last.get("payload") or {})
-    _, from_addr = parseaddr(headers.get("from") or "")
-    to_addr = from_addr if from_addr.lower() != ACCOUNT else (parseaddr(headers.get("to") or "")[1] or ACCOUNT)
+    target = messages[-1]
+    if reply_to_message_id:
+        target = _find_target(messages, reply_to_message_id)
+        if target is None:
+            raise RuntimeError("A mensagem que você quis responder não está mais nesta conversa. Recarregue e escolha de novo.")
+    headers = _header_map(target.get("payload") or {})
+    to_addr = ", ".join(to_list) if to_list else _reply_to_addr(headers)
     subject = headers.get("subject") or "(sem assunto)"
     if not subject.lower().startswith("re:"):
         subject = f"Re: {subject}"
@@ -688,16 +834,17 @@ def send_reply(thread_id: str, body_text: str, cc: str = "", only_files: list[st
     else:
         msg = MIMEText(body_text)
     msg["To"] = to_addr
-    cc_clean = ", ".join(
-        addr for addr in (a.strip() for a in (cc or "").split(",")) if addr and addr.lower() != to_addr.lower()
-    )
+    to_set = {a.strip().lower() for a in to_addr.split(",")}
+    cc_clean = ", ".join(addr for addr in clean_addresses(cc) if addr not in to_set)
     if cc_clean:
         msg["Cc"] = cc_clean
     msg["From"] = formataddr(("Lettiery D'Lamare", ACCOUNT))
     msg["Subject"] = subject
     if message_id:
         msg["In-Reply-To"] = message_id
-        msg["References"] = message_id
+        # resposta a uma mensagem do meio: a cadeia dela + ela (RFC 5322)
+        refs = (headers.get("references") or "").split() if reply_to_message_id else []
+        msg["References"] = " ".join([r for r in refs if r != message_id] + [message_id])
 
     raw_bytes = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     sent = _execute(
@@ -705,7 +852,11 @@ def send_reply(thread_id: str, body_text: str, cc: str = "", only_files: list[st
         .messages()
         .send(userId="me", body={"raw": raw_bytes, "threadId": thread_id})
     )
-    return {"id": sent.get("id"), "to": to_addr, "cc": cc_clean, "subject": subject}
+    _META_CACHE.pop(thread_id, None)  # a resposta vira mensagem nova da thread
+    out = {"id": sent.get("id"), "to": to_addr, "cc": cc_clean, "subject": subject}
+    if reply_to_message_id:
+        out["reply_to_message_id"] = target.get("id") or reply_to_message_id
+    return out
 
 
 def send_new(to: str, cc: str, subject: str, body_text: str) -> dict:

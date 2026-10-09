@@ -679,10 +679,12 @@
   // ── 5b. Copiloto: cards laterais do detalhe (preferência por usuário) ──
   async function initCopilotCards() {
     const prefs = await getJSON("/api/copilot/settings", null);
-    const tasks = $("st-cp-tasks"), facts = $("st-cp-facts"), status = $("st-cp-status");
+    const tasks = $("st-cp-tasks"), facts = $("st-cp-facts"), sendBack = $("st-cp-sendback"), celebrate = $("st-cp-celebrate"), status = $("st-cp-status");
     if (!prefs) { status.textContent = "Não consegui ler as preferências do copiloto."; return; }
     tasks.checked = prefs.show_tasks_card !== false;
     facts.checked = prefs.show_facts_card !== false;
+    sendBack.checked = prefs.send_resolve_back !== false;
+    if (celebrate) celebrate.checked = prefs.celebrate_zero !== false;
     const save = async (field, value) => {
       status.textContent = "Salvando…";
       try {
@@ -692,6 +694,11 @@
     };
     tasks.onchange = () => save("show_tasks_card", tasks.checked);
     facts.onchange = () => save("show_facts_card", facts.checked);
+    sendBack.onchange = () => {
+      save("send_resolve_back", sendBack.checked);
+      if (typeof sendResolveBack !== "undefined") sendResolveBack = sendBack.checked; // /mail desta aba já usa o novo valor
+    };
+    if (celebrate) celebrate.onchange = () => save("celebrate_zero", celebrate.checked);
   }
 
   // ── 6. Piloto ──
@@ -729,7 +736,12 @@
       const prev = existing.get(alias);
       if (prev && (prev.email || "").toLowerCase() !== (email || "").toLowerCase()) {
         const who = prev.name || prev.email || "outra pessoa";
-        if (!window.confirm(`O apelido "${alias}" já aponta para ${who}. Trocar para ${name || email || "esta pessoa"}?`)) continue;
+        const swap = await window.Dialog.confirm({
+          title: `Trocar o dono do apelido "${alias}"?`,
+          body: `Hoje "${alias}" aponta para ${who}. Se trocar, passa a apontar para ${name || email || "esta pessoa"}.`,
+          ok: "Trocar", cancel: `Manter ${who}`,
+        });
+        if (!swap) continue;
       }
       const res = await fetch("/api/settings/aliases", {
         method: "POST",
@@ -862,7 +874,7 @@
       : '<p class="st-empty">Nada aprendido ainda. Use o botão Aprender no detalhe do copiloto.</p>';
     el.querySelectorAll("[data-learned]").forEach((b) => {
       b.onclick = async () => {
-        if (!window.confirm("Remover este aprendizado? A IA deixa de usá-lo nos próximos e-mails.")) return;
+        if (!(await window.Dialog.confirm({ title: "Remover este aprendizado?", body: "A IA deixa de usá-lo nos próximos e-mails.", ok: "Remover", cancel: "Cancelar", danger: true }))) return;
         const res = await fetch(`/api/learned/${b.dataset.learned}`, { method: "DELETE" }).catch(() => null);
         toast(res && res.ok ? "Aprendizado removido" : "Não consegui remover.", !(res && res.ok));
         loadLearned();
@@ -901,7 +913,7 @@
   function initGenerated() {
     loadGenerated();
     $("st-files-delete-all").onclick = async () => {
-      if (!window.confirm("Apagar todos os arquivos exportados?")) return;
+      if (!(await window.Dialog.confirm({ title: "Apagar os arquivos exportados?", body: "Apaga todos os arquivos de contexto exportados. Não dá para desfazer.", ok: "Apagar tudo", cancel: "Cancelar", danger: true }))) return;
       await fetch("/api/settings/generated-files", { method: "DELETE" });
       toast("Arquivos apagados");
       loadGenerated();

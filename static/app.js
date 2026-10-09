@@ -29,6 +29,19 @@ let PRELOAD_ENABLED = true;
 let PRELOAD_COUNT = 2;
 let pendingCc = []; // e-mails confirmados pra copiar, vindos do "adicione fulano" no chat
 let lastRecipients = { to: [], cc: [] };
+// Para/Cc em chips (static/recipients.js), editáveis no composer e no modal
+// de envio. Padrão = o que o envio usaria (reply_to/reply_cc do /recipients).
+let mailRc = { to: [], cc: [], participants: [], touched: false };
+let mailRcData = {}; // resposta completa do /recipients
+let mailRcInstr = ""; // último pedido "responda a X" (para o aviso de destinatário)
+let mailRcKeep = ""; // "Manter" clicado neste aviso
+// Responder a UMA mensagem da thread (static/msgreply.js): { idx, all, id, label } | null
+let mailTarget = null;
+let mailMsgs = []; // {from, date} de cada mensagem da thread (rótulo do alvo sem Gmail)
+// Configurações do Copiloto: "Ao enviar, marcar como resolvido e voltar ao quadro"
+// (no /mail: voltar à lista). Padrão ligado.
+let sendResolveBack = true;
+fetch("/api/copilot/settings").then((r) => r.json()).then((p) => { sendResolveBack = p.send_resolve_back !== false; }).catch(() => {});
 
 function tags(item) {
   const out = [];
@@ -350,9 +363,12 @@ $("btn-hidden").onclick = () => {
 
 $("btn-mark-all-read").onclick = async () => {
   if (!lastUnreadAllIds.length) return;
-  const proceed = window.confirm(
-    `Marcar ${lastUnreadAllIds.length} e-mail(s) não lido(s) como lido no Gmail?`
-  );
+  const n = lastUnreadAllIds.length;
+  const proceed = await window.Dialog.confirm({
+    title: `Marcar ${n} e-mail${n === 1 ? "" : "s"} como lido${n === 1 ? "" : "s"}?`,
+    body: "Todos os não lidos desta lista ficam como lidos no Gmail.",
+    ok: "Marcar como lido", cancel: "Cancelar",
+  });
   if (!proceed) return;
   const btn = $("btn-mark-all-read");
   const original = btn.innerHTML;
@@ -579,6 +595,7 @@ function linkify(text) {
 
 function renderBody(body) {
   const blocks = splitMessages(body);
+  mailMsgs = blocks.map((b) => { const { from, date } = parseMessage(b); return { from, date }; });
   const el = $("pane-body");
   if (!blocks.length) {
     el.innerHTML = "";
@@ -609,6 +626,8 @@ function renderBody(body) {
           <span class="msg-from">${escHtml(from)}</span>
           ${quotedHint}
           <span class="msg-date">${escHtml(date)}</span>
+          ${window.MsgReply ? MsgReply.headHTML(i) : ""}
+          ${window.MsgSummary ? MsgSummary.buttonHTML() : ""}
         </div>
         <div class="msg-text">${linkify(main)}${quotedHtml}</div>
       </div>`;
@@ -641,6 +660,10 @@ function renderBody(body) {
   el.querySelectorAll(".msg-head").forEach((head) => {
     head.onclick = () => head.closest(".msg-card").classList.toggle("open");
   });
+  // "Resumir este e-mail" (static/msgsummary.js, o mesmo do /copilot)
+  if (window.MsgSummary && paneId) MsgSummary.bind(el, paneId);
+  // Para/Cc por mensagem + Responder / Responder a todos (static/msgreply.js, o mesmo do /copilot)
+  if (window.MsgReply && paneId) MsgReply.bind(el, paneId, { me: ACCOUNT_EMAIL, onReply: mailReplyToMessage });
   renderBodyAttachments(lastGmailAttachments);
   loadAvatarPhotos(el.querySelectorAll(".avatar"));
 }
@@ -693,6 +716,8 @@ function mailPathId() {
 function addPendingCc(email) {
   const e = (email || "").trim().toLowerCase();
   if (e && !pendingCc.includes(e)) pendingCc.push(e);
+  // Para/Cc já editados à mão: o "adicione fulano" entra direto no Cc
+  if (e && mailRc.touched && !mailRc.to.includes(e) && !mailRc.cc.includes(e)) mailRc.cc.push(e);
 }
 
 function applyCcResolution(msg) {
@@ -719,7 +744,58 @@ function setDraft(text, fromAi) {
   $("pane-draft").value = text || "";
   if (fromAi) draftAi = text || "";
   updateSendBar();
+  updateFixBtn();
 }
+
+// ── "Corrigir português" (rascunho inteiro) e "Usar meu texto (só corrigir)" ──
+let mailFixing = false;
+let mailKeep = false; // toggle ligado à mão
+let mailKeepOff = null; // pedido em que o Leo desligou o "detectado"
+function updateFixBtn() {
+  const b = $("pane-fixpt");
+  if (b) b.disabled = mailFixing || !$("pane-draft").value.trim();
+}
+const mailKeepAuto = () => !mailKeep && mailKeepOff !== $("pane-instr").value && !!Composer.keepTextRequest($("pane-instr").value);
+const mailKeepOn = () => mailKeep || mailKeepAuto();
+function updateKeepChip() {
+  const el = $("pane-keep");
+  if (!el) return;
+  const tmp = document.createElement("div");
+  tmp.innerHTML = Composer.keepChipHTML("pane-keep", mailKeep, mailKeepAuto());
+  el.innerHTML = tmp.firstChild.innerHTML;
+  el.setAttribute("aria-pressed", tmp.firstChild.getAttribute("aria-pressed"));
+  if (mailKeepOn() && $("pane-instr").value.trim()) $("pane-gen-label").textContent = "Usar meu texto";
+}
+$("pane-keep").onclick = () => {
+  mailKeep = !mailKeepOn();
+  if (!mailKeep) mailKeepOff = $("pane-instr").value;
+  updateGenLabel();
+  updateKeepChip();
+  $("pane-instr").focus({ preventScroll: true });
+};
+$("pane-fixpt").onclick = async () => {
+  const ta = $("pane-draft");
+  const sent = ta.value;
+  if (!paneId || mailFixing || !sent.trim()) return;
+  const tid = paneId;
+  mailFixing = true;
+  updateFixBtn();
+  $("pane-fixpt-label").textContent = "Corrigindo…";
+  $("draft-status").textContent = "Corrigindo o português…";
+  let data = null;
+  let err = "";
+  try { data = await Composer.fixPortuguese(tid, { text: sent }); } catch (e) { err = e.message; }
+  mailFixing = false;
+  $("pane-fixpt-label").textContent = "Corrigir português";
+  updateFixBtn();
+  if (paneId !== tid) return;
+  if (err) { $("draft-status").textContent = err; return; }
+  if (ta.value !== sent) { $("draft-status").textContent = "O rascunho mudou enquanto a IA corrigia; nada foi trocado."; return; }
+  if (!data.changed || data.text === sent) { $("draft-status").textContent = "Nada para corrigir: o português já está certo."; return; }
+  const n = annot.replaceText(ta, 0, sent.length, data.text);
+  $("draft-status").textContent = "Português corrigido. Tom e conteúdo mantidos.";
+  annot.notice(`Português corrigido (${n === 1 ? "1 mudança" : `${n} mudanças`}). Tom e conteúdo mantidos.`, () => annot.undo());
+};
 
 function renderChat(opts) {
   const real = chatHistory.filter((m) => !m.placeholder && !m.typing).length;
@@ -760,12 +836,128 @@ function updateGenLabel() {
   const adjust = !!currentDraft();
   $("pane-gen-label").textContent = adjust ? "Ajustar" : "Gerar";
   $("pane-gen").dataset.tooltip = adjust ? "Ajustar o rascunho com a instrução" : "Gerar o rascunho com a instrução";
+  updateKeepChip();
+}
+
+// Para/Cc da mensagem escolhida (cabeçalhos do Gmail); sem eles, o remetente do bloco.
+function mailTargetRc() {
+  if (!mailTarget) return null;
+  const meta = window.MsgReply && paneId ? MsgReply.get(paneId) : null;
+  const r = meta && MsgReply.recipientsFor(meta, mailTarget.idx, mailTarget.all, ACCOUNT_EMAIL);
+  if (r && r.to.length) return r;
+  const m = mailMsgs[mailTarget.idx];
+  const from = m ? MsgReply.parseAddr(m.from).email : "";
+  return from && from !== ACCOUNT_EMAIL ? { to: [from], cc: null } : null;
+}
+
+function mailTargetMeta() {
+  const meta = mailTarget && window.MsgReply && paneId ? MsgReply.get(paneId) : null;
+  return meta ? meta[mailTarget.idx] || null : null;
+}
+
+function mailTargetFromChat(chat) {
+  const last = [...(chat || [])].reverse().find((m) => m.role === "ai" && m.kind !== "answer" && !m.placeholder);
+  const a = last && last.alvo;
+  if (!a || a.idx == null || !window.MsgReply) return null;
+  return { idx: Number(a.idx), all: true, id: a.message_id || "", label: MsgReply.label({ de: a.de, data: a.data }) };
+}
+
+async function mailReplyToMessage(idx, all) {
+  const id = paneId;
+  const m = mailMsgs[idx] || {};
+  mailTarget = { idx, all, id: "", label: MsgReply.label({ de: m.from, data: m.date }) };
+  mailRc.touched = false; // destinatários voltam a sair da mensagem escolhida
+  mailRcInstr = "";
+  mailRcKeep = "";
+  setTab("resumo");
+  updateSendBar();
+  const box = $("pane-composer");
+  if (box && box.scrollIntoView) box.scrollIntoView({ behavior: "smooth", block: "start" });
+  $("pane-instr").focus({ preventScroll: true });
+  const meta = await MsgReply.load(id);
+  if (paneId !== id || !mailTarget || mailTarget.idx !== idx) return;
+  const mm = meta && meta[idx];
+  if (mm) Object.assign(mailTarget, { id: mm.id || "", label: MsgReply.label(mm) });
+  updateSendBar();
+}
+
+function clearMailTarget() {
+  mailTarget = null;
+  mailRc.touched = false;
+  $("draft-status").textContent = "Voltou a responder à última mensagem.";
+  updateSendBar();
+}
+
+function paintMailTarget() {
+  const host = $("pane-target");
+  if (!host) return;
+  host.innerHTML = window.MsgReply ? MsgReply.bannerHTML(mailTarget, "pm") : "";
+  const clear = $("pm-target-clear");
+  if (clear) clear.onclick = clearMailTarget;
+}
+
+function mailRcState() {
+  if (!mailRc.touched) {
+    const tr = mailTargetRc();
+    const to = tr ? tr.to : ((mailRcData.reply_to && mailRcData.reply_to.length) ? mailRcData.reply_to : [currentTo])
+      .map((e) => (e || "").toLowerCase()).filter(Boolean);
+    mailRc.to = to;
+    if (tr && tr.cc) {
+      const seen = new Set([ACCOUNT_EMAIL, ...to]);
+      mailRc.cc = (mailTarget.all ? tr.cc : []).concat(pendingCc).filter((e) => !seen.has(e) && seen.add(e));
+    } else {
+      mailRc.cc = mailTarget && !mailTarget.all ? pendingCc.filter((e) => !to.includes(e)) : defaultCcSuggestion(to).split(", ").filter(Boolean);
+    }
+  }
+  const known = new Map((mailRc.participants || []).map((p) => [p.email, p]));
+  const tm = mailTargetMeta();
+  [...(mailRcData.participants || []), ...(tm ? [tm.from, ...(tm.to || []), ...(tm.cc || [])] : []), ...lastRecipients.to, ...lastRecipients.cc, { email: currentTo, name: "" }].forEach((p) => {
+    const e = ((p && p.email) || "").toLowerCase();
+    if (e && e !== ACCOUNT_EMAIL && (!known.has(e) || (p.name && !known.get(e).name))) known.set(e, { email: e, name: p.name || "" });
+  });
+  mailRc.participants = [...known.values()];
+  return mailRc;
+}
+
+function mailRcSuggestion() {
+  const st = mailRcState();
+  const text = currentDraft();
+  const sug = (mailRcInstr && Recipients.suggest(text, st, { instruction: mailRcInstr, me: ACCOUNT_EMAIL }))
+    || Recipients.suggest(text, st, { me: ACCOUNT_EMAIL });
+  return sug && Recipients.sugKey(sug, st) !== mailRcKeep ? sug : null;
+}
+
+// Desenha chips + aviso num container (composer "pm" ou modal "md").
+function paintMailRc(host, sugHost, prefix) {
+  if (!host) return;
+  const st = mailRcState();
+  if (!host.contains(document.activeElement)) {
+    host.innerHTML = Recipients.editorHTML(st, prefix);
+    Recipients.bind(host, st, prefix, () => paintMailRcSug(sugHost, prefix, host));
+  }
+  paintMailRcSug(sugHost, prefix, host);
+}
+
+function paintMailRcSug(sugHost, prefix, host) {
+  if (!sugHost) return;
+  const sug = mailRcSuggestion();
+  sugHost.innerHTML = Recipients.suggestHTML(sug, prefix);
+  if (!sug) return;
+  sugHost.querySelector(`#${prefix}-rc-swap`).onclick = () => {
+    Recipients.applySuggestion(mailRcState(), sug);
+    host.innerHTML = "";
+    paintMailRc(host, sugHost, prefix);
+  };
+  sugHost.querySelector(`#${prefix}-rc-keep`).onclick = () => {
+    mailRcKeep = Recipients.sugKey(sug, mailRcState());
+    paintMailRcSug(sugHost, prefix, host);
+  };
 }
 
 function updateSendBar() {
   const draft = currentDraft();
-  const cc = defaultCcSuggestion();
-  $("send-target").innerHTML = `<b>Para:</b> ${escHtml(currentTo || "?")}${cc ? ` · <b>Cc:</b> ${escHtml(cc)}` : ""}`;
+  paintMailTarget();
+  paintMailRc($("send-target"), $("send-rc-sug"), "pm");
   const bar = $("send-bar");
   if (!draft) {
     bar.classList.add("hidden");
@@ -1079,6 +1271,12 @@ async function openPane(id, force) {
   annot.reset(); // e-mail novo: esquece as anotações (as marcas sumiram com o conteúdo)
   pendingCc = [];
   lastRecipients = { to: [], cc: [] };
+  mailRc = { to: [], cc: [], participants: [], touched: false };
+  mailRcData = {};
+  mailRcInstr = "";
+  mailRcKeep = "";
+  mailTarget = null;
+  mailMsgs = [];
   renderAttachments([]);
   lastGmailAttachments = { files: [], message_ids: [] };
   renderChat();
@@ -1128,6 +1326,17 @@ async function openPane(id, force) {
     $("pane-summary").innerHTML = formatSummary(data.summary);
     renderBody(data.body || "");
     chatHistory = Array.isArray(data.chat) ? data.chat.slice() : [];
+    // o último rascunho foi para uma mensagem específica: continua nela
+    if (!mailTarget) {
+      mailTarget = mailTargetFromChat(chatHistory);
+      if (mailTarget && !mailTarget.id) {
+        const tid = id;
+        MsgReply.load(tid).then((meta) => {
+          const mm = meta && mailTarget && paneId === tid && meta[mailTarget.idx];
+          if (mm && !mailTarget.id) { Object.assign(mailTarget, { id: mm.id || "", label: MsgReply.label(mm) }); updateSendBar(); }
+        });
+      }
+    }
     if (!chatHistory.length && !data.warning) {
       chatHistory.push({
         role: "ai",
@@ -1449,7 +1658,11 @@ async function loadRecipients(id) {
   try {
     const res = await fetch(`/api/threads/${encodeURIComponent(id)}/recipients`);
     const data = await res.json().catch(() => ({ to: [], cc: [] }));
-    if (paneId === id) renderRecipients(data);
+    if (paneId === id) {
+      mailRcData = res.ok ? data : {};
+      renderRecipients(data);
+      updateSendBar();
+    }
   } catch {
     // silencioso: e um extra informativo, nao trava o resto do painel
   }
@@ -1549,8 +1762,8 @@ $("pane-chat-reset").onclick = async () => {
 // Sugestao "responder a todos": quem mais estava em Para/Cc na ultima
 // mensagem, tirando o proprio Leo e quem ja vai no Para principal --
 // somada ao que foi confirmado no chat via "adicione fulano".
-function defaultCcSuggestion() {
-  const seen = new Set([ACCOUNT_EMAIL, (currentTo || "").toLowerCase()]);
+function defaultCcSuggestion(toList) {
+  const seen = new Set([ACCOUNT_EMAIL, ...(toList || [currentTo]).map((e) => (e || "").toLowerCase())]);
   const out = [];
   [...lastRecipients.to, ...lastRecipients.cc].forEach((a) => {
     const email = (a.email || "").toLowerCase();
@@ -1584,8 +1797,18 @@ function openSendModal() {
   // Garante o texto no sqlite antes do modal (evita perda se o envio falhar / a página cair).
   if (window.DraftPersist) window.DraftPersist.flush(paneId, text);
   const subject = $("pane-subject").textContent || "(sem assunto)";
-  $("modal-to").textContent = currentTo;
-  $("modal-cc").value = defaultCcSuggestion();
+  annot.dismissNotice(); // "Trecho reescrito · Desfazer" não fica por cima da confirmação
+  $("modal-rcpt").innerHTML = "";
+  paintMailRc($("modal-rcpt"), $("modal-rc-sug"), "md");
+  $("modal-target").classList.toggle("hidden", !mailTarget);
+  $("modal-target-label").textContent = mailTarget ? mailTarget.label || "mensagem escolhida" : "";
+  $("modal-error").textContent = "";
+  $("modal-error").classList.add("hidden");
+  const files = [...$("attach-list").querySelectorAll(".attach-chip")].map((c) => {
+    const rm = c.querySelector("[data-attach-rm]");
+    return (c.dataset.name || (rm && rm.dataset.attachRm) || c.textContent.replace(/[📎×]/gu, "")).trim();
+  }).filter(Boolean);
+  $("modal-attachments").textContent = files.length ? files.join(", ") : "nenhum";
   $("modal-subject").textContent = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
   $("modal-preview").textContent = text;
   $("modal-attach-warning").classList.toggle(
@@ -1597,6 +1820,7 @@ function openSendModal() {
 
 function closeSendModal() {
   $("send-modal").classList.add("hidden");
+  updateSendBar(); // chips editados no modal valem também no composer
 }
 
 $("pane-send").onclick = openSendModal;
@@ -1604,15 +1828,44 @@ $("modal-cancel").onclick = closeSendModal;
 $("send-modal").onclick = (e) => {
   if (e.target === $("send-modal")) closeSendModal();
 };
+$("send-modal").addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !(window.Dialog && window.Dialog.isOpen())) { e.stopPropagation(); closeSendModal(); }
+});
 
 $("modal-confirm").onclick = async () => {
   const text = currentDraft();
   if (!paneId || !text) return;
+  const st = mailRcState();
+  const bad = Recipients.commitInputs($("modal-rcpt"), st);
+  const fail = bad || (!st.to.length ? "Coloque pelo menos uma pessoa no Para." : "");
+  if (fail) {
+    $("modal-error").textContent = fail;
+    $("modal-error").classList.remove("hidden");
+    paintMailRc($("modal-rcpt"), $("modal-rc-sug"), "md");
+    return;
+  }
   if (draftMentionsAttachment(text) && currentAttachmentCount() === 0) {
-    const proceed = window.confirm(
-      "O texto menciona anexo, mas nenhum arquivo foi anexado a essa resposta. Enviar mesmo assim?"
-    );
+    const proceed = await window.Dialog.confirm({
+      title: "Enviar sem anexo?",
+      body: "O texto fala em anexo, mas nenhum arquivo foi anexado a esta resposta.",
+      ok: "Enviar sem anexo", cancel: "Voltar",
+    });
     if (!proceed) return;
+  }
+  const payload = { text, to: st.to.slice(), cc: st.cc.join(", ") };
+  if (mailTarget) {
+    // id do Gmail da mensagem escolhida (In-Reply-To/References dela)
+    if (!mailTarget.id) {
+      const meta = await MsgReply.load(paneId, true);
+      const mm = meta && meta[mailTarget.idx];
+      if (mm) mailTarget.id = mm.id || "";
+    }
+    if (!mailTarget.id) {
+      $("modal-error").textContent = "Não deu para identificar no Gmail a mensagem que você escolheu. Tente de novo ou clique em \"voltar para a última\".";
+      $("modal-error").classList.remove("hidden");
+      return;
+    }
+    payload.reply_to_message_id = mailTarget.id;
   }
   $("modal-confirm").disabled = true;
   $("modal-confirm").textContent = "Enviando…";
@@ -1620,11 +1873,11 @@ $("modal-confirm").onclick = async () => {
     const res = await fetch(`/api/threads/${paneId}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, cc: $("modal-cc").value.trim() }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({}));
-    closeSendModal();
     if (!res.ok) {
+      closeSendModal();
       const detail = typeof data.detail === "string" ? data.detail : "Falha ao enviar.";
       const maybeSent = /pode ter|confira no gmail/i.test(detail);
       $("pane-status").textContent = maybeSent
@@ -1632,10 +1885,16 @@ $("modal-confirm").onclick = async () => {
         : detail;
       return;
     }
+    $("send-modal").classList.add("hidden");
+    annot.dismissNotice();
     // sem conexão: o servidor pôs na fila de envio (202 queued) -- sai sozinho depois
+    const who = `${data.to || st.to.join(", ")}${(data.queued ? st.cc.join(", ") : data.cc) ? ` (Cc: ${data.queued ? st.cc.join(", ") : data.cc})` : ""}`;
     $("pane-status").textContent = data.queued
-      ? `Na fila de envio. ${data.message || "Sai quando a conexão voltar."}`
-      : data.cc ? `Enviado para ${data.to} (Cc: ${data.cc}).` : `Enviado para ${data.to}.`;
+      ? `Na fila de envio para ${who}. ${data.message || "Sai quando a conexão voltar."}`
+      : `Enviado para ${who}${sendResolveBack ? " · Resolvido" : "."}`;
+    mailRc = { to: [], cc: [], participants: [], touched: false };
+    mailTarget = null;
+    if (window.MsgReply) MsgReply.invalidate(paneId); // a resposta é mensagem nova na thread
     if (window.NetStatus) window.NetStatus.refresh();
     $("send-bar").classList.add("hidden");
     draftAi = "";
@@ -1646,7 +1905,11 @@ $("modal-confirm").onclick = async () => {
     renderAttachments([]);
     pendingCc = [];
     kickPreload();
-    if (mailPathId()) {
+    // Configurações do Copiloto → "Ao enviar, marcar como resolvido e voltar ao
+    // quadro": no /mail volta para a lista; desligado, fica no e-mail.
+    if (!sendResolveBack) {
+      setTimeout(() => { if (paneId) openPane(paneId); }, 900);
+    } else if (mailPathId()) {
       setTimeout(() => (window.location.href = "/"), 900);
     } else {
       setTimeout(() => {
@@ -1718,7 +1981,6 @@ function setupEmailAutocomplete(inputId, boxId) {
     if (!box.contains(e.target) && e.target !== input) box.classList.add("hidden");
   });
 }
-setupEmailAutocomplete("modal-cc", "modal-cc-suggestions");
 setupEmailAutocomplete("compose-to", "compose-to-suggestions");
 setupEmailAutocomplete("compose-cc", "compose-cc-suggestions");
 
@@ -1896,21 +2158,11 @@ $("btn-compose").onclick = () => {
 function updateGenButtonState() {
   $("pane-gen").disabled = !$("pane-instr").value.trim() && !annotations.length;
   updateChatResetState();
+  updateKeepChip();
 }
 
 function composedInstruction() {
   return Annotate.compose($("pane-instr").value, annotations);
-}
-
-// O que aparece na bolha do chat fica "camuflado": a referência ao trecho
-// já está marcada no próprio texto (o numerozinho), então aqui só mostra
-// o que a pessoa realmente escreveu -- sem repetir a citação inteira.
-function visibleChatText() {
-  const free = $("pane-instr").value.trim();
-  if (free) return free;
-  const comments = annotations.map((a) => a.comment).filter(Boolean);
-  if (comments.length) return comments.join("\n");
-  return annotations.length > 1 ? "(anotações sem comentário)" : "(anotação sem comentário)";
 }
 
 // Auto-resize textarea + botão de gerar só ativa com texto de verdade
@@ -1933,9 +2185,13 @@ $("pane-gen").onclick = async () => {
   const freeText = $("pane-instr").value.trim();
   if (!freeText && !annotations.length) return;
   const instruction = composedInstruction();
-  const visibleText = visibleChatText();
+  // a bolha mostra o mesmo texto que vai para a IA (e que o servidor salva no
+  // chat): citações listadas, trecho encurtado pelo ChatUI, comentário inteiro
+  const visibleText = instruction;
   // caixa editada: a IA reescreve a partir dela ("Rascunho anterior" no prompt)
   const currentDraftText = draftEdited() ? currentDraft() : "";
+  // "Usar meu texto (só corrigir)" ligado à mão: o campo inteiro é o e-mail
+  const keepFlag = mailKeep;
 
   chatHistory = chatHistory.filter((m) => !m.placeholder);
   chatHistory.push({ role: "user", text: visibleText });
@@ -1945,26 +2201,30 @@ $("pane-gen").onclick = async () => {
   $("pane-instr").style.height = "auto";
   clearAllAnnotations();
 
-  $("pane-status").innerHTML = workingHTML("Escrevendo o rascunho");
+  // status da geração fica colado no campo da IA (logo acima dele), não no topo do painel
+  $("draft-status").innerHTML = workingHTML("Escrevendo o rascunho");
   $("pane-gen").disabled = true; // esvaziou a caixa, então continua desabilitado no finally
 
   try {
     const res = await fetch(`/api/threads/${paneId}/draft`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        instruction: instruction,
+      body: JSON.stringify(Object.assign({
+        instruction: keepFlag ? freeText : instruction,
         comment: "",
         current_draft: currentDraftText,
-      }),
+      }, keepFlag ? { keep_text: true } : {}, mailTarget ? Object.assign({ alvo_idx: mailTarget.idx }, mailTarget.id ? { reply_to_message_id: mailTarget.id } : {}) : {})),
     });
     const data = await res.json().catch(() => ({}));
     chatHistory = chatHistory.filter((m) => !m.typing);
     if (!res.ok) {
       renderChat();
-      $("pane-status").textContent = data.detail || "Falha no rascunho.";
+      $("draft-status").textContent = data.detail || "Falha no rascunho.";
       return;
     }
+    if (Recipients.instructionTarget(instruction).para) mailRcInstr = instruction;
+    const sd = data.sugestao_destinatarios;
+    if (sd && sd.email && !mailRcState().participants.some((p) => p.email === sd.email)) mailRc.participants.push({ email: sd.email, name: sd.nome || "" });
     if (Array.isArray(data.chat) && data.chat.length) {
       chatHistory = data.chat.slice();
       applyCcResolution(chatHistory[chatHistory.length - 1]);
@@ -1975,12 +2235,27 @@ $("pane-gen").onclick = async () => {
     }
     const lastMsg = chatHistory[chatHistory.length - 1];
     const answered = lastMsg && lastMsg.kind === "answer";
-    $("pane-status").textContent = answered ? "A IA respondeu no chat. Nada foi enviado." : "Rascunho gerado. Nada foi enviado.";
     $("draft-status").textContent = answered ? "A IA respondeu no chat; o rascunho da caixa continua o mesmo." : "Rascunho novo da IA na caixa. Nada foi enviado.";
+    mailKeep = false;
+    mailKeepOff = null;
+    updateKeepChip();
+    // "Usar meu texto": o texto do Leo, só corrigido -> destaca as mudanças; Desfazer volta sem correção
+    if (data.keep_text) {
+      $("draft-status").textContent = data.aviso || (data.corrigido ? "Seu texto foi para o rascunho, só com o português corrigido." : "Seu texto foi para o rascunho como está (nada a corrigir).");
+      const ta = $("pane-draft");
+      if (data.corrigido && data.original && ta.value === data.draft) {
+        const n = annot.flashChanges(ta, data.original, data.draft, 0);
+        annot.setUndo(ta, data.original);
+        annot.notice(`Usei seu texto, só com o português corrigido (${n === 1 ? "1 mudança" : `${n} mudanças`}).`, () => annot.undo());
+      }
+    }
+    // pronto para o próximo pedido: campo da IA (embaixo do rascunho) focado e à vista
+    $("pane-instr").focus({ preventScroll: true });
+    if ($("pane-instr").scrollIntoView) $("pane-instr").scrollIntoView({ block: "nearest" });
   } catch {
     chatHistory = chatHistory.filter((m) => !m.typing);
     renderChat();
-    $("pane-status").textContent = "Falha de rede ao gerar o rascunho. Tente de novo.";
+    $("draft-status").textContent = "Falha de rede ao gerar o rascunho. Tente de novo.";
   } finally {
     updateGenButtonState();
   }
@@ -2005,6 +2280,30 @@ const annot = Annotate.create({
   textareas: () => [$("pane-draft")],
   enabled: () => !!paneId,
   onChange: annotationChipUpdate,
+  // "Reescrever" na seleção do rascunho: só o trecho, sem regerar nem Ajustar;
+  // o annotate.js troca no textarea e dispara input -> autosave (listener abaixo).
+  rewrite: async (req) => {
+    if (!paneId) throw new Error("Abra um e-mail.");
+    let res;
+    try {
+      res = await fetch(`/api/threads/${encodeURIComponent(paneId)}/rewrite-passage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+    } catch (_) {
+      throw new Error("Sem conexão com o servidor.");
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "Não deu para reescrever o trecho.");
+    return data.replacement;
+  },
+  // "Corrigir português" na seleção do rascunho: só ortografia/pontuação do trecho
+  fixPortuguese: async (req) => {
+    if (!paneId) throw new Error("Abra um e-mail.");
+    const d = await Composer.fixPortuguese(paneId, { draft: req.draft, start: req.start, end: req.end });
+    return d.replacement;
+  },
 });
 
 // caixa do rascunho: editar habilita Enviar e troca Gerar -> Ajustar
@@ -2015,6 +2314,7 @@ $("pane-draft").addEventListener("input", () => {
   updateGenLabel();
   updateSendBar();
   updateChatResetState();
+  updateFixBtn();
   if (paneId && window.DraftPersist) window.DraftPersist.schedule(paneId, $("pane-draft").value);
 });
 

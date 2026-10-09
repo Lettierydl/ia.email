@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -9,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.utils import getaddresses, parsedate_to_datetime
 from urllib.parse import urlencode
 
-from . import config, learned, llm, netstatus, rag, secrets_guard, store
+from . import config, gmail_client, learned, llm, netstatus, rag, secrets_guard, store
 
 # Copiloto: lê a caixa e, para cada thread, diz em 3 camadas
 #   1. papel do Leo (só cópia, mencionado, demanda, FYI, pode ignorar);
@@ -549,8 +550,31 @@ def _msg_count(body: str | None) -> int:
     return len(_messages(body or ""))
 
 
+def _only_mine_since(row: dict, snapshot: int, body: str | None = None) -> bool:
+    """A única novidade desde a leitura é mensagem do próprio Leo (a resposta
+    que ele mandou): não é atividade nova. Mensagem de outra pessoa depois do
+    retrato (mesmo seguida de resposta do Leo) conta como novidade."""
+    if not row.get("last_from_me"):
+        return False
+    me = _me()
+    for m in _messages(body if body is not None else row.get("body_text") or ""):
+        ts = _msg_ts(m.get("data") or "")
+        if ts and ts > snapshot and _who(m.get("de") or "")["email"] != me:
+            return False
+    return True
+
+
+def _moved(row: dict, prev: dict | None, body: str | None = None) -> bool:
+    """Mensagem nova de outra pessoa depois do retrato da leitura."""
+    if not prev:
+        return False
+    snapshot = int(prev.get("internal_date_snapshot") or 0)
+    return int(row.get("internal_date") or 0) > snapshot and not _only_mine_since(row, snapshot, body)
+
+
 def _persist(row: dict, item: dict, prev: dict | None, body: str | None = None) -> None:
-    moved = bool(prev) and int(row.get("internal_date") or 0) > int(prev.get("internal_date_snapshot") or 0)
+    # A própria resposta do Leo sobe o internal_date mas não reabre (resolvido continua resolvido).
+    moved = _moved(row, prev, body)
     keep_status = prev and not moved and prev.get("status") in STATUS
     done = {t.get("texto") for t in _loads(prev.get("tarefas_json") if prev else None, []) if t.get("feita")}
     for t in item["tarefas"]:
@@ -703,16 +727,22 @@ def _count_changed(row: dict, prev: dict | None) -> bool:
     """A IA leu N mensagens; o corpo atual (o mesmo do /mail) tem outro
     número. Pega o caso em que a leitura foi feita num corpo em cache velho
     (só a 1ª mensagem) mesmo com internal_date já atualizado. Leituras
-    antigas, sem contagem gravada, não entram (não dá para saber)."""
+    antigas, sem contagem gravada, não entram (não dá para saber). Só
+    mensagens novas do próprio Leo a mais não contam."""
     snap = int((prev or {}).get("msg_count_snapshot") or 0)
     body = row.get("body_text") or ""
-    return bool(snap and body) and _msg_count(body) != snap
+    if not (snap and body):
+        return False
+    msgs = _messages(body)
+    if len(msgs) > snap and all(_who(m.get("de") or "")["email"] == _me() for m in msgs[snap:]):
+        return False
+    return len(msgs) != snap
 
 
 def _fresh(row: dict, prev: dict | None) -> bool:
     return (
         bool(prev) and prev.get("source") in _FINAL
-        and int(row.get("internal_date") or 0) <= int(prev.get("internal_date_snapshot") or 0)
+        and not _moved(row, prev)
         and not _count_changed(row, prev)
     )
 
@@ -909,7 +939,6 @@ def _present(row: dict, db: dict | None, acted: bool = False, ai: bool | None = 
     _apply_conversa(item, conversa(_messages(row.get("body_text") or ""), _participants(row)))
     item.setdefault("delegado", {})
     item.setdefault("analyzed_at", None)
-    snapshot = int((db or {}).get("internal_date_snapshot") or 0)
     # Com IA, o que ela ainda não leu fica na fila "Analisando" e não entra
     # nas colunas (o palpite da heurística não é classificação). Sem chave
     # de IA não há quem leia: vale o comportamento antigo, colunas pela regra.
@@ -925,7 +954,8 @@ def _present(row: dict, db: dict | None, acted: bool = False, ai: bool | None = 
         "analisado": item["source"] == "llm",
         # propaganda, credencial ou corpo ilegível: a regra basta, a IA não precisa ler
         "lido_por_regra": item["source"] == "regra",
-        "desatualizado": bool(db) and (int(row.get("internal_date") or 0) > snapshot or _count_changed(row, db)),
+        # resposta do próprio Leo não conta como mensagem nova (não volta para a fila da IA)
+        "desatualizado": bool(db) and (_moved(row, db) or _count_changed(row, db)),
         "tab": FILA["key"] if pendente else tab_for(item),
         "pendente": pendente,
         # a leitura deu erro: continua na fila até o Leo pedir de novo
@@ -1298,6 +1328,215 @@ def detail(thread_id: str) -> dict:
     return item
 
 
+# ── resumo detalhado (sob demanda, com IA, em cache por thread) ──
+_RESUMO_LISTAS = ("pontos_principais", "numeros_dados", "pedidos_ao_leo", "decisoes_riscos", "anexos_mencionados", "proximos_passos")
+
+
+def _thread_files(thread_id: str) -> list[str]:
+    """Nomes dos anexos recebidos na thread; sem Gmail, lista vazia."""
+    try:
+        return [f["filename"] for f in gmail_client.list_thread_attachments(thread_id).get("files") or [] if f.get("filename")]
+    except Exception:
+        return []
+
+
+def _resumo_prompt(row: dict, body: str, files: list[str], sources: list[dict]) -> str:
+    numbered = "\n\n".join(
+        f"[{i}] ({s['tipo']}) {s['titulo']}\n{s['texto'][:600]}" for i, s in enumerate(sources, 1)
+    ) or "(nenhum)"
+    return (
+        "Faça um RESUMO DETALHADO desta thread de e-mail para o Leo (leo@confrapag.com.br). "
+        "Responda SÓ com JSON, em português do Brasil, tratando o Leo por \"você\".\n"
+        "Campos (lista vazia quando não houver):\n"
+        '- "contexto": 1 parágrafo (3-6 frases) explicando do que se trata, quem está envolvido e em que pé está.\n'
+        '- "pontos_principais": lista de frases curtas com o essencial da conversa, em ordem.\n'
+        '- "numeros_dados": lista de "número/valor/código — o que é" (valores, quantidades, IDs, percentuais citados).\n'
+        '- "pedidos_ao_leo": o que pediram ao Leo e ainda está em aberto.\n'
+        '- "pedidos_a_outros": [{"nome": "...", "pedido": "..."}] pedidos feitos a outras pessoas.\n'
+        '- "prazos": [{"data": "como está escrito ou dd/mm", "o_que": "..."}] só datas escritas na thread.\n'
+        '- "decisoes_riscos": decisões tomadas, pendências, riscos ou divergências.\n'
+        '- "anexos_mencionados": anexos citados ou recebidos e para que servem.\n'
+        '- "proximos_passos": próximos passos concretos (de quem e o quê).\n'
+        "NUNCA invente fato, nome, valor ou data: só o que está na thread. Os trechos de contexto servem só para "
+        "entender siglas e histórico; não os trate como parte da conversa.\n\n"
+        f"{learned.notes_block(row.get('id') or '', row.get('subject') or '', learned.thread_emails(row))}"
+        f"Para: {row.get('to_header') or '?'}\nCc: {row.get('cc_header') or '-'}\n"
+        f"Anexos recebidos na thread: {', '.join(files) if files else '(nenhum listado)'}\n\n"
+        f"Contexto (cérebro/histórico):\n{numbered}\n\n"
+        f"Assunto: {row.get('subject') or ''}\n\nThread:\n{body[-24000:]}"
+    )
+
+
+def _clean_resumo(data: dict) -> dict:
+    def texts(value) -> list[str]:
+        return [" ".join(str(v).split()) for v in value if str(v).strip()] if isinstance(value, list) else []
+
+    def pairs(value, a: str, b: str) -> list[dict]:
+        out = []
+        for v in value if isinstance(value, list) else []:
+            if isinstance(v, dict) and str(v.get(b) or "").strip():
+                out.append({a: str(v.get(a) or "").strip(), b: str(v[b]).strip()})
+        return out
+
+    resumo = {"contexto": str(data.get("contexto") or "").strip()}
+    resumo.update({k: texts(data.get(k)) for k in _RESUMO_LISTAS})
+    resumo["pedidos_a_outros"] = pairs(data.get("pedidos_a_outros"), "nome", "pedido")
+    resumo["prazos"] = pairs(data.get("prazos"), "data", "o_que")
+    return resumo
+
+
+def _resumo_out(cached: dict, *, from_cache: bool, stale: bool = False, aviso: str = "") -> dict:
+    out = {"resumo": _loads(cached.get("resumo_json"), {}), "gerado_em": cached.get("gerado_em") or "",
+           "cached": from_cache, "desatualizado": stale}
+    if aviso:
+        out["aviso"] = aviso
+    return out
+
+
+def resumo_detalhado(thread_id: str, *, force: bool = False) -> dict:
+    """Resumo maior da thread, gerado pela IA só quando o Leo pede. Fica em
+    cache com o retrato da thread (internal_date + nº de mensagens): reabrir
+    não chama a IA; mensagem nova invalida; force=True (Regerar) refaz.
+    Credencial no texto não vai para a IA (mesma regra da leitura)."""
+    row = store.get_thread(thread_id)
+    if not row:
+        raise LookupError("Thread não encontrada.")
+    body = _thread_body(row)
+    count = _msg_count(body)
+    cached = store.get_copilot_resumo(thread_id)
+    stale = bool(cached) and (
+        int(row.get("internal_date") or 0) > int(cached.get("internal_date_snapshot") or 0)
+        or (bool(cached.get("msg_count_snapshot")) and count != int(cached["msg_count_snapshot"]))
+    )
+    if cached and not force and not stale:
+        return _resumo_out(cached, from_cache=True)
+
+    problem = ""
+    if not llm.has_key():
+        problem = "Sem chave de IA configurada: não dá para gerar o resumo detalhado. Configure em Configurações."
+    elif secrets_guard.looks_like_secret(f"{row.get('subject') or ''}\n{body}"):
+        problem = "A conversa traz senha ou credencial: não mandei para a IA. Leia a conversa completa com calma."
+    elif len(re.sub(r"\s+", "", re.sub(r"^(De|Data):.*$", "", body, flags=re.M))) < 25:
+        problem = "Não consegui ler o texto da conversa (vazio, só imagem ou anexo)."
+    if not problem:
+        try:
+            raw = llm.complete(_resumo_prompt(row, body, _thread_files(thread_id), _sources(row, body)), system=llm.SYSTEM, timeout=90.0)
+            parsed = _parse(raw)
+        except Exception as exc:
+            parsed, problem = {}, f"A IA não respondeu agora ({_clip(str(exc), 120)}). Tente de novo em instantes."
+        if not problem and not parsed:
+            problem = "A IA respondeu fora do formato. Tente Regerar."
+    if problem:
+        if cached:  # melhor um resumo velho (avisado) do que nada
+            return _resumo_out(cached, from_cache=True, stale=stale, aviso=problem)
+        raise RuntimeError(problem)
+    resumo = _clean_resumo(parsed)
+    store.save_copilot_resumo(thread_id, json.dumps(resumo, ensure_ascii=False), int(row.get("internal_date") or 0), count)
+    return _resumo_out(store.get_copilot_resumo(thread_id) or {}, from_cache=False)
+
+
+# ── "Resumir este e-mail": uma mensagem só (sob demanda, em cache por texto) ──
+MSG_RESUMO_MODOS = ("direto", "abrangente")
+_MSG_RESUMO_LISTAS = ("pontos_principais", "numeros_dados", "riscos")
+
+
+def _msg_resumo_prompt(row: dict, msg: dict, own: str, idx: int, total: int, modo: str) -> str:
+    if modo == "direto":
+        formato = (
+            "Campos:\n"
+            '- "principal": 1 frase com o pedido ou a decisão principal desta mensagem ("" se não houver).\n'
+            '- "bullets": 3 a 5 frases curtas com o essencial, em ordem.\n'
+        )
+    else:
+        formato = (
+            "Campos (lista vazia quando não houver):\n"
+            '- "contexto": 1-3 frases: do que se trata esta mensagem e em que ponto da conversa ela entra.\n'
+            '- "pontos_principais": lista de frases curtas com o essencial, em ordem.\n'
+            '- "numeros_dados": lista de "número/valor/código — o que é".\n'
+            '- "pedidos_por_pessoa": [{"nome": "...", "pedido": "..."}] quem precisa fazer o quê (use "Você" para o Leo).\n'
+            '- "prazos": [{"data": "como está escrito ou dd/mm", "o_que": "..."}] só datas escritas na mensagem.\n'
+            '- "riscos": riscos, pendências, divergências ou alertas.\n'
+        )
+    return (
+        f"Resuma SÓ esta mensagem ({idx + 1} de {total} da thread) para o Leo (leo@confrapag.com.br). "
+        "Responda SÓ com JSON, em português do Brasil, tratando o Leo por \"você\".\n"
+        f"{formato}"
+        "NUNCA invente fato, nome, valor ou data: só o que está na mensagem abaixo. "
+        "O histórico citado de e-mails anteriores foi removido de propósito; não suponha o que ele dizia.\n\n"
+        f"{learned.notes_block(row.get('id') or '', row.get('subject') or '', learned.thread_emails(row))}"
+        f"Assunto da thread: {row.get('subject') or ''}\n"
+        f"De: {msg.get('de') or '?'}\nData: {msg.get('data') or '?'}\n"
+        f"Destinatários da thread: Para: {row.get('to_header') or '?'} · Cc: {row.get('cc_header') or '-'}\n\n"
+        f"Mensagem:\n{own[-16000:]}"
+    )
+
+
+def _clean_msg_resumo(data: dict, modo: str) -> dict:
+    def texts(value) -> list[str]:
+        return [" ".join(str(v).split()) for v in value if str(v).strip()] if isinstance(value, list) else []
+
+    def pairs(value, a: str, b: str) -> list[dict]:
+        return [{a: str(v.get(a) or "").strip(), b: str(v[b]).strip()}
+                for v in (value if isinstance(value, list) else []) if isinstance(v, dict) and str(v.get(b) or "").strip()]
+
+    if modo == "direto":
+        return {"principal": " ".join(str(data.get("principal") or "").split()), "bullets": texts(data.get("bullets"))[:5]}
+    out = {"contexto": str(data.get("contexto") or "").strip()}
+    out.update({k: texts(data.get(k)) for k in _MSG_RESUMO_LISTAS})
+    out["pedidos_por_pessoa"] = pairs(data.get("pedidos_por_pessoa"), "nome", "pedido")
+    out["prazos"] = pairs(data.get("prazos"), "data", "o_que")
+    return out
+
+
+def _msg_resumo_target(thread_id: str, idx: int, modo: str) -> tuple[dict, dict, str, int, str]:
+    """(row, mensagem, texto próprio, total, hash). Mesma lista do detalhe
+    (_messages(_thread_body(row))): o idx do front aponta para o mesmo card."""
+    if modo not in MSG_RESUMO_MODOS:
+        raise ValueError("Modo de resumo inválido: use direto ou abrangente.")
+    row = store.get_thread(thread_id)
+    if not row:
+        raise LookupError("Thread não encontrada.")
+    msgs = _messages(_thread_body(row))
+    if not 0 <= idx < len(msgs):
+        raise LookupError("Mensagem não encontrada nesta thread.")
+    msg = msgs[idx]
+    own = _own_text(msg.get("texto") or "")
+    digest = hashlib.sha256(f"{msg.get('de')}\n{msg.get('data')}\n{own}".encode("utf-8")).hexdigest()[:32]
+    return row, msg, own, len(msgs), digest
+
+
+def _msg_resumo_out(cached: dict, idx: int, modo: str, *, from_cache: bool) -> dict:
+    return {"idx": idx, "modo": modo, "resumo": _loads(cached.get("resumo_json"), {}),
+            "gerado_em": cached.get("gerado_em") or "", "cached": from_cache}
+
+
+def resumo_mensagem(thread_id: str, idx: int, modo: str, *, force: bool = False, only_cached: bool = False) -> dict:
+    """Resumo de UMA mensagem (só o texto dela, sem o histórico citado), no
+    modo "direto" (3-5 bullets) ou "abrangente" (estruturado). Cache por
+    thread + hash do texto + modo; force=True (Regerar) refaz; only_cached
+    só consulta (sem IA). Credencial não vai para a IA."""
+    row, msg, own, total, digest = _msg_resumo_target(thread_id, idx, modo)
+    cached = store.get_copilot_msg_resumo(thread_id, digest, modo)
+    if cached and not force:
+        return _msg_resumo_out(cached, idx, modo, from_cache=True)
+    if only_cached:
+        return {"idx": idx, "modo": modo, "resumo": None, "gerado_em": "", "cached": False}
+    if not llm.has_key():
+        raise RuntimeError("Sem chave de IA configurada: não dá para resumir. Configure em Configurações.")
+    if secrets_guard.looks_like_secret(f"{row.get('subject') or ''}\n{own}"):
+        raise RuntimeError("Esta mensagem traz senha ou credencial: não mandei para a IA. Leia a mensagem com calma.")
+    if len(re.sub(r"\s+", "", own)) < 15:
+        raise RuntimeError("Esta mensagem não tem texto próprio para resumir (vazia, só citação, imagem ou anexo).")
+    try:
+        parsed = _parse(llm.complete(_msg_resumo_prompt(row, msg, own, idx, total, modo), system=llm.SYSTEM, timeout=60.0))
+    except Exception as exc:
+        raise RuntimeError(f"A IA não respondeu agora ({_clip(str(exc), 120)}). Tente de novo em instantes.") from exc
+    if not parsed:
+        raise RuntimeError("A IA respondeu fora do formato. Tente Regerar.")
+    store.save_copilot_msg_resumo(thread_id, digest, modo, json.dumps(_clean_msg_resumo(parsed, modo), ensure_ascii=False))
+    return _msg_resumo_out(store.get_copilot_msg_resumo(thread_id, digest, modo) or {}, idx, modo, from_cache=False)
+
+
 # ── ações (nunca enviam nada) ──
 def _ensure_item(thread_id: str) -> tuple[dict, dict]:
     row = store.get_thread(thread_id)
@@ -1453,15 +1692,21 @@ def resolve_after_send(thread_id: str) -> None:
     """Pós-envio real (/mail ou /copilot, ou worker da outbox): igual a
     'resolver' — status resolvido, lido local, some do quadro de não lidos.
     Gmail já foi marcado lido em finalize_reply; aqui só o estado do copiloto.
+    O retrato da leitura passa a ser o pós-envio: a própria resposta não deixa
+    o item "desatualizado" nem na fila da IA.
     Melhor esforço: nunca propaga erro (o e-mail já saiu)."""
     try:
         row, _item = _ensure_item(thread_id)
     except Exception:
         return
     db = store.get_copilot_item(thread_id) or {}
+    snap = {"internal_date_snapshot": int(row.get("internal_date") or 0)}
+    if row.get("body_text"):
+        snap["msg_count_snapshot"] = _msg_count(row["body_text"])
     if (db.get("status") or "") == "resolvido":
+        store.save_copilot_item(row["id"], **snap)
         return
-    store.save_copilot_item(row["id"], status="resolvido")
+    store.save_copilot_item(row["id"], status="resolvido", **snap)
     try:
         store.mark_local_read([row["id"]])
     except Exception:
@@ -1571,8 +1816,13 @@ DEFAULT_PREFS = {
     "skin": "clean", "digest_daily": "08:00", "digest_weekly_day": 0, "digest_weekly_time": "08:30", "digest_enabled": True, "show_all": False,
     # cards da coluna lateral do detalhe (Configurações → Copiloto)
     "show_tasks_card": True, "show_facts_card": True,
+    # depois de enviar pelo app: resolve (o finalize já faz) e volta ao quadro/lista.
+    # Prefs salvas antes deste campo herdam o padrão (ligado).
+    "send_resolve_back": True,
+    # Quadro zerou (último item resolvido): overlay "Por hoje é só! Caixa zerada"
+    "celebrate_zero": True,
 }
-_BOOL_PREFS = ("digest_enabled", "show_all", "show_tasks_card", "show_facts_card")
+_BOOL_PREFS = ("digest_enabled", "show_all", "show_tasks_card", "show_facts_card", "send_resolve_back", "celebrate_zero")
 # Padrão por pessoa antes de ela salvar algo: o Leo prefere sem o card "Tarefas".
 USER_DEFAULT_PREFS = {"leo@confrapag.com.br": {"show_tasks_card": False}}
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")

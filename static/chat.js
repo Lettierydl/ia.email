@@ -28,12 +28,24 @@
     return `<div class="cc-resolution">${rows}</div>`;
   }
 
+  // Pedido com citações (Annotate.compose: `[n] Sobre "trecho": comentário`):
+  // na bolha o trecho fica curto (~80) e o comentário inteiro. Vale também para
+  // chats salvos, que guardam o texto composto que foi para a IA.
+  const QUOTE_MAX = 80;
+  const CITE_RE = /^(\[\d+\] Sobre(?: o trecho do rascunho)? ")([\s\S]*?)(": )/gm;
+  function userText(text) {
+    return String(text == null ? "" : text).replace(CITE_RE, (_m, head, quote, tail) => {
+      const q = quote.replace(/\s+/g, " ").trim();
+      return head + (q.length > QUOTE_MAX ? `${q.slice(0, QUOTE_MAX).trimEnd()}…` : q) + tail;
+    });
+  }
+
   const typingHTML = () => '<div class="chat-msg ai typing" aria-label="A IA está escrevendo" role="status"><span class="bar"></span><span class="bar"></span><span class="bar"></span></div>';
 
   // opts.compactDrafts: o rascunho aparece resumido (o texto inteiro está na
   // caixa do composer); versões anteriores ganham "Usar esta versão".
   function bubbleHTML(msg, idx, history, opts) {
-    if (msg.role === "user") return `<div class="chat-msg user">${esc(msg.text)}</div>`;
+    if (msg.role === "user") return `<div class="chat-msg user">${esc(userText(msg.text))}</div>`;
     if (msg.typing) return typingHTML();
     if (msg.placeholder) return `<div class="chat-msg ai muted-msg">${esc(msg.text)}</div>`;
     const cc = ccResolutionHTML(msg, idx);
@@ -71,5 +83,5 @@
     el.scrollTop = el.scrollHeight;
   }
 
-  window.ChatUI = { render, lastDraft, isDraft, ccResolutionHTML, typingHTML };
+  window.ChatUI = { render, lastDraft, isDraft, ccResolutionHTML, typingHTML, userText };
 })();

@@ -30,13 +30,14 @@
 .cmp-status{margin:0;min-height:1.2em;font-size:12.5px;color:var(--cmp-muted)}
 .cmp-status:empty{display:none}
 
-/* pedido à IA + citações numeradas: estilo chat (✨, borda accent), grudado na conversa */
+/* pedido à IA + citações numeradas: estilo chat (✨, borda accent), embaixo do rascunho
+   (ordem: conversa → rascunho → status da geração → Peça à IA → ícones/Enviar) */
 .cmp-instr{border:1.5px solid var(--cmp-accent);border-radius:16px;background:color-mix(in srgb,var(--cmp-accent) 6%,var(--cmp-card));padding:8px 8px 8px 10px}
 .cmp-instr:focus-within{box-shadow:0 0 0 3px color-mix(in srgb,var(--cmp-accent) 20%,transparent)}
 .cmp-instr>label{display:flex;align-items:center;gap:5px;font-size:12.5px;font-weight:600;color:var(--cmp-accent-ink);margin:0 2px 2px}
 .cmp-instr>label .ic,.cmp-instr>label [data-icon]{color:var(--cmp-accent)}
 .cmp-instr>label small,.cmp-draft-head small{font-weight:400;color:var(--cmp-muted);font-size:11.5px}
-.cmp-chat+.cmp-instr{margin-top:-2px}
+.cmp-status+.cmp-instr{margin-top:-2px}
 .cmp-annots{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
 .cmp-annots:empty{display:none}
 .cmp-annot{display:inline-flex;align-items:center;gap:6px;max-width:100%;border-radius:999px;background:var(--cmp-soft);padding:3px 4px;font-size:12px;cursor:pointer}
@@ -136,3 +137,97 @@
 .cmp-sug-yes{border:0;background:var(--cmp-accent);color:#fff}
 .cmp-sug-yes .ic{color:#fff}
 .cmp-sug-no{border:1px solid var(--cmp-line);background:var(--cmp-card);color:var(--cmp-muted)}
+
+/* ── destaque de trechos no rascunho (static/draftmarks.js): camada espelho
+   atrás do textarea (fundo + <mark>) e outra na frente (só o número clicável) ── */
+.dm-layer{position:absolute;margin:0;overflow:hidden;white-space:pre-wrap;overflow-wrap:break-word;word-wrap:break-word;pointer-events:none;color:transparent;background:transparent;box-shadow:none}
+.dm-back{z-index:0}
+textarea.dm-on{position:relative;z-index:1;background:transparent!important}
+.dm-front{z-index:2}
+.dm-text{min-height:100%}
+.dm-mark{position:relative;color:transparent;padding:0;border-radius:3px;background:color-mix(in srgb,var(--cmp-accent,#1a73e8) 20%,transparent);box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.dm-mark.dm-active{background:color-mix(in srgb,var(--cmp-accent,#1a73e8) 36%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--cmp-accent,#1a73e8) 55%,transparent)}
+.dm-mark.dm-busy{animation:dm-pulse 1s ease-in-out infinite}
+.dm-mark.dm-done{background:color-mix(in srgb,#34a853 30%,transparent);transition:background .6s}
+.dm-front .dm-mark{background:transparent;box-shadow:none;animation:none}
+/* número: absolute sem left/top fica onde estaria no texto (fim do trecho) e não empurra nada */
+.dm-num{position:absolute;margin:-.9em 0 0 1px;min-width:15px;height:15px;padding:0 3px;border-radius:999px;background:var(--cmp-accent,#1a73e8);color:#fff;font:700 10px/15px system-ui,sans-serif;text-align:center;font-style:normal;box-shadow:0 0 0 2px var(--cmp-card,#fff);pointer-events:auto;cursor:pointer;user-select:none}
+.dm-num:hover{filter:brightness(1.1)}
+.dm-busy-tag{position:absolute;margin:-1.7em 0 0 4px;padding:1px 7px;border-radius:999px;background:var(--cmp-ink,#202124);color:#fff;font:600 10.5px/16px system-ui,sans-serif;white-space:nowrap;pointer-events:none}
+@keyframes dm-pulse{0%,100%{background:color-mix(in srgb,var(--cmp-accent,#1a73e8) 14%,transparent)}50%{background:color-mix(in srgb,var(--cmp-accent,#1a73e8) 40%,transparent)}}
+.rewrite-popup textarea{min-height:34px}
+.dm-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:260;display:flex;align-items:center;gap:12px;padding:8px 10px 8px 14px;border-radius:999px;background:#323232;color:#fff;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.dm-toast.hidden{display:none}
+.dm-toast button{border:0;background:transparent;color:#8ab4f8;font:inherit;font-weight:600;padding:4px 8px;border-radius:999px;cursor:pointer}
+.dm-toast button:hover{background:rgba(255,255,255,.12)}
+@media (prefers-reduced-motion:reduce){.dm-mark.dm-busy{animation:none}}
+/* "Corrigir português": palavras alteradas brilham em amarelo por uns segundos */
+.dm-mark.dm-fix{background:color-mix(in srgb,#f9ab00 38%,transparent);box-shadow:0 1px 0 #e37400;animation:dm-fix-fade 4.5s ease-in forwards}
+@keyframes dm-fix-fade{0%,70%{background:color-mix(in srgb,#f9ab00 38%,transparent)}100%{background:transparent;box-shadow:none}}
+@media (prefers-reduced-motion:reduce){.dm-mark.dm-fix{animation:none}}
+.cmp-fixpt{margin-left:auto;display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border-radius:999px;border:1px solid var(--cmp-line,#dadce0);background:var(--cmp-card,#fff);color:var(--cmp-ink,#202124);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+.cmp-fixpt:hover:not(:disabled){border-color:var(--cmp-accent,#1a73e8);color:var(--cmp-accent,#1a73e8)}
+.cmp-fixpt:disabled{opacity:.5;cursor:default}
+.cmp-fixpt.busy{cursor:progress}
+/* "Usar meu texto (só corrigir)": toggle ao lado do campo da IA */
+.cmp-keep{display:inline-flex;align-items:center;gap:5px;align-self:flex-start;margin:2px 0 4px;height:26px;padding:0 10px;border-radius:999px;border:1px dashed var(--cmp-line,#c4c7c5);background:transparent;color:var(--cmp-muted,#5f6368);font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.cmp-keep[aria-pressed="true"]{border-style:solid;border-color:#e37400;background:color-mix(in srgb,#f9ab00 18%,transparent);color:#8a4b00}
+.cmp-keep .auto{font-weight:400;font-size:11px}
+@media (max-width:640px){.cmp-fixpt{height:34px;padding:0 12px}.cmp-keep{height:32px}}
+
+/* Para/Cc editáveis (static/recipients.js): chips com remover/mover + campo
+   com autocompletar dos participantes; aviso "saudação ≠ Para" com Trocar. */
+.rc-editor{display:flex;flex-direction:column;gap:4px;font-size:13px}
+.rc-row{display:flex;align-items:flex-start;gap:8px}
+.rc-label{flex:0 0 34px;padding-top:5px;font-weight:600;color:var(--cmp-ink,var(--ink,#202124))}
+.rc-chips{flex:1;display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:0;border-bottom:1px solid var(--cmp-line,var(--line,#dadce0));padding:2px 0 4px}
+.rc-chip{display:inline-flex;align-items:center;gap:4px;max-width:100%;background:var(--cmp-soft,var(--lilac,#eef2fb));border-radius:999px;padding:2px 4px 2px 10px;color:var(--cmp-ink,var(--ink,#202124))}
+.rc-chip .rc-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rc-chip small{color:var(--cmp-muted,var(--muted,#5f6368));font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
+.rc-chip button{border:0;background:transparent;cursor:pointer;border-radius:999px;color:var(--cmp-muted,var(--muted,#5f6368));font:inherit;line-height:1;padding:3px 6px}
+.rc-chip .rc-move{font-size:10.5px}
+.rc-chip button:hover{background:rgba(45,43,58,.08);color:var(--cmp-ink,var(--ink,#202124))}
+.rc-chip button:focus-visible{outline:2px solid var(--cmp-accent,var(--accent,#1a73e8))}
+.rc-input{flex:1 1 140px;min-width:120px;border:0;background:transparent;font:inherit;font-size:13px;padding:4px 2px;color:inherit}
+.rc-input:focus{outline:none}
+.rc-input[aria-invalid="true"]{color:var(--red,#c5221f)}
+.rc-chips:focus-within{border-bottom-color:var(--cmp-accent,var(--accent,#1a73e8))}
+.rc-err{margin:2px 0 0 42px;color:var(--red,#c5221f);font-size:12.5px}
+.rc-sug{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;background:var(--peach,#fef3e2);border-radius:12px;padding:7px 10px;font-size:13px}
+.rc-sug>span{flex:1 1 220px}
+.rc-sug button{font:inherit;font-size:13px;border-radius:10px;padding:5px 12px;cursor:pointer;border:1px solid var(--cmp-line,var(--line,#dadce0));background:var(--cmp-card,#fff)}
+.rc-sug .rc-sug-yes{background:var(--cmp-accent,var(--accent,#1a73e8));border-color:var(--cmp-accent,var(--accent,#1a73e8));color:#fff;font-weight:600}
+
+/* Ações por mensagem da conversa (static/msgreply.js, /copilot e /mail):
+   Para/Cc (ícone de pessoas + contagem → popover), Responder / Responder a
+   todos; faixa "Respondendo a: …" no composer. */
+.mr-acts{--mr-accent:var(--accent-ink,var(--blue,#1a73e8));display:inline-flex;align-items:center;gap:2px;flex-shrink:0}
+.mr-btn{display:inline-flex;align-items:center;justify-content:center;gap:2px;min-width:26px;height:26px;padding:0 4px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted,#5f6368);cursor:pointer;font:inherit}
+.mr-btn:hover,.mr-btn:focus-visible,.mr-btn[aria-expanded="true"]{color:var(--mr-accent);border-color:var(--line,#dadce0);background:var(--card,#fff)}
+.mr-count{font-size:11px;font-weight:600;line-height:1}
+.mr-count:empty{display:none}
+.mr-pop{--mr-accent:var(--accent-ink,var(--blue,#1a73e8));position:fixed;z-index:1000;max-height:min(420px,70vh);overflow:auto;background:var(--card,#fff);color:var(--ink,#202124);border:1px solid var(--line,#dadce0);border-radius:12px;box-shadow:0 8px 28px rgba(32,33,36,.18);padding:10px 12px;font-size:13px}
+.mr-pop-h{font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:var(--muted,#5f6368);margin-bottom:6px}
+.mr-pop section{margin-top:6px}
+.mr-pop h5{margin:0 0 3px;font-size:12px;font-weight:600;color:var(--mr-accent)}
+.mr-pop h5 small{color:var(--muted,#5f6368);font-weight:500}
+.mr-pop ul{list-style:none;margin:0;padding:0}
+.mr-pop li{display:flex;align-items:center;gap:6px;padding:3px 0;border-top:1px solid color-mix(in srgb,var(--line,#dadce0) 60%,transparent)}
+.mr-pop li:first-child{border-top:0}
+.mr-who{display:flex;flex-direction:column;min-width:0;flex:1}
+.mr-n{font-weight:500;overflow-wrap:anywhere}
+.mr-e{font-size:12px;color:var(--muted,#5f6368);overflow-wrap:anywhere}
+.mr-from{margin:0 0 4px;font-size:12.5px}
+.mr-copy{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted,#5f6368);cursor:pointer}
+.mr-copy:hover,.mr-copy:focus-visible{border-color:var(--line,#dadce0);color:var(--mr-accent)}
+.mr-copy.done{color:var(--green,#188038)}
+.mr-muted{margin:4px 0;color:var(--muted,#5f6368)}
+.mr-note{margin:8px 0 0;font-size:11.5px;color:var(--muted,#5f6368);font-style:italic}
+.mr-target{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:6px 10px;border-radius:10px;background:var(--lilac,var(--blue-soft,#e8f0fe));color:var(--accent-ink,var(--blue-dark,#1557b0));font-size:13px}
+.mr-target b{font-weight:600}
+.mr-target small{opacity:.8}
+.mr-target-clear{margin-left:auto;border:0;background:transparent;color:inherit;text-decoration:underline;cursor:pointer;font:inherit;font-size:12.5px;padding:2px 4px}
+@media (max-width:640px){
+  .mr-btn{min-width:32px;height:32px}
+  .mr-pop li{padding:6px 0}
+}

@@ -6,8 +6,10 @@
   <meta name="theme-color" content="#f6f5fb">
   <title>Copiloto · IA.Email</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/composer.css?v=5">
-  <link rel="stylesheet" href="/static/copilot.css?v=22">
+  <link rel="stylesheet" href="/static/composer.css?v=11">
+  <link rel="stylesheet" href="/static/dialog.css?v=1">
+  <link rel="stylesheet" href="/static/copilot.css?v=28">
+  <link rel="stylesheet" href="/static/celebrate.css?v=3">
 </head>
 <body data-skin="clean" data-layout="mobile" data-mode="quadro">
   <div class="cp-app">
@@ -66,7 +68,9 @@
 
   <!-- Citar trecho (static/annotate.js, o mesmo do /mail) -->
   <div id="select-toolbar" class="select-toolbar hidden">
-    <button type="button" id="select-add-chat"><span class="ic-slot" data-icon="chat" data-icon-size="15"></span> Citar na instrução</button>
+    <button type="button" id="select-add-chat"><span class="ic-slot" data-icon="chat" data-icon-size="15"></span> Comentar para a IA</button>
+    <button type="button" id="select-rewrite" style="display:none"><span class="ic-slot" data-icon="sparkles" data-icon-size="15"></span> Reescrever</button>
+    <button type="button" id="select-fixpt" style="display:none" title="Corrige só ortografia, gramática, pontuação e acentos (não muda o texto)"><span class="ic-slot" data-icon="check" data-icon-size="15"></span> Corrigir português</button>
   </div>
   <div id="annot-popup" class="annot-popup hidden">
     <textarea id="annot-popup-textarea" rows="2" placeholder="O que fazer com este trecho? Ex.: deixe mais curto, troque por terça…"></textarea>
@@ -77,10 +81,16 @@
     </div>
   </div>
   <script src="/static/icons.js?v=3"></script>
-  <script src="/static/chat.js?v=2"></script>
-  <script src="/static/composer.js?v=5"></script>
-  <script src="/static/annotate.js?v=96"></script>
-  <script src="/static/netstatus.js?v=2"></script>
-  <script src="/static/copilot.js?v=21"></script>
+  <script src="/static/chat.js?v=3"></script>
+  <script src="/static/composer.js?v=6"></script>
+  <script src="/static/draftmarks.js?v=2"></script>
+  <script src="/static/annotate.js?v=102"></script>
+  <script src="/static/msgsummary.js?v=1"></script>
+  <script src="/static/msgreply.js?v=1"></script>
+  <script src="/static/netstatus.js?v=3"></script>
+  <script src="/static/dialog.js?v=1"></script>
+  <script src="/static/recipients.js?v=1"></script>
+  <script src="/static/celebrate.js?v=3"></script>
+  <script src="/static/copilot.js?v=33"></script>
 </body>
 </html>

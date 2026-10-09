@@ -566,3 +566,22 @@ def test_draft_prompt_includes_attachment_block(monkeypatch, tmp_path):
     assert "briefing.txt" in captured["prompt"]
     assert "Reuniao amanha" in captured["prompt"]
     assert "Segue o briefing" in (result.get("draft") or "")
+
+
+def test_outbox_worker_resolves_after_delivery(fake_send):
+    import time as _t
+
+    _thread("t1")
+    store.save_copilot_item("t1", status="aberto", source="llm", internal_date_snapshot=1000)
+    netstatus.mark_error(_gaierror())
+    client = TestClient(app)
+    oid = client.post("/api/threads/t1/send", json={"text": "Oi Ana, segue.", "source": "copilot"}).json()["outbox_id"]
+    assert store.get_copilot_item("t1")["status"] == "aberto", "na fila ainda não resolve"
+    # o refresh pós-envio traz a resposta do Leo (internal_date maior, last_from_me=1)
+    _thread("t1", internal=2000, last_from_me=1, unread=0)
+    assert outbox.flush(now=_t.time() + 3600) == 1
+    assert outbox.get(oid)["status"] == "sent"
+    item = store.get_copilot_item("t1")
+    assert item["status"] == "resolvido" and int(item["internal_date_snapshot"]) == 2000
+    det = client.get("/api/copilot/t1").json()
+    assert det["status"] == "resolvido" and det["desatualizado"] is False

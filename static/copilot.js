@@ -104,6 +104,20 @@
     onChange: () => renderAnnots(),
     // citou com o composer fechado: abre o composer (sem gerar nem rolar)
     onAdd: () => { if (shown && (!reply || !reply.open)) openReply(shown, { noGenerate: true, noScroll: true }); },
+    // "Reescrever" na seleção do rascunho: só o trecho (sem regerar nem Ajustar);
+    // o annotate.js troca no textarea e dispara input -> reply.text + autosave.
+    rewrite: async (req) => {
+      if (!shown) throw new Error("Abra uma conversa.");
+      const r = await api(`/api/threads/${encodeURIComponent(shown.thread_id)}/rewrite-passage`, "POST", req);
+      if (!r.ok) throw new Error(r.data.detail || "Não deu para reescrever o trecho.");
+      return r.data.replacement;
+    },
+    // "Corrigir português" na seleção do rascunho: só ortografia/pontuação do trecho
+    fixPortuguese: async (req) => {
+      if (!shown) throw new Error("Abra uma conversa.");
+      const d = await window.Composer.fixPortuguese(shown.thread_id, { draft: req.draft, start: req.start, end: req.end });
+      return d.replacement;
+    },
   });
   let canSend = false; // /api/status.can_send (escopo gmail.send)
   let me = "";
@@ -172,9 +186,12 @@
         const root = $("cp-thread");
         if (root) {
           const msgs = shown.mensagens || [];
+          const ui = threadUI(root);
           root.innerHTML = msgs.map((m, i) => messageHTML(m, i, msgs.length, tid)).join("");
           bindThread(root);
           hydrateAvatars(root);
+          annot.reapply(); // o innerHTML apagou as marcas dos trechos citados
+          restoreThreadUI(root, ui);
         }
       }
     } catch (_) { /* silencioso */ }
@@ -189,6 +206,7 @@
     done: ic("check-circle-double"), reopen: ic("reopen"), thread: ic("thread"), summary: ic("summary"),
     gmail: ic("gmail"), mail: ic("mail"), reply: ic("reply"), send: ic("send"), spark: ic("sparkles"),
     learn: ic("learn"), chat: ic("chat"), trash: ic("trash"), back: ic("back"), refresh: ic("refresh"),
+    search: ic("search"),
   };
   const ROLE_ICON = { so_copia: "role-copia", mencionado_opiniao: "role-opiniao", demanda: "role-demanda", fyi: "role-fyi", pode_ignorar: "role-ignorar" };
   // tip: texto do tooltip (padrão = label); off: desabilitado mas com tooltip
@@ -419,7 +437,19 @@
     return `<li class="cp-item u-${it.urgencia}${current === it.thread_id ? " sel" : ""}" data-id="${esc(it.thread_id)}" tabindex="0">
       <div class="cp-item-main"><h3>${esc(it.subject)}</h3><p>${esc(it.o_que_aconteceu || it.from_name)}</p><div class="cp-meta">${chips.join("")}</div>${cardActsHTML(it)}</div>${bola}</li>`;
   }
-  const emptyHTML = () => `<li class="cp-empty">${data.show_all ? "Nada por aqui." : "Nenhum não lido aqui."} 🌿</li>`;
+  // Abertos no quadro (sem resolvidos, mesmo com "Mostrar todos").
+  const openCount = () => data.items.filter((i) => i.tab !== "resolvido" && i.status !== "resolvido").length;
+  // Caixa zerada inline (celebrate.js): a praia só aparece com o quadro inteiro
+  // vazio (cena grande); coluna/aba vazia com e-mail em outra = texto simples.
+  // Anima só na transição >0 → 0 (czFresh, marcado em trackZero) e depois fica
+  // parada. Pref desligada = texto simples sempre.
+  const czOn = () => prefs.celebrate_zero !== false && !!window.Celebrate;
+  let czFresh = false; // o quadro inteiro acabou de zerar nesta carga
+  const czScene = () => window.Celebrate.sceneHTML({ key: "all", fresh: czFresh });
+  const emptyHTML = (key) => (czOn() && key && !openCount()
+    ? `<li class="cp-empty cp-empty-cz">${czScene()}</li>`
+    : `<li class="cp-empty">${data.show_all ? "Nada por aqui." : "Nenhum não lido aqui."} 🌿</li>`);
+  const czRender = (box, fn) => (window.Celebrate ? window.Celebrate.keep(box, fn) : fn());
   // ── views: Quadro | Resolvidos | Marcados como lido ──
   const histKey = (i) => (i.status === "resolvido" ? "resolvido" : !i.is_unread && i.no_copiloto && !i.pendente ? "lidos" : "");
   // cabeçalho pastel + contador + subtítulo (o mesmo das colunas do quadro)
@@ -437,7 +467,11 @@
     const key = btn.dataset.resolveCol;
     const ids = columnIds(key);
     if (!ids.length || btn.disabled) return;
-    if (!confirm(`Resolver ${ids.length} e-mail${ids.length === 1 ? "" : "s"} desta coluna? Serão marcados como lidos no Gmail.`)) return;
+    if (!(await window.Dialog.confirm({
+      title: `Resolver ${ids.length} e-mail${ids.length === 1 ? "" : "s"}?`,
+      body: "Os e-mails desta coluna vão para Resolvidos. Serão marcados como lidos no Gmail; nenhum e-mail é enviado.",
+      ok: "Resolver todos", cancel: "Cancelar",
+    }))) return;
     btn.disabled = true;
     const r = await api("/api/copilot/resolve-column", "POST", { tab: key, thread_ids: ids });
     if (!r.ok) { btn.disabled = false; toast(r.data.detail || "Não deu certo."); return; }
@@ -540,7 +574,7 @@
     renderQueueList();
     const items = data.items.filter((i) => i.tab === tab);
     const all = resolveAllBtn(tab);
-    $("cp-list").innerHTML = items.length ? (all ? `<li class="cp-list-acts">${all}</li>` : "") + items.map(itemHTML).join("") : emptyHTML();
+    czRender($("cp-list"), () => ($("cp-list").innerHTML = items.length ? (all ? `<li class="cp-list-acts">${all}</li>` : "") + items.map(itemHTML).join("") : emptyHTML(tab)));
     hydrateAvatars($("cp-list"));
   }
 
@@ -575,14 +609,18 @@
     const stripScroll = strip ? strip.scrollLeft : 0;
     const queue = queueStripHTML();
     board.classList.toggle("has-queue", !!queue);
-    board.innerHTML = queue + data.tabs
-      .map((t) => {
-        const items = data.items.filter((i) => i.tab === t.key);
-        return `<section class="cp-col t-${t.key}" data-col="${t.key}" aria-label="${esc(t.title)}">
+    // quadro inteiro zerado: a praia maior ocupa a área das colunas
+    const allZero = czOn() && data.tabs.length && !openCount();
+    czRender(board, () => (board.innerHTML = queue + (allZero
+      ? `<div class="cz-board-zero">${czScene()}</div>`
+      : data.tabs
+        .map((t) => {
+          const items = data.items.filter((i) => i.tab === t.key);
+          return `<section class="cp-col t-${t.key}" data-col="${t.key}" aria-label="${esc(t.title)}">
           ${secHead(t.title, items.length, COL_HINT[t.key] || "", COL_COLOR[t.key] || "fog", "h2", resolveAllBtn(t.key))}
-          <ul class="cp-col-list">${items.length ? items.map(kcardHTML).join("") : emptyHTML()}</ul></section>`;
-      })
-      .join("");
+          <ul class="cp-col-list">${items.length ? items.map(kcardHTML).join("") : emptyHTML(t.key)}</ul></section>`;
+        })
+        .join(""))));
     board.querySelectorAll(".cp-col").forEach((c) => (c.querySelector(".cp-col-list").scrollTop = scroll[c.dataset.col] || 0));
     if (board.querySelector(".cp-qstrip-list")) board.querySelector(".cp-qstrip-list").scrollLeft = stripScroll;
     hydrateAvatars(board);
@@ -661,11 +699,21 @@
     if (changed && data.tabs.length) renderList();
     if (changed && shown && $("cp-detail").classList.contains("open")) renderDetail(shown); // botão Voltar / colunas mudam
   }
+  // Caixa zerada: marca para animar só a transição >0 → 0 do quadro inteiro
+  // nesta sessão. Abrir a página já zerada = cena parada. A marca vale só para
+  // a renderização desta carga (load limpa depois).
+  let lastOpen = null;
+  function trackZero() {
+    const n = openCount();
+    czFresh = lastOpen > 0 && n === 0 && czOn();
+    lastOpen = n;
+  }
   async function load() {
     const want = mode;
     const [r, h] = await Promise.all([api("/api/copilot"), want === "quadro" ? null : api("/api/copilot?all=1")]);
     if (!r.ok) { toast(r.data.detail || "Falha ao carregar."); return; }
     data = r.data;
+    trackZero();
     if (h && want === mode) hist = h.ok ? h.data.items || [] : [];
     renderModes();
     $("cp-hello").textContent = data.saudacao;
@@ -675,6 +723,7 @@
     $("cp-n-hoje").textContent = data.cards.hoje;
     $("cp-n-esp").textContent = data.cards.esperando_outros;
     renderList();
+    czFresh = false; // animou nesta renderização; as próximas reaproveitam o nó (Celebrate.keep)
     if (query) runSearch(); // ação feita com a busca aberta: resultados refletem o estado novo
     showJob(data.job);
     // o lote acabou de ler o item aberto: atualiza o detalhe sem o Leo pedir
@@ -761,8 +810,134 @@
     rows.push(["O que você respondeu", rc.sua_resposta ? `<p>${when(rc.sua_resposta).trim() || ""}</p><q>${esc(rc.sua_resposta.trecho)}</q>` : '<p class="cp-from">Você ainda não respondeu nesta conversa.</p>']);
     if (rc.ultima) rows.push(["Último a escrever", `<p><b>${esc(who(rc.ultima))}</b>${when(rc.ultima)}</p>${rc.ultima.trecho ? `<q>${esc(rc.ultima.trecho)}</q>` : ""}`]);
     const n = rc.total_mensagens || 0;
-    return `<details class="cp-why cp-resumo"><summary>Resumo${n ? ` · ${n} ${n === 1 ? "mensagem" : "mensagens"}` : ""}</summary>
-      <dl class="cp-rc">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl></details>`;
+    return `<div class="cp-resumo-row"><details class="cp-why cp-resumo"><summary>Resumo${n ? ` · ${n} ${n === 1 ? "mensagem" : "mensagens"}` : ""}</summary>
+      <dl class="cp-rc">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl></details>
+      <button type="button" class="cp-rd-link" data-resumo-det title="Resumo maior e mais detalhado, gerado pela IA">Resumo detalhado</button></div>`;
+  }
+  // ── resumo detalhado: IA sob demanda; o servidor guarda em cache por thread
+  // (reabrir não chama a IA de novo; mensagem nova na thread invalida) ──
+  const RD_SECTIONS = [
+    ["pontos_principais", "Pontos principais"],
+    ["pedidos_ao_leo", "O que pediram a você"],
+    ["pedidos_a_outros", "Pedidos a outras pessoas"],
+    ["prazos", "Prazos"],
+    ["numeros_dados", "Números e dados"],
+    ["decisoes_riscos", "Decisões, pendências e riscos"],
+    ["anexos_mencionados", "Anexos mencionados"],
+    ["proximos_passos", "Próximos passos"],
+  ];
+  const rdWhen = (iso) => {
+    const d = new Date(iso);
+    return !iso || isNaN(d) ? "" : d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(",", "");
+  };
+  function rdItem(key, v) {
+    if (key === "pedidos_a_outros") return `<li><b>${esc(v.nome || "Alguém")}:</b> ${esc(v.pedido)}</li>`;
+    if (key === "prazos") return `<li><b>${esc(v.data || "Sem data")}:</b> ${esc(v.o_que)}</li>`;
+    return `<li>${esc(v)}</li>`;
+  }
+  function resumoDetHTML(r) {
+    const res = r.resumo || {};
+    const parts = [];
+    if (res.contexto) parts.push(`<section><h4>Contexto</h4><p>${esc(res.contexto)}</p></section>`);
+    RD_SECTIONS.forEach(([key, title]) => {
+      const list = res[key] || [];
+      if (list.length) parts.push(`<section><h4>${esc(title)}</h4><ul>${list.map((v) => rdItem(key, v)).join("")}</ul></section>`);
+    });
+    return parts.join("") || '<p class="cp-from">A IA não encontrou nada além do resumo curto.</p>';
+  }
+  let rdSeq = 0;
+  async function openResumoDet(it, regerar) {
+    const seq = ++rdSeq;
+    const head = `<h3>Resumo detalhado</h3><p class="cp-from cp-rd-sub">${esc(it.subject || "")}</p>`;
+    sheet(`<div class="cp-rd">${head}<p class="cp-from cp-reading">Gerando resumo detalhado…</p></div>`, true);
+    const url = `/api/copilot/${encodeURIComponent(it.thread_id)}/resumo-detalhado`;
+    const r = await api(url, regerar ? "POST" : "GET", null, 150000);
+    if (seq !== rdSeq || $("cp-sheet").classList.contains("hidden")) return; // fechou ou abriu outro
+    const when = r.ok ? rdWhen(r.data.gerado_em) : "";
+    const meta = r.ok ? `<p class="cp-from cp-rd-meta">${when ? `gerado em ${esc(when)}` : ""}${r.data.cached ? " (do cache)" : ""}${r.data.desatualizado ? " · <b>chegou mensagem nova depois deste resumo</b>" : ""}</p>` : "";
+    const aviso = r.ok && r.data.aviso ? `<p class="cp-rd-warn">${esc(r.data.aviso)}</p>` : "";
+    const body = r.ok ? resumoDetHTML(r.data) : `<p class="cp-rd-warn">${esc(r.data.detail || "Não deu para gerar o resumo detalhado agora.")}</p>`;
+    sheet(`<div class="cp-rd">${head}${meta}${aviso}<div class="cp-rd-body">${body}</div>
+      <div class="cp-row cp-rd-foot"><button type="button" class="cp-btn" id="cp-rd-regen">${ICO.refresh}<span>Regerar</span></button>
+      <button type="button" class="cp-btn primary" data-close>Fechar</button></div></div>`, true);
+    $("cp-rd-regen").onclick = () => openResumoDet(it, true);
+  }
+  // ── verificador: confere na caixa (só leitura) o que o e-mail afirma ──
+  // GET = só o cache; sem cache (ou com mensagem nova depois dele) faz o POST,
+  // que lê o e-mail, busca na caixa e avalia. Regerar = POST {regerar:true}.
+  const VF_STEPS = ["Lendo o e-mail…", "Procurando na sua caixa…", "Conferindo o que achei…"];
+  const VF_STEP_MS = [0, 5000, 14000];
+  const VF_SELO = { confirmado: "Confirmado", nao_encontrado: "Não encontrado", inconclusivo: "Inconclusivo" };
+  let vfSeq = 0;
+  let vfTimers = [];
+  const vfHead = (it) => `<h3>🔎 Verificar na caixa</h3><p class="cp-from cp-rd-sub">${esc(it.subject || "")}</p>`;
+  function vfStepsHTML(step) {
+    return `<ol class="cp-vf-steps" aria-live="polite">${VF_STEPS.map((t, i) =>
+      `<li class="${i < step ? "done" : i === step ? "now" : ""}">${i < step ? "✓" : i === step ? '<span class="cp-vf-spin" aria-hidden="true"></span>' : "·"} ${esc(t)}</li>`).join("")}</ol>`;
+  }
+  function vfEvidenceHTML(ev) {
+    const when = rdWhen(ev.data) || ev.data || "";
+    const links = [
+      ev.gmail_url ? `<a href="${esc(ev.gmail_url)}" target="_blank" rel="noopener">Abrir no Gmail</a>` : "",
+      ev.app_url ? `<a href="${esc(ev.app_url)}" data-vf-app>Abrir no app</a>` : "",
+    ].filter(Boolean).join(" · ");
+    return `<li class="cp-vf-ev"><div class="cp-vf-ev-h"><b>${esc(ev.assunto || "(sem assunto)")}</b>${ev.pasta ? `<span class="cp-vf-pasta">${esc(ev.pasta)}</span>` : ""}</div>
+      <p class="cp-from">${esc(ev.de || "")}${when ? ` · ${esc(when)}` : ""}${ev.mesma_thread ? " · nesta conversa" : ""}</p>
+      ${ev.snippet ? `<q>${esc(ev.snippet)}</q>` : ""}${links ? `<p class="cp-vf-links">${links}</p>` : ""}</li>`;
+  }
+  function vfClaimHTML(a) {
+    const v = VF_SELO[a.veredito] ? a.veredito : "inconclusivo";
+    const evs = a.evidencias || [];
+    const qs = a.consultas || [];
+    return `<li class="cp-vf-claim v-${v}"><div class="cp-vf-claim-h"><span class="cp-vf-selo s-${v}">${esc(VF_SELO[v])}</span><p class="cp-vf-texto">${esc(a.texto)}</p></div>
+      <p class="cp-vf-expl">${esc(a.explicacao || "")}</p>
+      ${evs.length ? `<ul class="cp-vf-evs">${evs.map(vfEvidenceHTML).join("")}</ul>` : ""}
+      ${qs.length ? `<details class="cp-why cp-vf-qs"><summary>Consultas usadas (${qs.length})</summary><ul>${qs.map((c) =>
+        `<li><code>${esc(c.q)}</code> → ${c.erro ? `<span class="cp-rd-warn-i">erro: ${esc(c.erro)}</span>` : `${c.resultados} ${c.resultados === 1 ? "resultado" : "resultados"}`}</li>`).join("")}</ul></details>` : ""}</li>`;
+  }
+  function vfResultHTML(d) {
+    const list = d.afirmacoes || [];
+    const count = (k) => list.filter((a) => a.veredito === k).length;
+    const tally = list.length ? `<p class="cp-vf-tally">${Object.keys(VF_SELO).filter(count).map((k) => `<span class="cp-vf-selo s-${k}">${count(k)} ${esc(VF_SELO[k].toLowerCase())}</span>`).join(" ")}</p>` : "";
+    return `${tally}${list.length ? `<ol class="cp-vf-list">${list.map(vfClaimHTML).join("")}</ol>` : `<p class="cp-from">${esc(d.aviso || "Nada para conferir neste e-mail.")}</p>`}`;
+  }
+  function vfClearTimers() { vfTimers.forEach(clearTimeout); vfTimers = []; }
+  async function openVerify(it, regerar) {
+    const seq = ++vfSeq;
+    vfClearTimers();
+    const tid = encodeURIComponent(it.thread_id);
+    const url = `/api/copilot/${tid}/verificar`;
+    const alive = () => seq === vfSeq && !$("cp-sheet").classList.contains("hidden");
+    const wrap = (inner) => `<div class="cp-rd cp-vf">${vfHead(it)}${inner}</div>`;
+    let r = null;
+    if (!regerar) {
+      sheet(wrap(`<p class="cp-from cp-reading">Abrindo…</p>`), "full");
+      const c = await api(url);
+      if (seq !== vfSeq) return;
+      if (c.ok && Array.isArray(c.data.afirmacoes) && !c.data.desatualizado) r = c;
+    }
+    if (!r) {
+      const show = (i) => { if (alive()) $("cp-sheet-body").querySelector(".cp-vf-wait").innerHTML = vfStepsHTML(i); };
+      sheet(wrap(`<div class="cp-vf-wait">${vfStepsHTML(0)}</div><p class="cp-from">Só leitura: nada é enviado, marcado nem movido na sua caixa.</p>`), "full");
+      VF_STEP_MS.slice(1).forEach((ms, i) => vfTimers.push(setTimeout(() => show(i + 1), ms)));
+      r = await api(url, "POST", { regerar: !!regerar }, 240000);
+      if (seq === vfSeq) vfClearTimers();
+      if (!alive()) return; // fechou ou abriu outro
+    }
+    const when = r.ok ? rdWhen(r.data.gerado_em) : "";
+    const meta = r.ok ? `<p class="cp-from cp-rd-meta">${when ? `verificado em ${esc(when)}` : ""}${r.data.cached ? " (do cache)" : ""}</p>` : "";
+    const body = r.ok ? vfResultHTML(r.data) : `<p class="cp-rd-warn">${esc(r.data.detail || "Não deu para verificar agora.")}</p>`;
+    sheet(wrap(`${meta}<div class="cp-rd-body cp-vf-body">${body}</div>
+      <div class="cp-row cp-rd-foot"><button type="button" class="cp-btn" id="cp-vf-regen">${ICO.refresh}<span>${r.ok ? "Regerar" : "Tentar de novo"}</span></button>
+      <button type="button" class="cp-btn primary" data-close>Fechar</button></div>`), "full");
+    $("cp-vf-regen").onclick = () => openVerify(it, r.ok);
+    $("cp-sheet-body").querySelectorAll("[data-vf-app]").forEach((a) => (a.onclick = (e) => {
+      const id = decodeURIComponent(a.getAttribute("href").split("/").pop());
+      if (e.metaKey || e.ctrlKey || e.shiftKey) return; // nova aba: deixa o link seguir
+      e.preventDefault();
+      closeSheet();
+      open(id);
+    }));
   }
   function optionHTML(it, op, i) {
     const pct = Math.round((op.confianca || 0) * 100);
@@ -826,11 +1001,62 @@
         <span class="msg-from">${esc(name || "—")}${email && email !== name.toLowerCase() ? ` <small>&lt;${esc(email)}&gt;</small>` : ""}</span>
         ${quoted ? `<button type="button" class="msg-quoted-hint" title="Esta mensagem cita um e-mail anterior">${ic("reply", { size: 14 })} e-mail anterior citado</button>` : ""}
         <span class="msg-date">${esc(fmtDate(m.data))}</span>
+        ${window.MsgReply ? window.MsgReply.headHTML(i) : ""}
+        ${window.MsgSummary ? window.MsgSummary.buttonHTML() : ""}
       </div>
       <div class="msg-text">${linkify(main)}${quoted ? `<div class="quote-toggle-row"><button type="button" class="quote-toggle">Ver texto completo</button></div>
         <div class="msg-quoted hidden">${linkify(quoted)}</div>` : ""}</div>${att}</div>`;
   }
+  // Cards abertos / texto citado expandido da conversa completa: o re-render via
+  // innerHTML voltaria ao padrão (só a última aberta) e esconderia o trecho que
+  // o Leo acabou de citar. Guarda antes, devolve depois.
+  function threadUI(root) {
+    if (!root) return null;
+    const cards = [...root.querySelectorAll(".msg-card")];
+    const quoteOpen = (c) => { const q = c.querySelector(".msg-quoted"); return !!q && !q.classList.contains("hidden"); };
+    return {
+      open: cards.filter((c) => c.classList.contains("open")).map((c) => c.dataset.idx),
+      quotes: cards.filter(quoteOpen).map((c) => c.dataset.idx),
+    };
+  }
+  function setCard(card, open, quote) {
+    card.classList.toggle("open", open);
+    const head = card.querySelector(".msg-head");
+    if (head) head.setAttribute("aria-expanded", open);
+    const q = card.querySelector(".msg-quoted");
+    const b = card.querySelector(".quote-toggle");
+    if (q && quote !== undefined) {
+      q.classList.toggle("hidden", !quote);
+      if (b) b.textContent = quote ? "Ocultar texto citado" : "Ver texto completo";
+    }
+  }
+  function restoreThreadUI(root, ui) {
+    if (!root) return;
+    if (ui) root.querySelectorAll(".msg-card").forEach((c) => setCard(c, ui.open.includes(c.dataset.idx), ui.quotes.includes(c.dataset.idx)));
+    // trecho citado fica sempre à vista (card aberto; texto citado expandido se for lá)
+    root.querySelectorAll(".annot-mark").forEach((m) => {
+      const c = m.closest(".msg-card");
+      if (c) setCard(c, true, m.closest(".msg-quoted") ? true : undefined);
+    });
+  }
   function bindThread(root) {
+    // "Resumir este e-mail" (static/msgsummary.js): liga os botões e repõe as caixas
+    if (window.MsgSummary && shown) window.MsgSummary.bind(root, shown.thread_id);
+    // Para/Cc por mensagem + "Responder a esta mensagem" / "a todos" (static/msgreply.js)
+    if (window.MsgReply && shown) {
+      const tid = shown.thread_id;
+      window.MsgReply.bind(root, tid, { me, onReply: (idx, all) => replyToMessage(shown, idx, all) });
+      // alvo que veio do chat (rascunho salvo): completa id/nome quando os cabeçalhos chegarem
+      if (reply && reply.tid === tid && reply.target && !reply.target.id) {
+        window.MsgReply.load(tid).then((meta) => {
+          const t = reply && reply.tid === tid ? reply.target : null;
+          const m = t && meta && meta[t.idx];
+          if (!m || !m.id || t.id) return;
+          Object.assign(t, { id: m.id, label: window.MsgReply.label(m) });
+          if (reply.open && shown && shown.thread_id === tid) renderDetail(shown);
+        });
+      }
+    }
     const toggleQuote = (card, show) => {
       const q = card.querySelector(".msg-quoted");
       const hidden = q.classList.toggle("hidden", show === undefined ? undefined : !show);
@@ -882,6 +1108,7 @@
   }
   function renderDetail(it) {
     const box = $("cp-detail");
+    const threadUi = shown && shown.thread_id === it.thread_id ? threadUI($("cp-thread")) : null;
     if (!shown || shown.thread_id !== it.thread_id) { threadOpen = true; summaryOpen = true; }
     shown = it;
     // outra conversa aberta: as citações da anterior não valem mais
@@ -922,7 +1149,9 @@
         ${desk ? "" : `<p class="cp-from cp-l1-hint">${esc(PAPEL_HINT[it.papel] || "")}</p>`}</div>`;
     const layer2 = `<div class="cp-block cp-l2"><div class="cp-lbl"><i>2</i>O que aconteceu
           <span class="cp-layer-tools">
-            <button type="button" class="cp-icon cp-mini" id="cp-summary-tog" title="Ver resumo" aria-label="Ver resumo" aria-expanded="${summaryOpen}">${ICO.summary}</button>
+            <button type="button" class="cp-btn cp-rd-btn" id="cp-rd-open" title="Resumo maior e mais detalhado, gerado pela IA">${ICO.spark}<span>Resumo detalhado</span></button>
+            <button type="button" class="cp-btn cp-rd-btn" id="cp-vf-open" title="Conferir na sua caixa (só leitura) o que este e-mail afirma: se você recebeu, enviou ou respondeu o que ele diz">${ICO.search}<span>Verificar na caixa</span></button>
+            <button type="button" class="cp-icon cp-mini" id="cp-summary-tog" title="Mostrar/ocultar resumo curto" aria-label="Mostrar/ocultar resumo curto" aria-expanded="${summaryOpen}">${ICO.summary}</button>
             ${msgs.length ? `<button type="button" class="cp-icon cp-mini" id="cp-thread-go" title="Ir para a conversa completa (${msgs.length})" aria-label="Ir para a conversa completa (${msgs.length})">${ICO.thread}<span class="cp-badge">${msgs.length}</span></button>` : ""}
           </span></div>
         <div id="cp-summary" class="${summaryOpen ? "" : "hidden"}"><p class="cp-big">${esc(it.o_que_aconteceu || "—")}</p>
@@ -1005,6 +1234,9 @@
     }
     const go = $("cp-thread-go");
     if (go) go.onclick = () => { flipThread(true); $("cp-thread-block").scrollIntoView({ behavior: "smooth", block: "start" }); };
+    $("cp-rd-open").onclick = () => openResumoDet(it);
+    $("cp-vf-open").onclick = () => openVerify(it);
+    box.querySelectorAll("[data-resumo-det]").forEach((b) => (b.onclick = () => openResumoDet(it)));
     box.querySelectorAll("[data-apply]").forEach((b) => (b.onclick = () => apply(it, Number(b.dataset.apply))));
     box.querySelectorAll("[data-task]").forEach((c) => (c.onchange = () => act(it, "tarefa", { index: Number(c.dataset.task), feita: c.checked })));
     box.querySelectorAll("[data-act]").forEach((b) => (b.onclick = () => (
@@ -1016,7 +1248,7 @@
     bindReply(it);
     if (msgs.length) loadGmailAttachments(it.thread_id);
     box.querySelectorAll("[data-outbox-cancel]").forEach((b) => (b.onclick = async () => {
-      if (!window.confirm("Cancelar este envio? O texto não será enviado.")) return;
+      if (!(await window.Dialog.confirm({ title: "Cancelar este envio?", body: "A resposta sai da fila e não será enviada.", ok: "Cancelar envio", cancel: "Manter na fila", danger: true }))) return;
       b.disabled = true;
       const r = await api(`/api/outbox/${encodeURIComponent(b.dataset.outboxCancel)}/cancel`, "POST");
       toast(r.ok ? "Envio cancelado." : r.data.detail || "Não deu para cancelar.");
@@ -1024,6 +1256,7 @@
       open(it.thread_id, true);
     }));
     annot.reapply(); // o innerHTML apagou as marcas dos trechos citados
+    restoreThreadUI($("cp-thread"), threadUi);
     if (caret && $(caret[0])) {
       const ta = $(caret[0]);
       ta.focus(); ta.setSelectionRange(caret[1], caret[2]); ta.scrollTop = caret[3];
@@ -1036,8 +1269,9 @@
     const draft = (it.draft && it.draft.trim()) ? it.draft : (cached || "");
     const waiting = !!(it._draftPending && !draft);
     if (!reply || reply.tid !== it.thread_id) {
-      reply = { tid: it.thread_id, open: false, text: draft, aiText: draft, instr: "", extraCc: [], all: true, recipients: null, busy: false, status: "",
-        chat: Array.isArray(it.chat) ? it.chat.slice() : [], pending: "", chatOpen: true, draftLoading: waiting, files: [], hint: "", ask: "" };
+      reply = { tid: it.thread_id, open: false, text: draft, aiText: draft, instr: "", extraCc: [], all: true, recipients: null, rc: null, rcInstr: "", rcKeep: "", busy: false, status: "",
+        chat: Array.isArray(it.chat) ? it.chat.slice() : [], pending: "", chatOpen: true, draftLoading: waiting, files: [], hint: "", ask: "",
+        target: targetFromChat(it.chat) };
       if (draft && window.DraftPersist) window.DraftPersist.remember(it.thread_id, draft);
     } else if (!reply.busy && draft && draft !== reply.aiText && reply.text === reply.aiText) {
       // rascunho novo no servidor (Aplicar, /mail) e o texto não foi editado aqui
@@ -1050,23 +1284,127 @@
     if (!reply.busy && Array.isArray(it.chat) && it.chat.length > reply.chat.length) reply.chat = it.chat.slice();
   }
   const lower = (e) => String(e || "").trim().toLowerCase();
+  // ── responder a UMA mensagem da conversa (não só à última) ──
+  // reply.target = { idx, all, id (Gmail), label: "Paulo Lemes · 07/10 15:27" } | null
+  function targetFromChat(chat) {
+    // o último rascunho foi feito para uma mensagem específica: continua nela
+    const last = [...(chat || [])].reverse().find((m) => m.role === "ai" && m.kind !== "answer" && !m.placeholder);
+    const a = last && last.alvo;
+    if (!a || a.idx == null) return null;
+    return { idx: Number(a.idx), all: true, id: a.message_id || "", label: window.MsgReply ? window.MsgReply.label({ de: a.de, data: a.data }) : "" };
+  }
+  function targetMeta(it) {
+    const meta = window.MsgReply && reply && reply.target ? window.MsgReply.get(it.thread_id) : null;
+    return meta ? meta[reply.target.idx] || null : null;
+  }
+  // Para/Cc padrão quando há alvo: os da mensagem escolhida (cabeçalhos do Gmail);
+  // sem eles ainda, o remetente do card (e o Cc de sempre, se "a todos").
+  function targetRc(it) {
+    const t = reply.target;
+    if (!t) return null;
+    const meta = window.MsgReply && window.MsgReply.get(it.thread_id);
+    const fromMeta = meta && window.MsgReply.recipientsFor(meta, t.idx, reply.all, me);
+    if (fromMeta && fromMeta.to.length) return fromMeta;
+    const msg = (it.mensagens || [])[t.idx];
+    const from = msg ? parseFrom(msg.de).email : "";
+    return from && from !== me ? { to: [from], cc: null } : null;
+  }
+  async function replyToMessage(it, idx, all) {
+    syncReply(it);
+    const msg = (it.mensagens || [])[idx] || {};
+    reply.target = { idx, all, id: "", label: window.MsgReply.label({ de: msg.de, data: msg.data }) };
+    reply.all = all;
+    reply.rcKeep = ""; reply.rcInstr = "";
+    if (reply.rc) reply.rc.touched = false; // destinatários voltam a sair da mensagem escolhida
+    const meta = await window.MsgReply.load(it.thread_id);
+    if (!reply || reply.tid !== it.thread_id || !reply.target || reply.target.idx !== idx) return;
+    const m = meta && meta[idx];
+    if (m) Object.assign(reply.target, { id: m.id || "", label: window.MsgReply.label(m) });
+    if (reply.open) {
+      renderDetail(shown && shown.thread_id === it.thread_id ? shown : it);
+      const box = $("cp-reply");
+      if (box) box.scrollIntoView({ behavior: "smooth", block: "start" });
+      if ($("cp-reply-instr")) $("cp-reply-instr").focus({ preventScroll: true });
+    } else openReply(it, { focusInstr: true, noGenerate: !!reply.text.trim() });
+  }
+  function clearTarget(it) {
+    if (!reply) return;
+    reply.target = null;
+    if (reply.rc) reply.rc.touched = false;
+    reply.status = "Voltou a responder à última mensagem.";
+    renderDetail(shown && shown.thread_id === it.thread_id ? shown : it);
+  }
   function replyTo(it) {
     if (lower(it.from_email) !== me) return it.from_email || "";
     const other = ((reply.recipients && reply.recipients.to) || []).find((a) => lower(a.email) !== me);
     return (other && other.email) || it.from_email || "";
   }
-  // Mesma sugestão do "responder a todos" do /mail: quem mais estava em Para/Cc
-  // na última mensagem, menos você e quem já vai no Para.
-  function replyCc(it) {
-    const seen = new Set([me, lower(replyTo(it))]);
-    const out = [];
-    const r = reply.recipients || { to: [], cc: [] };
-    const all = reply.all ? [...(r.to || []), ...(r.cc || [])].map((a) => a.email) : [];
-    [...all, ...reply.extraCc].forEach((e) => {
-      const email = lower(e);
-      if (email && !seen.has(email)) { seen.add(email); out.push(email); }
+  // Para/Cc em chips (static/recipients.js). Padrão = o que o envio usaria
+  // (reply_to/reply_cc do /recipients, igual ao send_reply); depois que o Leo
+  // mexe (touched) fica o que ele escolheu. Vai no POST /send como to/cc.
+  function rcDefaults(it) {
+    const r = reply.recipients || {};
+    const tr = targetRc(it);
+    const to = tr ? tr.to : ((r.reply_to && r.reply_to.length) ? r.reply_to : [replyTo(it)]).map(lower).filter(Boolean);
+    const seen = new Set([me, ...to]);
+    const base = !reply.all ? [] : tr && tr.cc ? tr.cc : (r.reply_cc || [...(r.to || []), ...(r.cc || [])].map((a) => a.email));
+    const cc = [];
+    [...base, ...reply.extraCc].forEach((e) => { e = lower(e); if (e && !seen.has(e)) { seen.add(e); cc.push(e); } });
+    return { to, cc };
+  }
+  function rcState(it) {
+    if (!reply.rc) reply.rc = { to: [], cc: [], participants: [], touched: false };
+    const rc = reply.rc;
+    if (!rc.touched) Object.assign(rc, rcDefaults(it));
+    const r = reply.recipients || {};
+    const known = new Map((rc.participants || []).map((p) => [lower(p.email), p]));
+    [...(r.to || []), ...(r.cc || []), { email: it.from_email, name: it.from_name || "" }].forEach((p) => {
+      const e = lower(p && p.email);
+      if (e && e !== me && (!known.has(e) || (p.name && !known.get(e).name))) known.set(e, { email: e, name: p.name || "" });
     });
-    return out.join(", ");
+    // nome completo dos cabeçalhos do Gmail vale mais que o apelido do cartão
+    const tm = targetMeta(it);
+    (r.participants || []).concat(tm ? [tm.from, ...(tm.to || []), ...(tm.cc || [])] : []).forEach((p) => { const e = lower(p.email); if (e && e !== me && p.name) known.set(e, { email: e, name: p.name }); });
+    rc.participants = [...known.values()];
+    return rc;
+  }
+  // saudação (ou o último pedido "responda a X") aponta para outra pessoa?
+  function rcSuggestion(it) {
+    const rc = rcState(it);
+    const sug = (reply.rcInstr && window.Recipients.suggest(reply.text, rc, { instruction: reply.rcInstr, me }))
+      || window.Recipients.suggest(reply.text, rc, { me });
+    return sug && window.Recipients.sugKey(sug, rc) !== reply.rcKeep ? sug : null;
+  }
+  function rcHTML(it, prefix) {
+    return window.Recipients.editorHTML(rcState(it), prefix) + (reply.recipients ? "" : '<small class="rc-loading">carregando participantes…</small>');
+  }
+  // Liga chips + aviso de saudação num container (composer "cp" ou confirmação "sd").
+  function bindRc(root, it, prefix, sugBox) {
+    const paint = () => {
+      const box = sugBox();
+      if (!box) return;
+      const sug = rcSuggestion(it);
+      box.innerHTML = window.Recipients.suggestHTML(sug, prefix);
+      if (!sug) return;
+      box.querySelector(`#${prefix}-rc-swap`).onclick = () => {
+        window.Recipients.applySuggestion(rcState(it), sug);
+        rerender();
+      };
+      box.querySelector(`#${prefix}-rc-keep`).onclick = () => { reply.rcKeep = window.Recipients.sugKey(sug, rcState(it)); paint(); };
+    };
+    const rerender = () => {
+      const ed = root.querySelector(`[data-rc-editor="${prefix}"]`);
+      if (ed) {
+        const tmp = document.createElement("div");
+        tmp.innerHTML = window.Recipients.editorHTML(rcState(it), prefix);
+        ed.replaceWith(tmp.firstElementChild);
+      }
+      window.Recipients.bind(root, rcState(it), prefix, paint);
+      paint();
+    };
+    window.Recipients.bind(root, rcState(it), prefix, paint);
+    paint();
+    return paint;
   }
   // Respostas desta thread já confirmadas que ainda não saíram (sem conexão).
   function outboxHTML(it) {
@@ -1079,7 +1417,6 @@
   }
   function replyHTML(it) {
     if (!reply || !reply.open) return "";
-    const cc = replyCc(it);
     const sendTip = canSend ? "Enviar (pede confirmação)" : "Reautorize o Gmail (Entrar no Gmail) para poder enviar.";
     const nChat = (reply.chat || []).filter((m) => !m.placeholder && !m.typing).length;
     return `<div class="cp-block cp-block-h cp-reply" id="cp-reply">
@@ -1089,35 +1426,39 @@
           <button type="button" data-rmode="one" class="${reply.all ? "" : "on"}">Responder</button>
           <button type="button" data-rmode="all" class="${reply.all ? "on" : ""}">Responder a todos</button>
         </div>
-        <p class="cmp-rcpt cp-rcpt"><b>Para:</b> ${esc(replyTo(it) || "?")}${cc ? `<br><b>Cc:</b> ${esc(cc)}` : reply.recipients ? " · sem cópia" : " · carregando cópias…"}</p>
+        ${window.MsgReply ? window.MsgReply.bannerHTML(reply.target, "cp") : ""}
+        <div class="cmp-rcpt cp-rcpt" id="cp-rcpt">${rcHTML(it, "cp")}</div>
+        <div id="cp-rc-sug"></div>
         <div class="cmp-attach-list attach-list${(reply.files || []).length ? "" : " hidden"}" id="cp-attach-list">${window.Composer ? window.Composer.attachChipsHTML(reply.files || []) : ""}</div>
         <details class="cmp-chat" id="cp-chat-box" ${reply.chatOpen ? "open" : ""}>
           <summary>${ic("chat", { size: 15 })}Conversa com a IA <b>${nChat}</b></summary>
           <div id="cp-chat" class="chat-messages"></div>
         </details>
-        <div class="cmp-instr">
-          <label for="cp-reply-instr">${ic("sparkles", { size: 14 })}Peça à IA <small>(não vai no e-mail)</small></label>
-          ${reply.ask ? `<p class="cmp-hint cp-ai-ask">A IA precisa de contexto: <b>${esc(reply.ask)}</b></p>` : ""}
-          <div class="cmp-annots" id="cp-annots">${annotsHTML()}</div>
-          <div class="cmp-instr-row">
-            <textarea id="cp-reply-instr" rows="1" placeholder="${esc(reply.hint || (reply.text.trim() ? FOLLOW_UP_HINT : "Peça à IA: ex. diga que posso hoje às 14h…"))}" title="Enter gera · Shift+Enter quebra linha · selecione um trecho do e-mail ou do rascunho para citar" ${reply.busy ? "disabled" : ""}>${esc(reply.instr)}</textarea>
-            ${genBtnHTML()}
-          </div>
+        <div class="cmp-draft-head">
+          <label for="cp-reply-text">Rascunho do e-mail <small>(vai ser enviado)</small></label>
+          ${(reply.text.trim() || reply.draftLoading) ? `<span class="cmp-draft-chip${reply.draftLoading && !reply.text.trim() ? " loading" : ""}" id="cp-draft-chip" role="status">Rascunho salvo</span>` : ""}
+          <button type="button" class="cmp-fixpt${reply.fixing ? " busy" : ""}" id="cp-fixpt" title="Corrige só ortografia, gramática, pontuação e acentos. Não muda tom, conteúdo nem ordem." ${reply.busy || reply.fixing || !reply.text.trim() ? "disabled" : ""}>${ic("check", { size: 14 })}<span>${reply.fixing ? "Corrigindo…" : "Corrigir português"}</span></button>
+        </div>
+        <div class="cmp-draft-wrap${reply.draftLoading && !reply.text.trim() ? " loading" : ""}" id="cp-draft-wrap">
+          <textarea id="cp-reply-text" class="cmp-draft cp-reply-text" rows="9" placeholder="${reply.busy ? "A IA está escrevendo…" : reply.draftLoading ? "Carregando rascunho salvo…" : "O texto que vai para o destinatário. Para pedir algo à IA, use o campo abaixo."}" ${reply.busy ? "disabled" : ""}>${esc(reply.text)}</textarea>
+          <div class="cmp-draft-skel" aria-hidden="true"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div>
         </div>
         <div class="cmp-instr-sug${instrSuggest() ? "" : " hidden"}" id="cp-instr-sug" role="status">
           <span>Isso parece uma instrução — usar como pedido à IA?</span>
           <button type="button" class="cmp-sug-yes" id="cp-instr-sug-yes">${ic("sparkles", { size: 14 })}Usar como pedido e gerar</button>
           <button type="button" class="cmp-sug-no" id="cp-instr-sug-no" aria-label="Não, é o texto do e-mail">Não</button>
         </div>
-        <div class="cmp-draft-head">
-          <label for="cp-reply-text">Rascunho do e-mail <small>(vai ser enviado)</small></label>
-          ${(reply.text.trim() || reply.draftLoading) ? `<span class="cmp-draft-chip${reply.draftLoading && !reply.text.trim() ? " loading" : ""}" id="cp-draft-chip" role="status">Rascunho salvo</span>` : ""}
-        </div>
-        <div class="cmp-draft-wrap${reply.draftLoading && !reply.text.trim() ? " loading" : ""}" id="cp-draft-wrap">
-          <textarea id="cp-reply-text" class="cmp-draft cp-reply-text" rows="9" placeholder="${reply.busy ? "A IA está escrevendo…" : reply.draftLoading ? "Carregando rascunho salvo…" : "O texto que vai para o destinatário. Para pedir algo à IA, use o campo acima."}" ${reply.busy ? "disabled" : ""}>${esc(reply.text)}</textarea>
-          <div class="cmp-draft-skel" aria-hidden="true"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div>
-        </div>
         <p class="cmp-status" id="cp-reply-status" role="status">${esc(reply.busy ? "Gerando rascunho…" : reply.draftLoading && !reply.text.trim() ? "Carregando rascunho salvo…" : reply.status)}</p>
+        <div class="cmp-instr">
+          <label for="cp-reply-instr">${ic("sparkles", { size: 14 })}Peça à IA <small>(não vai no e-mail)</small></label>
+          ${reply.ask ? `<p class="cmp-hint cp-ai-ask">A IA precisa de contexto: <b>${esc(reply.ask)}</b></p>` : ""}
+          <div class="cmp-annots" id="cp-annots">${annotsHTML()}</div>
+          ${window.Composer.keepChipHTML("cp-keep", reply.keepText, keepAuto())}
+          <div class="cmp-instr-row">
+            <textarea id="cp-reply-instr" rows="1" placeholder="${esc(reply.hint || (reply.text.trim() ? FOLLOW_UP_HINT : "Peça à IA: ex. diga que posso hoje às 14h…"))}" title="Enter gera · Shift+Enter quebra linha · selecione um trecho do e-mail ou do rascunho para citar" ${reply.busy ? "disabled" : ""}>${esc(reply.instr)}</textarea>
+            ${genBtnHTML()}
+          </div>
+        </div>
         <div class="cmp-tools">
           <button type="button" class="cmp-tool" id="cp-reply-regen" title="Regenerar (sem instrução)" aria-label="Regenerar" ${reply.busy ? "disabled" : ""}>${ic("refresh", { size: 18 })}</button>
           <button type="button" class="cmp-tool" id="cp-reply-learn" title="Aprender" aria-label="Aprender">${ic("learn", { size: 18 })}</button>
@@ -1190,11 +1531,13 @@
   function bindReply(it) {
     if (!reply || !reply.open || !$("cp-reply")) return;
     const ta = $("cp-reply-text");
+    const rcPaint = bindRc($("cp-reply"), it, "cp", () => $("cp-rc-sug"));
     ta.oninput = () => {
       reply.text = ta.value; reply.status = ""; reply.draftLoading = false;
       $("cp-reply-send").disabled = !(canSend && reply.text.trim());
       $("cp-reply-status").textContent = "";
       syncGen();
+      if (rcPaint) rcPaint(); // saudação mudou -> confere com o Para
       if (window.DraftPersist) window.DraftPersist.schedule(reply.tid, reply.text);
     };
     // "Isso parece uma instrução": o texto vai para o campo da IA, a caixa volta
@@ -1206,11 +1549,18 @@
       generate(it, true);
     };
     $("cp-instr-sug-no").onclick = () => { reply.sugOff = reply.text; syncGen(); };
-    $("cp-reply").querySelectorAll("[data-rmode]").forEach((b) => (b.onclick = () => { reply.all = b.dataset.rmode === "all"; renderDetail(it); }));
+    const tgClear = $("cp-target-clear");
+    if (tgClear) tgClear.onclick = () => clearTarget(it);
+    $("cp-reply").querySelectorAll("[data-rmode]").forEach((b) => (b.onclick = () => {
+      reply.all = b.dataset.rmode === "all";
+      if (reply.target) reply.target.all = reply.all;
+      if (reply.rc) reply.rc.cc = rcDefaults(it).cc; // Responder / a todos: refaz só o Cc
+      renderDetail(it);
+    }));
     renderChatBox(it);
     $("cp-chat-box").ontoggle = () => { reply.chatOpen = $("cp-chat-box").open; };
     $("cp-chat-reset").onclick = async () => {
-      if (!window.confirm("Limpar a conversa com a IA e o rascunho desta thread (também no /mail)?")) return;
+      if (!(await window.Dialog.confirm({ title: "Limpar conversa e rascunho?", body: "Apaga a conversa com a IA e o rascunho deste e-mail (aqui e no /mail). Não dá para desfazer.", ok: "Limpar", cancel: "Cancelar", danger: true }))) return;
       const r = await api(`/api/threads/${encodeURIComponent(it.thread_id)}/chat/reset`, "POST");
       if (!r.ok) { toast(r.data.detail || "Não deu para limpar."); return; }
       reply.chat = []; reply.text = ""; reply.aiText = ""; reply.status = "Conversa limpa."; reply.draftLoading = false; shown.draft = ""; shown.chat = [];
@@ -1226,6 +1576,10 @@
     const fit = () => { instr.style.height = "auto"; instr.style.height = `${Math.min(instr.scrollHeight, 200)}px`; };
     fit();
     instr.oninput = () => { reply.instr = instr.value; fit(); syncGen(); };
+    // "Usar meu texto (só corrigir)": o campo da IA vira o e-mail, só corrigido
+    $("cp-keep").onclick = () => { reply.keepText = !(reply.keepText || keepAuto()); if (!reply.keepText) reply.keepOff = reply.instr; syncGen(); instr.focus({ preventScroll: true }); };
+    // "Corrigir português" do rascunho inteiro (nada de reescrever)
+    $("cp-fixpt").onclick = () => fixDraft(it);
     instr.onkeydown = (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (genReady()) generate(it, true); }
     };
@@ -1281,9 +1635,13 @@
     if (genReady()) return "instr";
     return draftEdited() ? "improve" : "off";
   }
+  // pedido no formato "escreva da mesma forma: …" (e o Leo não desligou o chip)
+  const keepAuto = () => !!reply && !reply.keepText && reply.keepOff !== reply.instr && !!window.Composer.keepTextRequest(reply.instr);
+  const keepOn = () => !!reply && (reply.keepText || keepAuto());
   function genLabel() {
-    if (reply && reply.busy) return [reply.text.trim() ? "Ajustando…" : "Gerando…", "A IA está escrevendo o rascunho"];
+    if (reply && reply.busy) return [keepOn() ? "Corrigindo…" : reply.text.trim() ? "Ajustando…" : "Gerando…", "A IA está escrevendo o rascunho"];
     const mode = genMode();
+    if (mode === "instr" && keepOn()) return ["Usar meu texto", "Seu texto vai para o rascunho; a IA só corrige o português"];
     if (mode === "improve") return ["Melhorar com IA", "Melhorar com IA: usa o texto do rascunho como pedido"];
     return reply.text.trim() ? ["Ajustar", "Ajustar o rascunho com o pedido"] : ["Gerar", "Gerar o rascunho com o pedido"];
   }
@@ -1306,12 +1664,45 @@
     }
     const sug = $("cp-instr-sug");
     if (sug) sug.classList.toggle("hidden", !instrSuggest());
+    const keep = $("cp-keep");
+    if (keep) {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = window.Composer.keepChipHTML("cp-keep", reply.keepText, keepAuto());
+      keep.innerHTML = tmp.firstChild.innerHTML;
+      keep.setAttribute("aria-pressed", tmp.firstChild.getAttribute("aria-pressed"));
+    }
+  }
+  // "Corrigir português" do rascunho inteiro: só ortografia/gramática/pontuação.
+  // As palavras alteradas brilham uns segundos; Desfazer / Ctrl+Z voltam o texto.
+  async function fixDraft(it) {
+    if (!reply || reply.busy || reply.fixing || !reply.text.trim()) return;
+    const tid = it.thread_id;
+    const sent = reply.text;
+    reply.fixing = true; reply.status = "";
+    const btn = $("cp-fixpt");
+    if (btn) { btn.disabled = true; btn.classList.add("busy"); btn.querySelector("span").textContent = "Corrigindo…"; }
+    $("cp-reply-status").textContent = "Corrigindo o português…";
+    let data = null;
+    let err = "";
+    try { data = await window.Composer.fixPortuguese(tid, { text: sent }); } catch (e) { err = e.message; }
+    if (!reply || reply.tid !== tid) return;
+    reply.fixing = false;
+    const ta = $("cp-reply-text");
+    const b = $("cp-fixpt");
+    if (b) { b.disabled = !reply.text.trim() || reply.busy; b.classList.remove("busy"); b.querySelector("span").textContent = "Corrigir português"; }
+    const say = (t) => { reply.status = t; if ($("cp-reply-status")) $("cp-reply-status").textContent = t; };
+    if (err) { say(err); return; }
+    if (!ta || ta.value !== sent) { say("O rascunho mudou enquanto a IA corrigia; nada foi trocado."); return; }
+    if (!data.changed || data.text === sent) { say("Nada para corrigir: o português já está certo."); return; }
+    const n = annot.replaceText(ta, 0, sent.length, data.text);
+    say("");
+    annot.notice(`Português corrigido (${n === 1 ? "1 mudança" : `${n} mudanças`}). Tom e conteúdo mantidos.`, () => annot.undo());
   }
   async function loadRecipients(it) {
     if (reply.recipients) return;
     const r = await api(`/api/threads/${encodeURIComponent(it.thread_id)}/recipients`);
     if (!reply || reply.tid !== it.thread_id) return;
-    reply.recipients = r.ok ? { to: r.data.to || [], cc: r.data.cc || [] } : { to: [], cc: [] };
+    reply.recipients = r.ok ? Object.assign({ to: [], cc: [] }, r.data) : { to: [], cc: [] };
     if (shown && shown.thread_id === it.thread_id) renderDetail(shown);
   }
   // opts.text: rascunho que a ação acabou de preparar (Aplicar / Cobrar);
@@ -1357,20 +1748,32 @@
     const instruction = fromDraft ? o.instruction : withInstruction ? window.Annotate.compose(reply.instr, annot.list()) : "";
     if (withInstruction && !instruction) return;
     const edited = reply.text.trim() && reply.text !== reply.aiText;
-    const ask = withInstruction
-      ? "A IA vai reescrever a partir do texto que você editou. Trocar o texto da caixa pelo resultado?"
-      : "Trocar o texto que você editou por um rascunho novo da IA?";
-    if (edited && !fromDraft && !window.confirm(ask)) return;
+    const keep = withInstruction && !fromDraft && keepOn();
+    if (edited && !fromDraft && !keep) {
+      const ok = await window.Dialog.confirm(withInstruction
+        ? { title: "Usar seu texto como base?", body: "Você editou o rascunho. A IA vai partir do seu texto e aplicar o pedido. O rascunho atual será substituído (dá pra desfazer).", ok: "Aplicar", cancel: "Cancelar" }
+        : { title: "Trocar pelo rascunho novo?", body: "Você editou o rascunho. A IA vai escrever uma versão nova e ela substitui o seu texto (dá pra desfazer).", ok: "Gerar novo", cancel: "Cancelar" });
+      if (!ok || !reply || reply.tid !== it.thread_id || reply.busy) return;
+    }
     const tid = it.thread_id;
+    const before = reply.text; // para o Desfazer, se a IA trocar o texto editado
     reply.busy = true; reply.status = "";
     if (withInstruction) reply.chatOpen = true; // a bolha do pedido + "escrevendo" ficam à vista
-    reply.pending = fromDraft ? instruction : withInstruction ? (reply.instr.trim() || `${annot.count()} citação(ões)`) : "";
+    // bolha do pedido = o texto que vai para a IA (citações listadas; ChatUI encurta o trecho)
+    reply.pending = withInstruction ? instruction : "";
     renderDetail(shown);
     // mesma geração do /mail (assistant.draft): o rascunho fica salvo na thread.
     // Com instrução, o texto atual da caixa vai como "Rascunho anterior".
     const body = { instruction, comment: "" };
+    // respondendo a uma mensagem específica: a IA foca nela (o resto é contexto)
+    if (reply.target) {
+      body.alvo_idx = reply.target.idx;
+      if (reply.target.id) body.reply_to_message_id = reply.target.id;
+    }
     const prev = fromDraft ? (o.currentDraft || "") : reply.text;
     if (instruction && prev.trim()) body.current_draft = prev;
+    // "Usar meu texto": o pedido inteiro é o e-mail (sem citações), só corrigido
+    if (keep && reply.keepText) { body.keep_text = true; body.instruction = reply.instr.trim() || instruction; }
     const r = await api(`/api/threads/${encodeURIComponent(tid)}/draft`, "POST", body);
     if (!reply || reply.tid !== tid) return;
     reply.busy = false; reply.pending = "";
@@ -1382,12 +1785,36 @@
     else if (r.data.draft) {
       reply.text = r.data.draft; reply.aiText = r.data.draft; shown.draft = r.data.draft; reply.draftLoading = false;
       if (window.DraftPersist) window.DraftPersist.remember(tid, r.data.draft);
+      // "Responda a Paulo": lembra o pedido para o aviso de destinatário (o
+      // servidor também manda a sugestão pronta quando acha a pessoa)
+      if (window.Recipients.instructionTarget(instruction).para) reply.rcInstr = instruction;
+      const sd = r.data.sugestao_destinatarios;
+      if (sd && sd.email && !rcState(it).participants.some((p) => lower(p.email) === sd.email)) reply.rc.participants.push({ email: sd.email, name: sd.nome || "" });
+      if (edited && !fromDraft && before !== r.data.draft) {
+        annot.notice("Rascunho substituído pela versão da IA.", () => {
+          if (!reply || reply.tid !== tid) return;
+          reply.text = before; reply.status = "Voltou o seu texto.";
+          if (window.DraftPersist) window.DraftPersist.schedule(tid, before);
+          if (shown && shown.thread_id === tid) renderDetail(shown);
+        });
+      }
       if (r.data.unchanged) reply.status = "A IA devolveu o mesmo texto. Tente pedir de outro jeito (ex. \"acrescente no fim: faz sentido?\").";
+      if (r.data.keep_text) reply.keepResult = { original: r.data.original || "", draft: r.data.draft, corrigido: !!r.data.corrigido, aviso: r.data.aviso || "" };
     }
     else reply.status = (last && last.text) || "A IA não devolveu rascunho.";
-    if (r.ok && withInstruction) { reply.instr = ""; reply.hint = ""; reply.ask = ""; annot.clear(); }
+    if (r.ok && withInstruction) { reply.instr = ""; reply.hint = ""; reply.ask = ""; reply.keepText = false; reply.keepOff = ""; annot.clear(); }
+    const kr = reply.keepResult;
+    reply.keepResult = null;
+    if (kr) reply.status = kr.aviso || (kr.corrigido ? "Seu texto foi para o rascunho, só com o português corrigido." : "Seu texto foi para o rascunho como está (nada a corrigir).");
     if (!shown || shown.thread_id !== tid) return;
     renderDetail(shown);
+    // "Usar meu texto": destaca o que a correção mudou; Desfazer volta o texto sem correção
+    const kta = $("cp-reply-text");
+    if (kr && kta && kr.corrigido && kr.original && kta.value === kr.draft) {
+      const n = annot.flashChanges(kta, kr.original, kr.draft, 0);
+      annot.setUndo(kta, kr.original);
+      annot.notice(`Usei seu texto, só com o português corrigido (${n === 1 ? "1 mudança" : `${n} mudanças`}).`, () => annot.undo());
+    }
     // pronto para o próximo pedido: campo da IA focado e a conversa no fim
     const instr = $("cp-reply-instr");
     if (r.ok && instr) {
@@ -1397,46 +1824,81 @@
     const chat = $("cp-chat");
     if (chat) chat.scrollTop = chat.scrollHeight;
   }
-  // Mesma confirmação do /mail: Para, Cc editável, assunto, prévia, aviso de
-  // anexo esquecido e "ação definitiva". Só envia no clique de "Enviar agora".
+  // Confirmação de envio (Dialog): Para/Cc em chips (os mesmos do composer),
+  // aviso se a saudação não bate com o Para, assunto, anexos, prévia e
+  // "ação definitiva". Só envia no "Enviar agora"; erro mantém o diálogo aberto.
   async function confirmSend(it) {
     const text = reply.text.trim();
     if (!text) return;
     if (!canSend) { toast("Reautorize o Gmail (Entrar no Gmail) para poder enviar."); return; }
+    annot.dismissNotice(); // "Trecho reescrito · Desfazer" não fica por cima da confirmação
     if (window.DraftPersist) await window.DraftPersist.flush(it.thread_id, text);
     const tid = it.thread_id;
     const att = await api(`/api/threads/${encodeURIComponent(tid)}/attachments`);
-    const nFiles = att.ok ? (att.data.files || []).length : 0;
-    const mentions = /anex/i.test(text) && nFiles === 0;
+    const files = att.ok ? (att.data.files || []) : [];
+    const mentions = /anex/i.test(text) && !files.length;
     const subject = it.subject || "(sem assunto)";
     const offline = !!(window.NetStatus && window.NetStatus.isOffline());
-    sheet(`<h3>Enviar e-mail?</h3>
-      <p class="cp-mrow"><b>Para:</b> ${esc(replyTo(it) || "?")}</p>
-      <label class="cp-field"><span>Cc</span><input id="sd-cc" type="text" value="${esc(replyCc(it))}" placeholder="opcional, e-mails separados por vírgula" autocomplete="off"></label>
-      <p class="cp-mrow"><b>Assunto:</b> ${esc(/^re:/i.test(subject) ? subject : `Re: ${subject}`)}</p>
-      <div class="cp-pre">${esc(text)}</div>
-      ${nFiles ? `<p class="cp-from">${nFiles} anexo(s) vão junto neste envio.</p>` : ""}
-      ${mentions ? '<p class="cp-warn attach">⚠️ O texto menciona anexo, mas nenhum arquivo foi anexado a essa resposta.</p>' : ""}
-      ${offline ? `<p class="cp-warn queued">${esc(window.NetStatus.message(window.NetStatus.state.status === "auth_error" ? "auth_error" : "offline"))}</p>` : ""}
-      <p class="cp-warn">${offline ? "Ao confirmar, a resposta vai para a fila de envio e sai sozinha quando a conexão voltar (você pode cancelar até lá)." : "Essa ação é definitiva — o e-mail sai imediatamente e não pode ser desfeito."}</p>
-      <div class="cp-row"><button type="button" class="cp-btn" data-close>Cancelar</button>
-        <button type="button" class="cp-btn primary" id="sd-go">${offline ? "Pôr na fila de envio" : "Enviar agora"}</button></div>`);
-    $("sd-go").onclick = async () => {
-      if (mentions && !window.confirm("O texto menciona anexo, mas nenhum arquivo foi anexado a essa resposta. Enviar mesmo assim?")) return;
-      const go = $("sd-go");
-      go.disabled = true; go.textContent = "Enviando…";
-      const r = await api(`/api/threads/${encodeURIComponent(tid)}/send`, "POST", { text, cc: $("sd-cc").value.trim(), source: "copilot" });
-      closeSheet();
-      if (!r.ok) { toast(r.data.detail || "Falha ao enviar."); return; }
-      // sem conexão: o servidor guardou na fila de envio (202 queued)
-      if (r.data.queued) toast(`Na fila de envio. ${r.data.message || "Sai quando a conexão voltar."}`);
-      else toast(r.data.cc ? `Enviado para ${r.data.to} (Cc: ${r.data.cc}).` : `Enviado para ${r.data.to}.`);
-      if (window.NetStatus) window.NetStatus.refresh();
-      if (!r.data.queued && window.DraftPersist) window.DraftPersist.cacheClear(tid);
-      if (reply && reply.tid === tid) { reply = null; annot.clear(); }
-      if (current === tid) open(tid, true);
-      load();
-    };
+    const rc = rcState(it);
+    let result = null;
+    const target = reply.target;
+    const html = `
+      ${rcHTML(it, "sd")}
+      <div id="sd-rc-sug"></div>
+      <div class="dlg-rows">${target ? `<b>Respondendo a</b><span>${esc(target.label || "mensagem escolhida")}</span>` : ""}<b>Assunto</b><span>${esc(/^re:/i.test(subject) ? subject : `Re: ${subject}`)}</span>
+        <b>Anexos</b><span>${files.length ? files.map((f) => esc(f.name)).join(", ") : "nenhum"}</span></div>
+      <div class="dlg-pre">${esc(text)}</div>
+      ${mentions ? '<p class="dlg-warn">⚠️ O texto fala em anexo, mas nenhum arquivo foi anexado a esta resposta.</p>' : ""}
+      ${offline ? `<p class="dlg-warn">${esc(window.NetStatus.message(window.NetStatus.state.status === "auth_error" ? "auth_error" : "offline"))}</p>` : ""}
+      <p class="dlg-note">${offline ? "Ao confirmar, a resposta vai para a fila de envio e sai sozinha quando a conexão voltar (dá para cancelar até lá)." : "O e-mail sai na hora e não dá para desfazer."}</p>`;
+    const res = await window.Dialog.open({
+      title: "Enviar e-mail?", html, wide: true, cancel: "Voltar e editar", ok: offline ? "Pôr na fila de envio" : "Enviar agora",
+      onOpen: (box) => bindRc(box, it, "sd", () => box.querySelector("#sd-rc-sug")),
+      beforeOk: async (box) => {
+        const bad = window.Recipients.commitInputs(box, rc);
+        if (bad) return bad;
+        if (!rc.to.length) return "Coloque pelo menos uma pessoa no Para.";
+        if (mentions && !(await window.Dialog.confirm({ title: "Enviar sem anexo?", body: "O texto fala em anexo, mas nenhum arquivo foi anexado a esta resposta.", ok: "Enviar sem anexo", cancel: "Voltar" }))) return false;
+        const payload = { text, to: rc.to.slice(), cc: rc.cc.join(", "), source: "copilot" };
+        if (target) {
+          // id do Gmail da mensagem escolhida (In-Reply-To/References dela)
+          if (!target.id) {
+            const meta = await window.MsgReply.load(tid, true);
+            const m = meta && meta[target.idx];
+            if (m) target.id = m.id || "";
+          }
+          if (!target.id) return "Não deu para identificar no Gmail a mensagem que você escolheu. Tente de novo ou clique em \"voltar para a última\".";
+          payload.reply_to_message_id = target.id;
+        }
+        const go = box.querySelector(".dlg-ok");
+        go.textContent = "Enviando…";
+        const r = await api(`/api/threads/${encodeURIComponent(tid)}/send`, "POST", payload);
+        go.textContent = offline ? "Pôr na fila de envio" : "Enviar agora";
+        if (!r.ok) return r.data.detail || "Falha ao enviar.";
+        result = r.data;
+        return null;
+      },
+    });
+    if (!res.ok || !result) return;
+    afterSend(tid, result, rc);
+  }
+  // Depois do envio: com "Ao enviar, marcar como resolvido e voltar ao quadro"
+  // (padrão), fecha o detalhe e volta ao quadro; senão fica na thread.
+  function afterSend(tid, data, rc) {
+    annot.dismissNotice();
+    const to = data.to || rc.to.join(", ");
+    const cc = data.queued ? rc.cc.join(", ") : data.cc;
+    const who = `${to}${cc ? ` (Cc: ${cc})` : ""}`;
+    const back = prefs.send_resolve_back !== false;
+    if (window.NetStatus) window.NetStatus.refresh();
+    if (!data.queued && window.DraftPersist) window.DraftPersist.cacheClear(tid);
+    if (reply && reply.tid === tid) { annot.clear(); reply = null; }
+    if (window.MsgReply) window.MsgReply.invalidate(tid); // a resposta é mensagem nova na thread
+    if (data.queued) toast(`Na fila de envio para ${who}. ${data.message || "Sai quando a conexão voltar."}${back ? " · Resolve quando sair" : ""}`);
+    else toast(back ? `Enviado para ${who} · Resolvido` : `Enviado para ${who}.`);
+    if (back) { if (current === tid) closeDetail(); }
+    else if (current === tid) open(tid, true);
+    load();
   }
   // Leitura da IA de um item só (abrir o detalhe ou "Ler de novo").
   async function readNow(id, force) {
@@ -1660,6 +2122,8 @@
       <div class="cp-field"><span>Visual</span><div class="cp-seg"><button type="button" data-skin="clean" class="${p.skin === "clean" ? "on" : ""}">Clean pastel</button><button type="button" data-skin="caderno" class="${p.skin === "caderno" ? "on" : ""}">Caderno</button></div></div>
       <label class="cp-radio"><input type="checkbox" id="pf-all" ${p.show_all ? "checked" : ""}><span>Mostrar todos os e-mails<small>Desligado: o painel mostra só os não lidos (colunas, abas e contadores).</small></span></label>
       <label class="cp-radio"><input type="checkbox" id="pf-tasks" ${p.show_tasks_card !== false ? "checked" : ""}><span>Card "Tarefas" no detalhe<small>Lista de tarefas que a IA tirou do e-mail (coluna lateral).</small></span></label>
+      <label class="cp-radio"><input type="checkbox" id="pf-sendback" ${p.send_resolve_back !== false ? "checked" : ""}><span>Ao enviar, marcar como resolvido e voltar ao quadro<small>Desligado: depois de enviar você continua na conversa.</small></span></label>
+      <label class="cp-radio"><input type="checkbox" id="pf-celebrate" ${p.celebrate_zero !== false ? "checked" : ""}><span>Comemorar quando zerar a caixa<small>Uma praia quando a caixa inteira zerar (todas as colunas). Desligado: só o texto de vazio.</small></span></label>
       <label class="cp-radio"><input type="checkbox" id="pf-facts" ${p.show_facts_card !== false ? "checked" : ""}><span>Card "Quem pediu / Resposta / Depende de outros"<small>Também em Configurações → Copiloto.</small></span></label>
       <label class="cp-field"><span>Resumo diário (manhã)</span><input id="pf-daily" type="time" value="${esc(p.digest_daily)}"></label>
       <label class="cp-field"><span>Resumo semanal</span><select id="pf-wday">${WEEK.map((d, i) => `<option value="${i}" ${i === Number(p.digest_weekly_day) ? "selected" : ""}>${d}</option>`).join("")}</select></label>
@@ -1674,7 +2138,7 @@
       document.querySelectorAll("#cp-sheet [data-skin]").forEach((x) => x.classList.toggle("on", x === b));
     }));
     $("pf-save").onclick = async () => {
-      const s = await api("/api/copilot/settings", "POST", { skin, digest_daily: $("pf-daily").value, digest_weekly_day: Number($("pf-wday").value), digest_weekly_time: $("pf-wtime").value, digest_enabled: $("pf-on").checked, show_all: $("pf-all").checked, show_tasks_card: $("pf-tasks").checked, show_facts_card: $("pf-facts").checked });
+      const s = await api("/api/copilot/settings", "POST", { skin, digest_daily: $("pf-daily").value, digest_weekly_day: Number($("pf-wday").value), digest_weekly_time: $("pf-wtime").value, digest_enabled: $("pf-on").checked, show_all: $("pf-all").checked, show_tasks_card: $("pf-tasks").checked, show_facts_card: $("pf-facts").checked, send_resolve_back: $("pf-sendback").checked, celebrate_zero: $("pf-celebrate").checked });
       toast(s.ok ? "Ajustes salvos." : s.data.detail || "Não salvou.");
       if (s.ok) { prefs = s.data; load(); if (shown && $("cp-detail").classList.contains("open")) renderDetail(shown); }
     };
@@ -1699,8 +2163,12 @@
   };
 
   // ── folha (bottom sheet no celular, modal no desktop) ──
-  function sheet(html) {
+  // wide: modal largo de leitura no desktop / tela cheia no celular (resumo detalhado)
+  // wide === "full": tela cheia também no desktop (verificador)
+  function sheet(html, wide) {
     $("cp-sheet-body").innerHTML = html;
+    $("cp-sheet").classList.toggle("cp-sheet-wide", !!wide);
+    $("cp-sheet").classList.toggle("cp-sheet-full", wide === "full");
     $("cp-sheet").classList.remove("hidden");
     $("cp-sheet-body").querySelectorAll("[data-close]").forEach((b) => (b.onclick = closeSheet));
   }
@@ -1768,6 +2236,7 @@
   api("/api/copilot/settings").then((r) => {
     if (!r.ok) return;
     prefs = r.data; applySkin(r.data.skin);
+    if (data.tabs.length && prefs.celebrate_zero === false) renderList(); // praia → texto simples
     if (shown && $("cp-detail").classList.contains("open")) renderDetail(shown); // cards laterais
   });
   // Sem conexão/acesso expirado: aviso no topo + chip "Na fila de envio".

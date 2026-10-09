@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Union
 import mimetypes
 import os
 import re
@@ -16,7 +16,7 @@ from googleapiclient.errors import HttpError
 
 from pydantic import BaseModel
 
-from . import assist, assistant, attachments, board, calendar_client, copilot, context_base, fs_browser, gmail_client, learned, llm, metrics, netstatus, outbox, people_client, rag, store, summary_templates
+from . import assist, assistant, attachments, board, calendar_client, copilot, context_base, fixpt, fs_browser, gmail_client, learned, llm, metrics, netstatus, outbox, people_client, rag, recipients, store, summary_templates, verify
 from .gmail_client import QuotaPartial
 from .preload import pick_preload
 from .config import ACCOUNT, CONTEXT_MD, ROOT, TZ
@@ -85,6 +85,29 @@ class DraftBody(BaseModel):
     comment: str = ""
     # texto editado na caixa (copiloto): vira o "Rascunho anterior" do prompt
     current_draft: str = ""
+    # responder a UMA mensagem da thread (índice na "Conversa completa" e/ou
+    # id do Gmail). Ausente = a última, como sempre.
+    alvo_idx: Optional[int] = None
+    reply_to_message_id: Optional[str] = None
+    # "Usar meu texto (só corrigir)": a instrução É o e-mail; só corrige o português
+    keep_text: bool = False
+
+
+class FixPortugueseBody(BaseModel):
+    """"Corrigir português": o texto inteiro (text) ou só draft[start:end]."""
+    text: Optional[str] = None
+    draft: Optional[str] = None
+    start: Optional[int] = None
+    end: Optional[int] = None
+
+
+class RewritePassageBody(BaseModel):
+    """Reescrever só um trecho do rascunho (draft[start:end] == passage)."""
+    draft: str
+    start: int
+    end: int
+    passage: str
+    instruction: str = ""
 
 
 class LearnedBody(BaseModel):
@@ -102,8 +125,14 @@ class SaveDraftBody(BaseModel):
 class SendBody(BaseModel):
     text: str
     cc: str = ""
+    # Para escolhido no composer (lista ou "a@x, b@y"). Ausente = o padrão
+    # de sempre (último remetente da thread).
+    to: Optional[Union[str, List[str]]] = None
     # de onde saiu o envio (/mail ou /copilot) -- só para o registro reply_edits
     source: str = "mail"
+    # mensagem da thread que está sendo respondida (id do Gmail ou Message-ID).
+    # Ausente = a última (In-Reply-To/References de sempre).
+    reply_to_message_id: Optional[str] = None
 
 
 class ComposeBody(BaseModel):
@@ -179,6 +208,8 @@ class CopilotPrefsBody(BaseModel):
     show_all: Optional[bool] = None
     show_tasks_card: Optional[bool] = None
     show_facts_card: Optional[bool] = None
+    send_resolve_back: Optional[bool] = None
+    celebrate_zero: Optional[bool] = None
 
 
 class PathsBody(BaseModel):
@@ -569,13 +600,99 @@ def thread_save_draft(thread_id: str, body: SaveDraftBody):
     return {"ok": True, "len": len(text)}
 
 
+def _draft_target(thread_id: str, idx: Optional[int], message_id: Optional[str]) -> Optional[dict]:
+    """Mensagem-alvo do rascunho: {idx, de, data, texto, message_id}. Pelo
+    índice (mesma lista da Conversa completa) ou, sem índice, procurando o id
+    do Gmail nos cabeçalhos por mensagem. Fora do intervalo -> 400."""
+    if idx is None and not message_id:
+        return None
+    msgs = copilot._messages(assistant._ensure_body(thread_id))
+    if idx is None:
+        try:
+            ids = [m.get("id") for m in gmail_client.get_messages_meta(thread_id)]
+            idx = ids.index(message_id)
+        except Exception:
+            raise HTTPException(400, "Não achei a mensagem que você quer responder nesta conversa.")
+    if not 0 <= idx < len(msgs):
+        raise HTTPException(400, "Não achei a mensagem que você quer responder nesta conversa.")
+    m = msgs[idx]
+    return {"idx": idx, "total": len(msgs), "de": m.get("de") or "", "data": m.get("data") or "",
+            "texto": copilot._own_text(m.get("texto") or "") or (m.get("texto") or ""),
+            "message_id": message_id or ""}
+
+
 @app.post("/api/threads/{thread_id}/draft")
 def thread_draft(thread_id: str, body: DraftBody):
     try:
         # current_draft só vai quando veio (o /mail não manda): chamada idêntica à de antes
         extra = {"current_draft": body.current_draft} if body.current_draft.strip() else {}
-        return assistant.draft(thread_id, body.instruction, body.comment, **extra)
+        alvo = _draft_target(thread_id, body.alvo_idx, body.reply_to_message_id)
+        if alvo:
+            extra["alvo"] = alvo
+        if body.keep_text:
+            extra["keep_text"] = True
+        result = assistant.draft(thread_id, body.instruction, body.comment, **extra)
+    except HTTPException:
+        raise
     except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, str(exc)) from exc
+    # "Responda a Paulo": a IA muda a saudação, mas o Para não muda sozinho.
+    # Devolve a troca sugerida; o composer mostra o chip e o Leo decide.
+    if isinstance(result, dict) and recipients.instruction_target(body.instruction).get("para"):
+        try:
+            rc = gmail_client.get_recipients(thread_id)
+            sug = recipients.suggest(result.get("draft") or "", rc.get("reply_to") or [], rc.get("reply_cc") or [],
+                                     rc.get("participants") or [], body.instruction, ACCOUNT)
+            if sug:
+                result = {**result, "sugestao_destinatarios": sug}
+        except Exception as exc:  # melhor esforço: sem Gmail, sem sugestão
+            print(f"[draft] sugestão de destinatários falhou ({thread_id}): {exc}")
+    return result
+
+
+@app.post("/api/threads/{thread_id}/fix-portuguese")
+def thread_fix_portuguese(thread_id: str, body: FixPortugueseBody):
+    """Botão "Corrigir português" (rascunho inteiro) e a opção da seleção (trecho).
+    Só ortografia/gramática/pontuação/acentuação; se a IA reescrever demais, 422
+    e nada muda. Não salva: o front troca na caixa e o autosave grava."""
+    if body.text is None and body.draft is None:
+        raise HTTPException(400, "Mande o texto (text) ou o rascunho com o trecho (draft, start, end).")
+    start = end = None
+    if body.text is not None:
+        source = body.text
+    else:
+        draft = body.draft or ""
+        start = 0 if body.start is None else body.start
+        end = len(draft) if body.end is None else body.end
+        if not (0 <= start < end <= len(draft)):
+            raise HTTPException(400, "O trecho não confere com o rascunho atual. Selecione de novo.")
+        source = draft[start:end]
+    if not source.strip():
+        raise HTTPException(400, "Não há texto para corrigir.")
+    try:
+        res = fixpt.fix(source)
+    except fixpt.FixRejected as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, str(exc)) from exc
+    store.log_event("fix_portuguese", thread_id)
+    out = {"text": res["text"], "changed": res["changed"]}
+    if start is not None:
+        out.update({"replacement": res["text"], "start": start, "end": end})
+    return out
+
+
+@app.post("/api/threads/{thread_id}/rewrite-passage")
+def thread_rewrite_passage(thread_id: str, body: RewritePassageBody):
+    """Botão "Reescrever" da seleção no rascunho: devolve só o trecho novo.
+    Não regera o e-mail, não mexe no chat e não salva (o front salva pelo autosave)."""
+    try:
+        return assistant.rewrite_passage(thread_id, body.draft, body.start, body.end, body.passage, body.instruction)
+    except (assistant.PassageMismatch, RuntimeError) as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, str(exc)) from exc
@@ -731,6 +848,18 @@ def thread_send(thread_id: str, body: SendBody):
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "Texto vazio.")
+    try:
+        to_list = recipients.clean_addresses(body.to)
+        recipients.clean_addresses(body.cc)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if body.to is not None and not to_list:
+        raise HTTPException(400, "Informe pelo menos um destinatário no Para.")
+    to_str = ", ".join(to_list)
+    send_kw = {"to": to_list} if to_list else {}
+    target_id = (body.reply_to_message_id or "").strip()
+    if target_id:
+        send_kw["reply_to_message_id"] = target_id
     # rascunho da IA antes de enviar (o envio limpa o campo draft)
     ai_draft = ((store.get_thread(thread_id) or {}).get("draft") or "").strip()
     row = store.get_thread(thread_id) or {}
@@ -739,6 +868,7 @@ def thread_send(thread_id: str, body: SendBody):
         return outbox.enqueue(
             kind="reply", thread_id=thread_id, body=text, cc=body.cc, subject=row.get("subject") or "",
             to=row.get("from_email") or "", source=body.source, ai_draft=ai_draft, error=error,
+            reply_to=to_str, reply_to_message_id=target_id,
         )
 
     # Sem conexão (ou sem acesso): o envio que o Leo confirmou vai para a
@@ -747,7 +877,7 @@ def thread_send(thread_id: str, body: SendBody):
     if state != netstatus.ONLINE:
         return _queued_response(enqueue(), state)
     try:
-        result = gmail_client.send_reply(thread_id, text, cc=body.cc)
+        result = gmail_client.send_reply(thread_id, text, cc=body.cc, **send_kw)
     except Exception as exc:
         kind = netstatus.kind_of(exc)
         if kind != "error" and not netstatus.is_ambiguous_send_error(exc):
@@ -1000,6 +1130,74 @@ def copilot_detail(thread_id: str, refresh: bool = Query(False), force: bool = Q
         raise HTTPException(400, str(exc)) from exc
 
 
+@app.get("/api/copilot/{thread_id}/resumo-detalhado")
+def copilot_resumo_detalhado(thread_id: str, regerar: bool = Query(False)):
+    try:
+        return copilot.resumo_detalhado(thread_id, force=regerar)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/copilot/{thread_id}/resumo-detalhado")
+def copilot_resumo_detalhado_regerar(thread_id: str):
+    return copilot_resumo_detalhado(thread_id, regerar=True)
+
+
+# "Verificar na caixa": confere na caixa do Leo (só leitura) o que o e-mail
+# afirma. GET = só o cache (nunca chama IA/Gmail); POST = gera (ou devolve o
+# cache se a thread não mudou), {"regerar": true} refaz.
+class VerificarBody(BaseModel):
+    regerar: bool = False
+
+
+@app.get("/api/copilot/{thread_id}/verificar")
+def copilot_verificar_cache(thread_id: str):
+    try:
+        return verify.cached(thread_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/copilot/{thread_id}/verificar")
+def copilot_verificar(thread_id: str, body: Optional[VerificarBody] = None):
+    try:
+        return verify.verificar(thread_id, force=bool(body and body.regerar))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+class MsgResumoBody(BaseModel):
+    modo: str = "direto"
+    regerar: bool = False
+
+
+def _msg_resumo(thread_id: str, idx: int, modo: str, **kw):
+    try:
+        return copilot.resumo_mensagem(thread_id, idx, modo, **kw)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+# "Resumir este e-mail" (uma mensagem da thread). Serve o /copilot e o /mail.
+@app.post("/api/copilot/{thread_id}/mensagens/{idx}/resumo")
+def copilot_resumo_mensagem(thread_id: str, idx: int, body: MsgResumoBody):
+    return _msg_resumo(thread_id, idx, body.modo, force=body.regerar)
+
+
+@app.get("/api/copilot/{thread_id}/mensagens/{idx}/resumo")
+def copilot_resumo_mensagem_cache(thread_id: str, idx: int, modo: str = Query("direto")):
+    """Só o cache (nunca chama a IA): resumo null quando ainda não há."""
+    return _msg_resumo(thread_id, idx, modo, only_cached=True)
+
+
 @app.post("/api/copilot/{thread_id}/action")
 def copilot_action(thread_id: str, body: CopilotActionBody):
     try:
@@ -1122,6 +1320,18 @@ def thread_recipients(thread_id: str):
         return gmail_client.get_recipients(thread_id)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/threads/{thread_id}/messages-meta")
+def thread_messages_meta(thread_id: str):
+    """De/Para/Cc/Cco/Data/Message-ID de cada mensagem (só leitura, cache),
+    na ordem da Conversa completa: o front casa pelo índice, como os anexos."""
+    try:
+        return {"messages": gmail_client.get_messages_meta(thread_id)}
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 @app.get("/api/threads/{thread_id}/gmail-attachments")

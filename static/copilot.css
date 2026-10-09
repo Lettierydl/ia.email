@@ -333,7 +333,8 @@ body:not([data-layout="mobile"]) .cp-detail .cp-actions [data-act="reabrir"]{mar
 .select-toolbar{position:fixed;z-index:200;background:#3c4043;border-radius:20px;box-shadow:var(--shadow)}
 .select-toolbar button{background:transparent;border:0;color:#fff;font-size:13px;font-weight:500;padding:8px 14px;border-radius:20px;white-space:nowrap}
 .select-toolbar button:hover{background:rgba(255,255,255,.15)}
-.annot-mark{background:var(--lilac);border-radius:2px;cursor:pointer}
+.annot-mark{background:color-mix(in srgb,var(--accent) 24%,transparent);border-radius:2px;cursor:pointer;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.annot-mark:hover{background:color-mix(in srgb,var(--accent) 34%,transparent)}
 .annot-badge{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-left:2px;border-radius:50%;background:var(--accent);color:#fff;font-size:10px;font-weight:700;font-style:normal;line-height:1;cursor:pointer;vertical-align:super}
 .annot-popup{position:fixed;z-index:210;width:280px;background:var(--card);border-radius:12px;box-shadow:0 8px 28px rgba(45,43,58,.18);border:1px solid var(--line);padding:10px}
 .annot-popup textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:13px;resize:vertical;min-height:44px;background:var(--bg);color:var(--ink)}
@@ -484,3 +485,89 @@ body[data-layout="mobile"] .cp-detail{padding-bottom:calc(168px + env(safe-area-
 /* Gerando/Ajustando: botão da IA mostra que está trabalhando (não parece "cinza morto") */
 .cmp-gen.busy:disabled{opacity:.85;cursor:progress}
 .cmp-gen.busy .ic,.cmp-gen.busy [data-icon]{animation:cp-spin 1s linear infinite}
+
+/* ── Resumo detalhado (IA sob demanda) ── */
+.cp-rd-btn{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;font-size:12.5px;border-radius:999px;color:var(--accent-ink);white-space:nowrap}
+.cp-rd-btn svg{width:15px;height:15px}
+.cp-resumo-row{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.cp-resumo-row details.cp-resumo{flex:1 1 auto;min-width:0}
+.cp-rd-link{margin-top:8px;border:0;background:none;padding:0;color:var(--accent-ink);font-size:13.5px;text-decoration:underline;text-underline-offset:2px;cursor:pointer;white-space:nowrap}
+.cp-sheet.cp-sheet-wide .cp-sheet-box{max-width:860px;padding:26px 30px 22px}
+.cp-rd h3{font-size:21px;margin-bottom:2px}
+.cp-rd-sub{font-size:14px;margin-bottom:4px;padding-right:36px}
+.cp-rd-meta{font-size:12.5px;margin-bottom:10px}
+.cp-rd-warn{margin:8px 0 12px;padding:10px 12px;border-radius:10px;background:var(--fog);font-size:14px}
+.cp-rd-body{font-size:15.5px;line-height:1.6}
+.cp-rd-body section{padding:14px 0;border-top:1px solid var(--line)}
+.cp-rd-body h4{font:600 13px var(--font);letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.cp-rd-body ul{margin:0;padding-left:20px}
+.cp-rd-body li{margin:4px 0}
+.cp-rd-foot{margin-top:14px;justify-content:flex-end;gap:8px}
+.cp-rd-foot .cp-btn{display:inline-flex;align-items:center;gap:6px}
+.cp-rd-foot svg{width:16px;height:16px}
+body[data-layout="mobile"] .cp-sheet.cp-sheet-wide .cp-sheet-box{max-width:none;height:100%;max-height:100vh;max-height:100dvh;border-radius:0;padding:18px 16px max(18px,env(safe-area-inset-bottom))}
+body[data-layout="mobile"] .cp-rd-body{font-size:15px}
+
+/* "Resumir este e-mail" (static/msgsummary.js): botão no cabeçalho da mensagem,
+   menu Direto/Abrangente e caixa no topo do corpo da mensagem */
+.msg-sum-btn{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer}
+.msg-sum-btn:hover,.msg-sum-btn:focus-visible{color:var(--accent-ink);border-color:var(--line);background:var(--card)}
+.msg-sum-menu{position:fixed;z-index:60;width:260px;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px}
+.msg-sum-menu-h{font-size:11.5px;color:var(--muted);padding:4px 8px 6px}
+.msg-sum-menu button{display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:8px;padding:7px 8px;cursor:pointer;color:var(--ink)}
+.msg-sum-menu button:hover,.msg-sum-menu button:focus-visible{background:var(--fog)}
+.msg-sum-menu b{display:block;font-size:13px;font-weight:600}
+.msg-sum-menu small{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
+.msg-sum{display:none;margin:10px 12px 0;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--lilac) 45%,var(--card));font-size:13px;line-height:1.45}
+.msg-card.open>.msg-sum{display:block}
+.msg-sum-h{display:flex;align-items:center;gap:6px;padding:6px 8px;flex-wrap:wrap}
+.msg-sum-tog{display:inline-flex;align-items:center;gap:5px;border:0;background:transparent;padding:0;color:var(--accent-ink);font-size:12.5px;cursor:pointer}
+.msg-sum-caret{width:10px;font-size:11px}
+.msg-sum-meta{font-size:11.5px;color:var(--muted);margin-right:auto}
+.msg-sum-tog+.msg-sum-act{margin-left:auto}
+.msg-sum-act{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:2px 9px;font-size:11.5px;color:var(--ink);cursor:pointer}
+.msg-sum-act:disabled{opacity:.5;cursor:default}
+.msg-sum-x{border:0;background:transparent;font-size:17px;line-height:1;color:var(--muted);cursor:pointer;padding:0 4px}
+.msg-sum-x:hover{color:var(--ink)}
+.msg-sum-body{padding:2px 12px 10px}
+.msg-sum-body.hidden{display:none}
+.msg-sum-body ul{margin:4px 0 0 18px;padding:0}
+.msg-sum-body li{margin:2px 0}
+.msg-sum-body section+section{margin-top:8px}
+.msg-sum-body h5{font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);margin:0 0 2px}
+.msg-sum-main{margin:0 0 4px}
+.msg-sum-muted{color:var(--muted);margin:2px 0}
+.msg-sum-warn{color:#a3402f;margin:2px 0 6px}
+/* Verificador ("Verificar na caixa"): tela cheia no desktop e no celular, texto numa coluna legível */
+.cp-sheet.cp-sheet-full .cp-sheet-box,body[data-layout="mobile"] .cp-sheet.cp-sheet-full .cp-sheet-box{max-width:none;width:100%;height:100%;max-height:100vh;max-height:100dvh;border-radius:0;padding:28px 24px max(24px,env(safe-area-inset-bottom))}
+.cp-vf{max-width:920px;margin:0 auto}
+.cp-vf-steps{list-style:none;padding:0;margin:18px 0 12px;font-size:16px;line-height:2}
+.cp-vf-steps li{color:var(--muted)}
+.cp-vf-steps li.now{color:var(--accent-ink);font-weight:600}
+.cp-vf-steps li.done{color:var(--ink)}
+.cp-vf-spin{display:inline-block;width:12px;height:12px;border-radius:50%;border:2px solid var(--accent);border-right-color:transparent;animation:cp-vf-rot .8s linear infinite;vertical-align:-1px}
+@keyframes cp-vf-rot{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.cp-vf-spin{animation:none}}
+.cp-vf-tally{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 6px}
+.cp-vf-list{list-style:none;padding:0;margin:0}
+.cp-vf-claim{padding:16px 0;border-top:1px solid var(--line)}
+.cp-vf-claim-h{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap}
+.cp-vf-texto{font-weight:600;font-size:16px;flex:1 1 280px}
+.cp-vf-selo{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12.5px;font-weight:600;white-space:nowrap}
+.cp-vf-selo.s-confirmado{background:#d6f2df;color:#1f6b3a}
+.cp-vf-selo.s-nao_encontrado{background:var(--fog);color:#55525f}
+.cp-vf-selo.s-inconclusivo{background:#fff1b8;color:#7a5a00}
+.cp-vf-expl{margin:6px 0 4px}
+.cp-vf-evs{list-style:none;padding:0;margin:8px 0 0}
+.cp-vf-ev{margin:8px 0;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg)}
+.cp-vf-ev-h{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.cp-vf-pasta{font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:0 7px}
+.cp-vf-ev q{display:block;margin-top:4px;font-size:14px;color:var(--muted);quotes:none}
+.cp-vf-links{margin-top:6px;font-size:13.5px}
+.cp-vf-links a{color:var(--accent-ink)}
+.cp-vf-qs{margin-top:8px}
+.cp-vf-qs ul{margin:6px 0 0;padding-left:18px;font-size:13px}
+.cp-vf-qs code{font-size:12.5px;background:var(--fog);padding:1px 5px;border-radius:6px;word-break:break-word}
+.cp-rd-warn-i{color:#8a4b00}
+body[data-layout="mobile"] .cp-sheet.cp-sheet-full .cp-sheet-box{padding:18px 16px max(18px,env(safe-area-inset-bottom))}
+.cp-l2 .cp-layer-tools{flex-wrap:wrap;justify-content:flex-end;row-gap:4px}

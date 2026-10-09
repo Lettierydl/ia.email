@@ -8,8 +8,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=99" />
-  <link rel="stylesheet" href="/static/composer.css?v=5" />
+  <link rel="stylesheet" href="/static/styles.css?v=100" />
+  <link rel="stylesheet" href="/static/composer.css?v=11" />
+  <link rel="stylesheet" href="/static/dialog.css?v=1" />
 </head>
 <body>
   <header class="top">
@@ -154,6 +155,8 @@
           <summary><span data-icon="chat" data-icon-size="15"></span>Conversa com a IA <b id="compose-chat-count">0</b></summary>
           <div id="compose-chat-messages" class="chat-messages"></div>
         </details>
+        <div class="cmp-draft-head"><label for="compose-draft">Rascunho do e-mail <small>(vai ser enviado)</small></label></div>
+        <textarea id="compose-draft" class="cmp-draft" rows="9" placeholder="O texto que vai para o destinatário. Para pedir algo à IA, use o campo abaixo."></textarea>
         <div class="cmp-instr">
           <label for="compose-instr"><span data-icon="sparkles" data-icon-size="14"></span>Peça à IA <small>(não vai no e-mail)</small></label>
           <div class="cmp-instr-row">
@@ -161,8 +164,6 @@
             <button type="button" id="compose-gen" class="cmp-gen" data-tooltip="Gerar o rascunho com o pedido" disabled><span data-icon="sparkles" data-icon-size="16"></span><span id="compose-gen-label">Gerar</span></button>
           </div>
         </div>
-        <div class="cmp-draft-head"><label for="compose-draft">Rascunho do e-mail <small>(vai ser enviado)</small></label></div>
-        <textarea id="compose-draft" class="cmp-draft" rows="9" placeholder="O texto que vai para o destinatário. Para pedir algo à IA, use o campo acima."></textarea>
         <div class="cmp-tools">
           <div id="compose-send-bar" class="cmp-sendwrap hidden">
             <span id="compose-send-target" class="cmp-rcpt"></span>
@@ -345,29 +346,33 @@
         </div>
 
         <div class="compose-area cmp" id="pane-composer">
-          <p class="cmp-rcpt" id="send-target"></p>
+          <div id="pane-target"></div>
+          <div class="cmp-rcpt" id="send-target"></div>
+          <div id="send-rc-sug"></div>
           <div id="attach-list" class="attach-list hidden"></div>
           <details class="cmp-chat" id="chat-box" open>
             <summary><span data-icon="chat" data-icon-size="15"></span>Conversa com a IA <b id="chat-count">0</b></summary>
             <div id="chat-messages" class="chat-messages"></div>
           </details>
+          <div class="cmp-draft-head">
+            <label for="pane-draft">Rascunho do e-mail <small>(vai ser enviado)</small></label>
+            <span id="draft-chip" class="cmp-draft-chip hidden" role="status">Rascunho salvo</span>
+            <button type="button" id="pane-fixpt" class="cmp-fixpt" title="Corrige só ortografia, gramática, pontuação e acentos. Não muda tom, conteúdo nem ordem." disabled><span data-icon="check" data-icon-size="14"></span><span id="pane-fixpt-label">Corrigir português</span></button>
+          </div>
+          <div class="cmp-draft-wrap" id="pane-draft-wrap">
+            <textarea id="pane-draft" class="cmp-draft" rows="9" placeholder="O texto que vai para o destinatário. Para pedir algo à IA, use o campo abaixo."></textarea>
+            <div class="cmp-draft-skel" aria-hidden="true"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div>
+          </div>
+          <p id="draft-status" class="cmp-status" role="status"></p>
           <div class="cmp-instr">
             <label for="pane-instr"><span data-icon="sparkles" data-icon-size="14"></span>Peça à IA <small>(não vai no e-mail)</small></label>
             <div class="cmp-annots" id="annot-chips"></div>
+            <button type="button" class="cmp-keep" id="pane-keep" aria-pressed="false" title="O que você escrever no campo abaixo vai como está para o rascunho: a IA só corrige ortografia, gramática, pontuação e acentos.">Usar meu texto (só corrigir)</button>
             <div class="cmp-instr-row">
               <textarea id="pane-instr" rows="1" placeholder="Peça à IA: ex. diga que posso hoje às 14h…" title="Enter gera · Shift+Enter quebra linha · selecione um trecho do e-mail ou do rascunho para citar"></textarea>
               <button type="button" id="pane-gen" class="cmp-gen" data-tooltip="Gerar o rascunho com o pedido" disabled><span data-icon="sparkles" data-icon-size="16"></span><span id="pane-gen-label">Gerar</span></button>
             </div>
           </div>
-          <div class="cmp-draft-head">
-            <label for="pane-draft">Rascunho do e-mail <small>(vai ser enviado)</small></label>
-            <span id="draft-chip" class="cmp-draft-chip hidden" role="status">Rascunho salvo</span>
-          </div>
-          <div class="cmp-draft-wrap" id="pane-draft-wrap">
-            <textarea id="pane-draft" class="cmp-draft" rows="9" placeholder="O texto que vai para o destinatário. Para pedir algo à IA, use o campo acima."></textarea>
-            <div class="cmp-draft-skel" aria-hidden="true"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div>
-          </div>
-          <p id="draft-status" class="cmp-status" role="status"></p>
           <div class="cmp-tools">
             <button type="button" id="pane-resumir" class="cmp-tool" data-tooltip="Gerar resumo de novo"><span data-icon="refresh" data-icon-size="18"></span></button>
             <button type="button" id="pane-attach" class="cmp-tool" data-tooltip="Anexar arquivo"><span data-icon="attach" data-icon-size="18"></span></button>
@@ -389,24 +394,21 @@
   </aside>
 
   <div id="send-modal" class="modal-overlay hidden">
-    <div class="modal-card">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Enviar e-mail?">
       <h3>Enviar e-mail?</h3>
-      <p class="modal-row"><strong>Para:</strong> <span id="modal-to"></span></p>
-      <div class="modal-row cc-row">
-        <strong>Cc:</strong>
-        <span class="alias-field-wrap">
-          <input type="text" id="modal-cc" placeholder="opcional, e-mails separados por vírgula" autocomplete="off" />
-          <div id="modal-cc-suggestions" class="alias-suggestions hidden"></div>
-        </span>
-      </div>
+      <div class="modal-row cmp" id="modal-rcpt"></div>
+      <div id="modal-rc-sug"></div>
+      <p class="modal-row hidden" id="modal-target"><strong>Respondendo a:</strong> <span id="modal-target-label"></span></p>
       <p class="modal-row"><strong>Assunto:</strong> <span id="modal-subject"></span></p>
+      <p class="modal-row"><strong>Anexos:</strong> <span id="modal-attachments"></span></p>
       <div id="modal-preview" class="modal-preview"></div>
       <p id="modal-attach-warning" class="modal-warning attach hidden">
         ⚠️ O texto menciona anexo, mas nenhum arquivo foi anexado a essa resposta.
       </p>
-      <p class="modal-warning">Essa ação é definitiva — o e-mail sai imediatamente e não pode ser desfeito.</p>
+      <p id="modal-error" class="modal-warning attach hidden" role="alert"></p>
+      <p class="modal-warning">O e-mail sai na hora e não dá para desfazer.</p>
       <div class="modal-actions">
-        <button type="button" id="modal-cancel" class="ghost">Cancelar</button>
+        <button type="button" id="modal-cancel" class="ghost">Voltar e editar</button>
         <button type="button" id="modal-confirm" class="primary send-mail-btn">Enviar agora</button>
       </div>
     </div>
@@ -428,7 +430,9 @@
   </div>
 
   <div id="select-toolbar" class="select-toolbar hidden">
-    <button type="button" id="select-add-chat"><span class="ic-slot" data-icon="chat" data-icon-size="15"></span> Adicionar ao chat</button>
+    <button type="button" id="select-add-chat"><span class="ic-slot" data-icon="chat" data-icon-size="15"></span> Comentar para a IA</button>
+    <button type="button" id="select-rewrite" style="display:none"><span class="ic-slot" data-icon="sparkles" data-icon-size="15"></span> Reescrever</button>
+    <button type="button" id="select-fixpt" style="display:none" title="Corrige só ortografia, gramática, pontuação e acentos (não muda o texto)"><span class="ic-slot" data-icon="check" data-icon-size="15"></span> Corrigir português</button>
   </div>
 
   <div id="annot-popup" class="annot-popup hidden">
@@ -640,6 +644,8 @@
       <p class="st-hint">Cards da coluna lateral no detalhe de um e-mail (/copilot). Vale só para a sua conta e salva sozinho.</p>
       <label class="st-check"><input type="checkbox" id="st-cp-tasks" /> Mostrar o card “Tarefas” <small>(tarefas que a IA tirou do e-mail)</small></label>
       <label class="st-check"><input type="checkbox" id="st-cp-facts" /> Mostrar o card “Quem pediu / Sem resposta / Depende de outros”</label>
+      <label class="st-check"><input type="checkbox" id="st-cp-sendback" /> Ao enviar, marcar como resolvido e voltar ao quadro <small>(no /mail, volta para a lista; desligado, você continua no e-mail)</small></label>
+      <label class="st-check"><input type="checkbox" id="st-cp-celebrate" /> Comemorar quando zerar a caixa <small>(praia no /copilot quando a caixa inteira zerar)</small></label>
       <span class="st-status" id="st-cp-status" role="status"></span>
     </section>
 
@@ -701,12 +707,17 @@
 
   <script src="/static/icons.js?v=2"></script>
   <script src="/static/tooltip.js?v=93"></script>
-  <script src="/static/chat.js?v=2"></script>
-  <script src="/static/composer.js?v=5"></script>
-  <script src="/static/annotate.js?v=96"></script>
-  <script src="/static/netstatus.js?v=2"></script>
-  <script src="/static/app.js?v=100"></script>
-  <script src="/static/settings.js?v=95"></script>
+  <script src="/static/chat.js?v=3"></script>
+  <script src="/static/composer.js?v=6"></script>
+  <script src="/static/draftmarks.js?v=2"></script>
+  <script src="/static/annotate.js?v=102"></script>
+  <script src="/static/msgsummary.js?v=1"></script>
+  <script src="/static/msgreply.js?v=1"></script>
+  <script src="/static/netstatus.js?v=3"></script>
+  <script src="/static/dialog.js?v=1"></script>
+  <script src="/static/recipients.js?v=1"></script>
+  <script src="/static/app.js?v=107"></script>
+  <script src="/static/settings.js?v=98"></script>
   <script src="/static/assist.js?v=93"></script>
   <script>window.NetStatus && window.NetStatus.init();</script>
 </body>

@@ -58,6 +58,14 @@ def _ensure(conn) -> None:
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox(status)")
+    # Para escolhido no composer (resposta). Vazio = o padrão do send_reply.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(outbox)").fetchall()}
+    if "reply_to" not in cols:
+        conn.execute("ALTER TABLE outbox ADD COLUMN reply_to TEXT")
+    # Mensagem específica da thread que está sendo respondida (id do Gmail).
+    # Vazio = a última (In-Reply-To/References dela, como sempre).
+    if "reply_to_message_id" not in cols:
+        conn.execute("ALTER TABLE outbox ADD COLUMN reply_to_message_id TEXT")
     _READY.add(key)
 
 
@@ -81,9 +89,14 @@ def _row(r) -> dict[str, Any]:
 
 
 def enqueue(*, kind: str, body: str, thread_id: str = "", to: str = "", cc: str = "", subject: str = "",
-            source: str = "mail", ai_draft: str = "", files: list[str] | None = None, error: str = "") -> dict[str, Any]:
+            source: str = "mail", ai_draft: str = "", files: list[str] | None = None, error: str = "",
+            reply_to: str = "", reply_to_message_id: str = "") -> dict[str, Any]:
     """Grava um envio confirmado. Mesmo texto já na fila para a mesma
-    thread/destinatário não duplica (duplo clique, retry da UI)."""
+    thread/destinatário não duplica (duplo clique, retry da UI).
+    reply_to: Para que o Leo escolheu no composer (resposta); sai com ele.
+    reply_to_message_id: mensagem da thread que está sendo respondida."""
+    if reply_to:
+        to = reply_to
     if kind not in ("reply", "new"):
         raise ValueError("kind inválido")
     body = (body or "").strip()
@@ -103,10 +116,11 @@ def enqueue(*, kind: str, body: str, thread_id: str = "", to: str = "", cc: str 
         now = _now()
         conn.execute(
             "INSERT INTO outbox(id, kind, thread_id, to_addr, cc, subject, body, attachments_json, source, ai_draft, "
-            "status, attempts, last_error, next_attempt_at, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+            "status, attempts, last_error, next_attempt_at, created_at, updated_at, reply_to, reply_to_message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)",
             (item_id, kind, thread_id or "", to or "", cc or "", subject or "", body, json.dumps(files),
-             source or "mail", ai_draft or "", QUEUED, error[:300], time.time() + BACKOFF_BASE, now, now),
+             source or "mail", ai_draft or "", QUEUED, error[:300], time.time() + BACKOFF_BASE, now, now, reply_to or "",
+             reply_to_message_id or ""),
         )
         r = conn.execute("SELECT * FROM outbox WHERE id=?", (item_id,)).fetchone()
     store.log_event("outbox_queued", thread_id or "")
@@ -242,8 +256,11 @@ def _deliver(item: dict[str, Any]) -> dict[str, Any]:
     from . import gmail_client
 
     if item["kind"] == "reply":
+        extra = {"to": item["reply_to"]} if item.get("reply_to") else {}
+        if item.get("reply_to_message_id"):
+            extra["reply_to_message_id"] = item["reply_to_message_id"]
         result = gmail_client.send_reply(item["thread_id"], item["body"], cc=item.get("cc") or "",
-                                         only_files=item.get("attachments") or [])
+                                         only_files=item.get("attachments") or [], **extra)
         finalize_reply(item["thread_id"], item["body"], item.get("ai_draft") or "", item.get("source") or "mail")
     else:
         result = gmail_client.send_new(item.get("to_addr") or "", item.get("cc") or "", item.get("subject") or "", item["body"])

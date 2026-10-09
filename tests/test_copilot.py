@@ -1229,3 +1229,329 @@ def test_frontend_has_resolve_all_button():
     js = (root / "copilot.js").read_text(encoding="utf-8")
     assert "/api/copilot/resolve-column" in js and "Resolver todos" in js
     assert "Serão marcados como lidos no Gmail" in js
+
+
+# ── resumo detalhado (IA sob demanda, em cache por thread) ──
+_RD = {
+    "contexto": "Ana pede validação do roteamento do pix estático.",
+    "pontos_principais": ["Pedido de validação do roteamento"],
+    "numeros_dados": [],
+    "pedidos_ao_leo": ["Validar o roteamento do pix estático"],
+    "pedidos_a_outros": [{"nome": "Douglas", "pedido": "enviar o prazo"}, {"nome": "x", "pedido": ""}],
+    "prazos": [{"data": "10/10", "o_que": "fechar com o EC"}],
+    "decisoes_riscos": [], "anexos_mencionados": [], "proximos_passos": ["Validar e responder à Ana"],
+}
+
+
+def _rd_llm(monkeypatch):
+    calls = {"n": 0}
+
+    def fake(prompt, **kw):
+        calls["n"] += 1
+        calls["prompt"] = prompt
+        return json.dumps(_RD)
+
+    monkeypatch.setattr(llm, "complete", fake)
+    monkeypatch.setattr(gmail_client, "list_thread_attachments", lambda tid: {"files": [{"filename": "proposta.pdf"}]})
+    return calls
+
+
+def test_resumo_detalhado_gera_e_salva(monkeypatch):
+    _thread()
+    calls = _rd_llm(monkeypatch)
+    out = TestClient(app).get("/api/copilot/t1/resumo-detalhado").json()
+    assert calls["n"] == 1 and out["cached"] is False and out["desatualizado"] is False and out["gerado_em"]
+    assert out["resumo"]["pedidos_ao_leo"] == ["Validar o roteamento do pix estático"]
+    assert out["resumo"]["pedidos_a_outros"] == [{"nome": "Douglas", "pedido": "enviar o prazo"}]  # vazio cai
+    assert "proposta.pdf" in calls["prompt"] and "pix estático até 10/10" in calls["prompt"]
+    assert store.get_copilot_resumo("t1")["msg_count_snapshot"] == 1
+
+
+def test_resumo_detalhado_reabrir_usa_cache(monkeypatch):
+    _thread()
+    calls = _rd_llm(monkeypatch)
+    client = TestClient(app)
+    first = client.get("/api/copilot/t1/resumo-detalhado").json()
+    second = client.get("/api/copilot/t1/resumo-detalhado").json()
+    assert calls["n"] == 1
+    assert second["cached"] is True and second["resumo"] == first["resumo"] and second["gerado_em"] == first["gerado_em"]
+
+
+def test_resumo_detalhado_mensagem_nova_invalida(monkeypatch):
+    _thread()
+    calls = _rd_llm(monkeypatch)
+    copilot.resumo_detalhado("t1")
+    _thread(date=20, body=BODY + "\n\n----\n\nDe: Ana Souza <ana@x.com>\nData: 2026-10-02\n\nLeo, alguma novidade sobre isso?")
+    out = copilot.resumo_detalhado("t1")
+    assert calls["n"] == 2 and out["cached"] is False
+    assert store.get_copilot_resumo("t1")["msg_count_snapshot"] == 2
+
+
+def test_resumo_detalhado_regerar_forca(monkeypatch):
+    _thread()
+    calls = _rd_llm(monkeypatch)
+    client = TestClient(app)
+    client.get("/api/copilot/t1/resumo-detalhado")
+    assert client.post("/api/copilot/t1/resumo-detalhado").json()["cached"] is False
+    assert client.get("/api/copilot/t1/resumo-detalhado?regerar=1").json()["cached"] is False
+    assert calls["n"] == 3
+
+
+def test_resumo_detalhado_credencial_nao_vai_para_ia(monkeypatch):
+    _thread(body="De: Ana <ana@x.com>\nData: x\n\nLeo, segue o acesso do painel. usuário: ana / senha: Abc12345 pode validar?")
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: (_ for _ in ()).throw(AssertionError("não chama IA")))
+    res = TestClient(app).get("/api/copilot/t1/resumo-detalhado")
+    assert res.status_code == 400 and "credencial" in res.json()["detail"]
+    assert store.get_copilot_resumo("t1") is None
+
+
+def test_resumo_detalhado_sem_chave_erro_amigavel(monkeypatch):
+    _thread()
+    monkeypatch.setattr(llm, "has_key", lambda: False)
+    res = TestClient(app).get("/api/copilot/t1/resumo-detalhado")
+    assert res.status_code == 400 and "chave de IA" in res.json()["detail"]
+
+
+def test_resumo_detalhado_falha_da_ia_mantem_cache_velho(monkeypatch):
+    _thread()
+    _rd_llm(monkeypatch)
+    copilot.resumo_detalhado("t1")
+    _thread(date=20, body=BODY + "\n\n----\n\nDe: Ana Souza <ana@x.com>\nData: 2026-10-02\n\nLeo, alguma novidade sobre isso?")
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: (_ for _ in ()).throw(llm.LLMError("fora do ar")))
+    out = copilot.resumo_detalhado("t1")
+    assert out["cached"] is True and out["desatualizado"] is True and "IA não respondeu" in out["aviso"]
+
+
+# ── envio resolve; a própria resposta do Leo nunca reabre ──
+_T_ANA = "2026-10-07 15:54"
+_T_LEO = "2026-10-07 16:13"
+_T_PAULO = "2026-10-07 17:30"
+_ANA_MSG = f"De: Ana Souza <ana@x.com>\nData: {_T_ANA}\n\nLeo, você pode validar o roteamento do pix estático até 10/10? Precisamos fechar com o EC."
+
+
+def _ms(when: str) -> int:
+    return copilot._msg_ts(when)
+
+
+def _read_by_ai(tid="t1"):
+    """Thread com a mensagem da Ana, já lida pela IA (retrato no internal_date dela)."""
+    row = _thread(tid, body=_ANA_MSG, date=_ms(_T_ANA))
+    copilot._persist(row, {**copilot.heuristic(row, _ANA_MSG), "source": "llm"}, None, _ANA_MSG)
+    return row
+
+
+def _arrives(tid, *, sender, when, text, from_me):
+    """Simula o refresh_thread do Gmail: mensagem nova no fim da thread."""
+    row = store.get_thread(tid)
+    name = "Leo" if from_me else sender.split("@")[0].capitalize()
+    body = f"{row['body_text']}\n\n----\n\nDe: {name} <{sender}>\nData: {when}\n\n{text}"
+    store.upsert_thread({**{k: row[k] for k in ("id", "subject", "from_name", "snippet", "is_automatic", "is_marketing",
+                                                 "needs_action_hint", "awaiting_reply", "conferido", "hidden", "hide_as_replied",
+                                                 "to_header", "cc_header")},
+                         "labels_json": [], "from_email": sender, "internal_date": _ms(when), "is_unread": 0 if from_me else 1,
+                         "last_from_me": int(from_me), "last_from_header": f"{name} <{sender}>"})
+    store.save_ai(tid, body_text=body)
+
+
+@pytest.fixture
+def _send_resolve(_send_env, monkeypatch):
+    """Envio mockado em que o refresh pós-envio traz a mensagem do próprio Leo."""
+    read_calls = []
+    monkeypatch.setattr(gmail_client, "mark_threads_read", lambda ids: read_calls.append(list(ids)) or len(ids))
+    monkeypatch.setattr(gmail_client, "refresh_thread",
+                        lambda tid: _arrives(tid, sender=ME, when=_T_LEO, text="Valido até sexta.", from_me=True))
+    return read_calls
+
+
+def test_send_resolves_marks_read_and_takes_post_send_snapshot(_send_resolve):
+    _read_by_ai()
+    res = TestClient(app).post("/api/threads/t1/send", json={"text": "Valido até sexta.", "source": "copilot"})
+    assert res.status_code == 200
+    assert _send_resolve == [["t1"]], "marca lido no Gmail"
+    item = store.get_copilot_item("t1")
+    assert item["status"] == "resolvido"
+    assert int(item["internal_date_snapshot"]) == _ms(_T_LEO), "retrato pós-envio"
+    assert int(item["msg_count_snapshot"]) == 2
+    assert store.get_thread("t1")["is_unread"] == 0
+    det = TestClient(app).get("/api/copilot/t1").json()
+    assert det["status"] == "resolvido" and det["desatualizado"] is False
+
+
+def test_own_reply_never_reopens_on_reread(monkeypatch):
+    # retrato velho (antes do envio, ex.: versão antiga sem snapshot pós-envio) + mensagem do Leo depois
+    _read_by_ai()
+    store.save_copilot_item("t1", status="resolvido")
+    _arrives("t1", sender=ME, when=_T_LEO, text="Valido até sexta.", from_me=True)
+    row, prev = store.get_thread("t1"), store.get_copilot_item("t1")
+    assert copilot._fresh(row, prev), "não volta para a fila da IA"
+    assert "t1" not in copilot.candidates()
+    assert copilot._present(row, prev)["desatualizado"] is False
+    _llm(monkeypatch, {"papel": "demanda", "o_que_aconteceu": "Leo respondeu.", "o_que_eu_faria": []})
+    det = copilot.analyze("t1", force=True)  # "Ler de novo" / readNow
+    assert det["status"] == "resolvido" and det["desatualizado"] is False
+    item = store.get_copilot_item("t1")
+    assert item["status"] == "resolvido" and int(item["internal_date_snapshot"]) == _ms(_T_LEO)
+
+
+def test_new_message_from_someone_else_after_reply_reopens(monkeypatch):
+    _read_by_ai()
+    _arrives("t1", sender=ME, when=_T_LEO, text="Valido até sexta.", from_me=True)
+    copilot.resolve_after_send("t1")
+    assert store.get_copilot_item("t1")["status"] == "resolvido"
+    _arrives("t1", sender="paulo@x.com", when=_T_PAULO, text="Leo, e o EC 123? Consegue ver hoje?", from_me=False)
+    row, prev = store.get_thread("t1"), store.get_copilot_item("t1")
+    assert not copilot._fresh(row, prev) and copilot._present(row, prev)["desatualizado"] is True
+    _llm(monkeypatch, {"papel": "demanda", "o_que_aconteceu": "Paulo pediu o EC 123.", "o_que_eu_faria": []})
+    assert copilot.analyze("t1", force=True)["status"] == "aberto"
+
+
+def test_someone_else_then_leo_still_counts_as_new():
+    # Paulo escreveu e o Leo respondeu fora do app antes da releitura: a do Paulo é novidade para a IA
+    _read_by_ai()
+    store.save_copilot_item("t1", status="resolvido")
+    _arrives("t1", sender="paulo@x.com", when=_T_PAULO, text="E o EC 123?", from_me=False)
+    _arrives("t1", sender=ME, when="2026-10-07 18:00", text="Vejo amanhã.", from_me=True)
+    row, prev = store.get_thread("t1"), store.get_copilot_item("t1")
+    assert copilot._present(row, prev)["desatualizado"] is True
+
+
+# ── "Resumir este e-mail": uma mensagem só, direto ou abrangente, em cache ──
+_MR_BODY = (
+    "De: Ana Souza <ana@x.com>\nData: 2026-10-01 09:00\n\n"
+    "Leo, segue o fechamento de setembro: 1.240 transações, R$ 98.300,00. Conferir divergência do EC 4471.\n\n----\n\n"
+    "De: Paulo Lima <paulo@x.com>\nData: 2026-10-02 10:00\n\n"
+    "Leo, preciso que você aprove o repasse de R$ 12.000,00 até sexta 10/10. O Douglas confirma o lote.\n\n"
+    "Em qua., 1 de out. de 2026 às 09:00, Ana Souza <ana@x.com> escreveu:\n"
+    "> Leo, segue o fechamento de setembro: 1.240 transações, R$ 98.300,00.\n\n----\n\n"
+    "De: Bia Reis <bia@x.com>\nData: 2026-10-03 11:00\n\n"
+    "Pessoal, a reunião de alinhamento do roteamento ficou para quinta às 15h."
+)
+_MR_DIRETO = {"principal": "Paulo pede aprovação do repasse", "bullets": ["Aprovar repasse de R$ 12.000,00", "Prazo 10/10", "Douglas confirma o lote", "  "]}
+_MR_ABR = {
+    "contexto": "Paulo pede aprovação.", "pontos_principais": ["Aprovar repasse"], "numeros_dados": ["R$ 12.000,00 — repasse"],
+    "pedidos_por_pessoa": [{"nome": "Você", "pedido": "aprovar o repasse"}, {"nome": "x", "pedido": ""}],
+    "prazos": [{"data": "10/10", "o_que": "aprovar"}], "riscos": [],
+}
+
+
+def _mr_llm(monkeypatch):
+    calls = {"n": 0, "prompts": []}
+
+    def fake(prompt, **kw):
+        calls["n"] += 1
+        calls["prompts"].append(prompt)
+        calls["system"] = kw.get("system")
+        return json.dumps(_MR_DIRETO if '"bullets"' in prompt else _MR_ABR)
+
+    monkeypatch.setattr(llm, "complete", fake)
+    return calls
+
+
+def _mr_url(idx=1, tid="t1"):
+    return f"/api/copilot/{tid}/mensagens/{idx}/resumo"
+
+
+def test_resumo_mensagem_direto_gera_e_salva(monkeypatch):
+    _thread(body=_MR_BODY)
+    calls = _mr_llm(monkeypatch)
+    out = TestClient(app).post(_mr_url(), json={"modo": "direto"}).json()
+    assert calls["n"] == 1 and calls["system"] == llm.SYSTEM
+    assert out["cached"] is False and out["modo"] == "direto" and out["idx"] == 1 and out["gerado_em"]
+    assert out["resumo"]["principal"] == "Paulo pede aprovação do repasse"
+    assert out["resumo"]["bullets"] == ["Aprovar repasse de R$ 12.000,00", "Prazo 10/10", "Douglas confirma o lote"]
+    digest = copilot._msg_resumo_target("t1", 1, "direto")[4]
+    assert json.loads(store.get_copilot_msg_resumo("t1", digest, "direto")["resumo_json"]) == out["resumo"]
+
+
+def test_resumo_mensagem_abrangente_gera_e_salva(monkeypatch):
+    _thread(body=_MR_BODY)
+    calls = _mr_llm(monkeypatch)
+    out = TestClient(app).post(_mr_url(), json={"modo": "abrangente"}).json()
+    assert calls["n"] == 1 and out["modo"] == "abrangente" and out["cached"] is False
+    assert out["resumo"]["pedidos_por_pessoa"] == [{"nome": "Você", "pedido": "aprovar o repasse"}]  # vazio cai
+    assert out["resumo"]["prazos"] == [{"data": "10/10", "o_que": "aprovar"}] and out["resumo"]["contexto"]
+    assert "pedidos_por_pessoa" in calls["prompts"][0] and "riscos" in calls["prompts"][0]
+
+
+def test_resumo_mensagem_segunda_chamada_usa_cache_e_regerar_forca(monkeypatch):
+    _thread(body=_MR_BODY)
+    calls = _mr_llm(monkeypatch)
+    client = TestClient(app)
+    first = client.post(_mr_url(), json={"modo": "direto"}).json()
+    second = client.post(_mr_url(), json={"modo": "direto"}).json()
+    assert calls["n"] == 1 and second["cached"] is True and second["resumo"] == first["resumo"]
+    assert second["gerado_em"] == first["gerado_em"]
+    # GET só consulta o cache (nunca chama a IA)
+    assert client.get(_mr_url() + "?modo=direto").json()["cached"] is True
+    assert client.get(_mr_url() + "?modo=abrangente").json()["resumo"] is None and calls["n"] == 1
+    # outro modo é outro cache
+    client.post(_mr_url(), json={"modo": "abrangente"})
+    assert calls["n"] == 2
+    again = client.post(_mr_url(), json={"modo": "direto", "regerar": True}).json()
+    assert calls["n"] == 3 and again["cached"] is False
+
+
+def test_resumo_mensagem_texto_mudou_regenera(monkeypatch):
+    _thread(body=_MR_BODY)
+    calls = _mr_llm(monkeypatch)
+    copilot.resumo_mensagem("t1", 1, "direto")
+    _thread(body=_MR_BODY.replace("R$ 12.000,00", "R$ 15.000,00", 1))
+    copilot.resumo_mensagem("t1", 1, "direto")
+    assert calls["n"] == 2
+    # outra mensagem nova no fim não muda o texto da mensagem 1: cache vale
+    _thread(body=_MR_BODY.replace("R$ 12.000,00", "R$ 15.000,00", 1) + "\n\n----\n\nDe: Ana <ana@x.com>\nData: 2026-10-04\n\nOk, obrigado a todos.")
+    assert copilot.resumo_mensagem("t1", 1, "direto")["cached"] is True and calls["n"] == 2
+
+
+def test_resumo_mensagem_so_o_texto_daquela_mensagem_vai_ao_prompt(monkeypatch):
+    _thread(body=_MR_BODY, cc="bia@x.com")
+    calls = _mr_llm(monkeypatch)
+    TestClient(app).post(_mr_url(), json={"modo": "abrangente"})
+    p = calls["prompts"][0]
+    assert "aprove o repasse de R$ 12.000,00" in p
+    assert "Paulo Lima <paulo@x.com>" in p and "2026-10-02 10:00" in p and "bia@x.com" in p  # remetente/data/destinatários
+    assert "1.240 transações" not in p and "escreveu:" not in p  # nem a msg 0 nem o histórico citado
+    assert "reunião de alinhamento" not in p  # nem a msg 2
+    assert "2 de 3" in p
+
+
+def test_resumo_mensagem_idx_invalido_404_e_modo_invalido_400(monkeypatch):
+    _thread(body=_MR_BODY)
+    calls = _mr_llm(monkeypatch)
+    client = TestClient(app)
+    assert client.post(_mr_url(3), json={"modo": "direto"}).status_code == 404
+    assert client.post(_mr_url(-1), json={"modo": "direto"}).status_code == 404
+    assert client.post(_mr_url(0, tid="nao-existe"), json={"modo": "direto"}).status_code == 404
+    res = client.post(_mr_url(), json={"modo": "poema"})
+    assert res.status_code == 400 and "Modo" in res.json()["detail"]
+    assert client.get(_mr_url() + "?modo=poema").status_code == 400
+    assert calls["n"] == 0
+
+
+def test_resumo_mensagem_credencial_nao_vai_para_ia(monkeypatch):
+    body = _MR_BODY.replace("O Douglas confirma o lote.", "Acesso do painel: usuário: paulo / senha: Abc12345")
+    _thread(body=body)
+    monkeypatch.setattr(llm, "complete", lambda *a, **k: (_ for _ in ()).throw(AssertionError("não chama IA")))
+    res = TestClient(app).post(_mr_url(), json={"modo": "direto"})
+    assert res.status_code == 400 and "credencial" in res.json()["detail"]
+    # a mensagem sem credencial continua resumível (o guarda olha só a mensagem que vai)
+    calls = _mr_llm(monkeypatch)
+    assert TestClient(app).post(_mr_url(2), json={"modo": "direto"}).status_code == 200 and calls["n"] == 1
+
+
+def test_resumo_mensagem_sem_chave_erro_amigavel(monkeypatch):
+    _thread(body=_MR_BODY)
+    monkeypatch.setattr(llm, "has_key", lambda: False)
+    res = TestClient(app).post(_mr_url(), json={"modo": "direto"})
+    assert res.status_code == 400 and "chave de IA" in res.json()["detail"]
+
+
+def test_frontend_has_per_message_summary():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "static"
+    mod = (root / "msgsummary.js").read_text(encoding="utf-8")
+    assert "/mensagens/" in mod and "Resumir este e-mail" in mod and "Resumindo…" in mod
+    for page, js in (("copilot.html", "copilot.js"), ("index.html", "app.js")):
+        assert "/static/msgsummary.js" in (root / page).read_text(encoding="utf-8")
+        assert "MsgSummary" in (root / js).read_text(encoding="utf-8")

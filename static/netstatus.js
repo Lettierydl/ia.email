@@ -132,10 +132,10 @@
         e.stopPropagation();
         const id = b.closest(".ns-item").dataset.id;
         const act = b.dataset.act;
-        if (act === "cancel" && !window.confirm("Cancelar este envio? O texto não será enviado.")) return;
+        if (act === "cancel" && !(await window.Dialog.confirm({ title: "Cancelar este envio?", body: "A resposta sai da fila e não será enviada.", ok: "Cancelar envio", cancel: "Manter na fila", danger: true }))) return;
         b.disabled = true;
         const res = await api(`/api/outbox/${encodeURIComponent(id)}/${act}`, "POST");
-        if (!res.ok) window.alert(res.data.detail || "Não deu certo.");
+        if (!res.ok) await window.Dialog.alert({ title: act === "cancel" ? "Não deu para cancelar" : "Não deu para enviar agora", body: res.data.detail || "Tente de novo em instantes." });
         await refresh();
         renderQueue();
       };

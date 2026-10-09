@@ -1549,3 +1549,33 @@ a.as-link.primary { background: var(--blue); color: #fff; border: 1px solid var(
 .as-noreply-wrap > summary { cursor: pointer; font-size: 15px; font-weight: 500; display: flex; align-items: center; gap: 8px; list-style-position: inside; }
 .as-noreply-wrap .as-list { margin-top: 10px; }
 .as-card.quiet { background: var(--bg); }
+
+/* "Resumir este e-mail" (static/msgsummary.js, o mesmo do /copilot) */
+.msg-sum-btn { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.msg-sum-btn:hover, .msg-sum-btn:focus-visible { color: var(--blue); border-color: var(--line); background: var(--card); }
+.msg-sum-menu { position: fixed; z-index: 60; width: 260px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-md); padding: 6px; }
+.msg-sum-menu-h { font-size: 11.5px; color: var(--muted); padding: 4px 8px 6px; }
+.msg-sum-menu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; border-radius: 6px; padding: 7px 8px; cursor: pointer; color: var(--ink); }
+.msg-sum-menu button:hover, .msg-sum-menu button:focus-visible { background: var(--blue-soft); }
+.msg-sum-menu b { display: block; font-size: 13px; font-weight: 600; }
+.msg-sum-menu small { display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+.msg-sum { display: none; margin: 10px 12px 0; border: 1px solid #c6dafc; border-radius: var(--radius); background: var(--blue-soft); font-size: 13px; line-height: 1.45; }
+.msg-card.open > .msg-sum { display: block; }
+.msg-sum-h { display: flex; align-items: center; gap: 6px; padding: 6px 8px; flex-wrap: wrap; }
+.msg-sum-tog { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; padding: 0; color: var(--blue-dark); font-size: 12.5px; cursor: pointer; }
+.msg-sum-caret { width: 10px; font-size: 11px; }
+.msg-sum-meta { font-size: 11.5px; color: var(--muted); margin-right: auto; }
+.msg-sum-tog + .msg-sum-act { margin-left: auto; }
+.msg-sum-act { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 2px 9px; font-size: 11.5px; color: var(--ink); cursor: pointer; }
+.msg-sum-act:disabled { opacity: .5; cursor: default; }
+.msg-sum-x { border: 0; background: transparent; font-size: 17px; line-height: 1; color: var(--muted); cursor: pointer; padding: 0 4px; }
+.msg-sum-x:hover { color: var(--ink); }
+.msg-sum-body { padding: 2px 12px 10px; }
+.msg-sum-body.hidden { display: none; }
+.msg-sum-body ul { margin: 4px 0 0 18px; padding: 0; }
+.msg-sum-body li { margin: 2px 0; }
+.msg-sum-body section + section { margin-top: 8px; }
+.msg-sum-body h5 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); margin: 0 0 2px; }
+.msg-sum-main { margin: 0 0 4px; }
+.msg-sum-muted { color: var(--muted); margin: 2px 0; }
+.msg-sum-warn { color: var(--red); margin: 2px 0 6px; }

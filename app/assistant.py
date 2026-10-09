@@ -6,7 +6,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from . import attachments, context_base, copilot, gmail_client, learned, llm, rag, secrets_guard, store, summary_templates
+from . import attachments, context_base, copilot, fixpt, gmail_client, learned, llm, rag, secrets_guard, store, summary_templates
 from .config import (
     ACCOUNT,
     CONTEXT_GLOBAL_MAX_CHARS,
@@ -459,12 +459,43 @@ def _same_text(a: str, b: str) -> bool:
     return " ".join((a or "").split()) == " ".join((b or "").split())
 
 
-def draft(thread_id: str, instruction: str, comment: str = "", current_draft: str = "") -> dict:
+def _alvo_block(alvo: dict | None) -> str:
+    """Bloco do prompt quando o Leo responde a UMA mensagem da thread (não à última)."""
+    if not alvo:
+        return ""
+    total = alvo.get("total") or 0
+    pos = f"mensagem {alvo.get('idx', 0) + 1} de {total}" if total else "uma mensagem da thread"
+    return (
+        f"Você está respondendo a ESTA mensagem ({pos}), não necessariamente à última:\n"
+        f"De: {alvo.get('de') or '?'}\nData: {alvo.get('data') or '?'}\n"
+        f"<<<\n{(alvo.get('texto') or '').strip()[:6000]}\n>>>\n"
+        "Responda a quem escreveu ESTA mensagem e sobre o que ela diz (saudação para essa pessoa). "
+        "O resto da thread (abaixo) é só contexto: não responda às outras mensagens.\n\n"
+    )
+
+
+def _alvo_ref(alvo: dict | None) -> dict | None:
+    """O que fica guardado no chat sobre o alvo (sem o texto inteiro)."""
+    if not alvo:
+        return None
+    return {k: alvo.get(k) for k in ("idx", "de", "data", "message_id") if alvo.get(k) not in (None, "")}
+
+
+def draft(thread_id: str, instruction: str, comment: str = "", current_draft: str = "", alvo: dict | None = None,
+          keep_text: bool = False) -> dict:
     """current_draft: o texto que o Leo tem na caixa agora (o copiloto manda o
-    rascunho editado à mão). Vazio = usa o último rascunho salvo na thread."""
+    rascunho editado à mão). Vazio = usa o último rascunho salvo na thread.
+    alvo: mensagem específica sendo respondida ({idx, total, de, data, texto,
+    message_id}); o prompt foca nela e o chat guarda a referência.
+    keep_text: "Usar meu texto (só corrigir)" -- a instrução inteira É o e-mail.
+    Sem a flag, "escreva da mesma forma: …" também cai nesse modo."""
     with _lock_for(thread_id):
         row = store.get_thread(thread_id) or {}
         chat = _load_chat(row)
+
+        own = fixpt.keep_text_request(instruction) or ((instruction or "").strip() if keep_text else None)
+        if own:
+            return _draft_keep_text(thread_id, row, chat, instruction, own, current_draft, alvo)
 
         # Atalho: Leo respondeu com o e-mail de alguém que ficou sem resolver
         # ("o email é fulano@x.com") -- resolve na hora, sem chamar a IA de
@@ -569,6 +600,7 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
                 else ""
             )
             + revision
+            + _alvo_block(alvo)
             + f"Instrução do Leo: {instruction or '(gerar a partir do contexto)'}\n"
             f"Ajuste pedido: {comment or '(nenhum)'}\n"
             f"Rascunho anterior:\n{previous or '(nenhum)'}\n\n"
@@ -588,11 +620,14 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
         cc_resolution = _resolve_cc_names(cc_names)
         store.log_event("draft" if kind == "draft" else "answer", thread_id)
 
+        alvo_ref = _alvo_ref(alvo)
         if instruction:
-            chat.append({"role": "user", "text": instruction})
+            chat.append({"role": "user", "text": instruction, **({"alvo": alvo_ref} if alvo_ref else {})})
         ai_msg: dict = {"role": "ai", "text": text, "kind": kind}
         if cc_resolution:
             ai_msg["cc_resolution"] = cc_resolution
+        if alvo_ref:
+            ai_msg["alvo"] = alvo_ref
         chat.append(ai_msg)
 
         save_fields: dict = {
@@ -608,7 +643,115 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
             "chat": chat,
             "summary": row.get("summary") or "",
             "unchanged": unchanged,
+            "alvo": alvo_ref,
         }
+
+
+def _draft_keep_text(thread_id: str, row: dict, chat: list[dict], instruction: str, own: str,
+                     current_draft: str, alvo: dict | None) -> dict:
+    """"Escreva da mesma forma: …": o rascunho é o texto do Leo, só com o
+    português corrigido (sem gerar outro e-mail). Se a correção divergir demais
+    ou não houver LLM, vai o texto dele como está, com um aviso. A assinatura do
+    rascunho atual é mantida no fim quando o texto dele não traz uma."""
+    previous = (current_draft or "").strip() or row.get("draft") or ""
+    fixed, aviso = own, ""
+    try:
+        fixed = fixpt.fix(own)["text"].strip()
+    except fixpt.FixRejected as exc:
+        aviso = str(exc)
+    except RuntimeError as exc:
+        aviso = f"{exc} Usei seu texto sem correção."
+    text = fixpt.with_signature(fixed, previous)
+    original = fixpt.with_signature(own, previous)
+    alvo_ref = _alvo_ref(alvo)
+    if instruction:
+        chat.append({"role": "user", "text": instruction, **({"alvo": alvo_ref} if alvo_ref else {})})
+    ai_msg: dict = {"role": "ai", "text": text, "kind": "draft", "keep_text": True}
+    if alvo_ref:
+        ai_msg["alvo"] = alvo_ref
+    chat.append(ai_msg)
+    store.save_ai(thread_id, chat_json=json.dumps(chat), chat_anchor_date=row.get("internal_date") or 0, draft=text)
+    store.log_event("draft_keep_text", thread_id)
+    return {
+        "id": thread_id,
+        "draft": text,
+        "chat": chat,
+        "summary": row.get("summary") or "",
+        "unchanged": False,
+        "alvo": alvo_ref,
+        "keep_text": True,
+        "original": original,  # o texto do Leo sem correção (o front destaca as mudanças / Desfazer)
+        "corrigido": fixed != own.strip(),
+        "aviso": aviso,
+    }
+
+
+REWRITE_DEFAULT_INSTRUCTION = "melhore este trecho"
+
+
+class PassageMismatch(ValueError):
+    """O trecho enviado não bate com draft[start:end] (o rascunho mudou no meio)."""
+
+
+def _clean_replacement(raw: str, passage: str) -> str:
+    """Tira o embrulho que a IA às vezes põe (```, aspas, "Trecho reescrito:")
+    e devolve o texto com o mesmo espaço em branco nas pontas do trecho original."""
+    text = (raw or "").strip()
+    fence = re.match(r"^```[a-zA-Z]*\n(.*)\n```$", text, re.DOTALL)
+    if fence:
+        text = fence.group(1).strip()
+    text = re.sub(r"^(trecho reescrito|novo trecho|reescrita|texto)\s*:\s*", "", text, flags=re.IGNORECASE).strip()
+    pairs = {'"': '"', "“": "”", "'": "'", "«": "»"}
+    if len(text) >= 2 and text[0] in pairs and text[-1] == pairs[text[0]] and not (passage[:1] == text[0] and passage[-1:] == text[-1]):
+        text = text[1:-1].strip()
+    lead = passage[: len(passage) - len(passage.lstrip())]
+    trail = passage[len(passage.rstrip()):]
+    return f"{lead}{text}{trail}" if text else ""
+
+
+def rewrite_passage(thread_id: str, draft_text: str, start: int, end: int, passage: str, instruction: str = "") -> dict:
+    """Reescreve SÓ draft[start:end] (botão "Reescrever" da seleção no rascunho).
+    Não salva nada nem mexe no chat: devolve {replacement} e o front troca o
+    trecho na caixa (o resto do texto fica byte-idêntico) e salva pelo autosave."""
+    draft_text = draft_text or ""
+    if not (0 <= start < end <= len(draft_text)) or draft_text[start:end] != passage or not passage.strip():
+        raise PassageMismatch("O trecho não confere com o rascunho atual. Selecione de novo.")
+    instruction = (instruction or "").strip() or REWRITE_DEFAULT_INSTRUCTION
+    row = store.get_thread(thread_id) or {}
+    if not row:
+        raise RuntimeError("Thread não está no radar. Atualize a lista.")
+    if not llm.has_key():
+        raise RuntimeError("Falta chave de LLM (Claude/Gemini/OpenRouter) para reescrever.")
+    body = _ensure_body(thread_id)
+    extra_context = _draft_extra_context(
+        f"{instruction}\n{passage}",
+        f"{row.get('subject') or ''}\n{_recent_body(body, 3000)}",
+        exclude_ref=f"mail:{thread_id}",
+    )
+    learned_block = learned.notes_block(thread_id, row.get("subject") or "", learned.thread_emails(row))
+    marked = f"{draft_text[:start]}⟦{passage}⟧{draft_text[end:]}"
+    prompt = (
+        "Você está ajudando o Leo a editar UM TRECHO do rascunho de resposta que ele vai mandar. "
+        "Reescreva SOMENTE o trecho marcado, seguindo a instrução dele, para que se encaixe no "
+        "lugar exato do original (mesma pessoa, mesmo tom, concordância com o texto antes e depois).\n"
+        "Responda APENAS com o texto novo do trecho: sem aspas, sem markdown, sem explicação, sem "
+        "saudação nem assinatura (a não ser que o trecho original já seja a saudação/assinatura), "
+        "sem repetir o texto de fora do trecho. Não invente fatos, prazos ou compromissos que não "
+        "estejam na thread, na instrução ou no rascunho.\n\n"
+        f"{extra_context}"
+        f"{learned_block}"
+        f"Instrução do Leo para o trecho: {instruction}\n\n"
+        f"Trecho a reescrever:\n{passage}\n\n"
+        f"Rascunho inteiro (o trecho está entre ⟦ e ⟧):\n{marked}\n\n"
+        f"Assunto: {row.get('subject')}\n\nThread:\n{_recent_body(body, 8000)}"
+    )
+    replacement = _clean_replacement(llm.complete(prompt), passage)
+    if not replacement.strip():
+        raise RuntimeError("A IA não devolveu o trecho reescrito. Tente de novo.")
+    if secrets_guard.looks_like_secret(replacement) and not secrets_guard.looks_like_secret(draft_text):
+        raise PassageMismatch("A IA devolveu algo com cara de senha/token; o trecho não foi trocado.")
+    store.log_event("rewrite_passage", thread_id)
+    return {"replacement": replacement}
 
 
 def _chat_transcript(chat: list[dict]) -> str:
@@ -1218,6 +1361,11 @@ def process_due_autopilot_sends() -> list[dict]:
                 decision["id"], status="sent", sent_at=datetime.now().isoformat()
             )
             store.log_event("auto_sent", thread_id)
+            try:
+                from . import copilot
+                copilot.resolve_after_send(thread_id)
+            except Exception:
+                pass
             results.append({"id": decision["id"], "status": "sent", **send_result})
         except Exception as exc:
             store.update_autopilot_decision(decision["id"], status="failed", error=str(exc))

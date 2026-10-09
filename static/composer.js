@@ -208,6 +208,46 @@
     return INSTR_RE.test(s) || INSTR_START_RE.test(s);
   }
 
-  window.Composer = { annotChipsHTML, fit, onEnter, short, draftChipHTML, draftSkelHTML, setDraftLoading, attachChipsHTML, insertAttachRef, formatSize, looksLikeInstruction };
+  // "Usar meu texto (só corrigir)": "Escreva da mesma forma: …", "escreva
+  // exatamente isso: …", "use este texto: …", "manda assim: …" -> o texto depois
+  // dos dois-pontos. Mesma regra de app/fixpt.py (o servidor decide de novo).
+  const KEEP_RE = new RegExp(
+    "^\\s*(?:por\\s+favor,?\\s*)?(?:"
+    + "escreva\\s+(?:da\\s+mesma\\s+forma|do\\s+mesmo\\s+jeito|exatamente(?:\\s+(?:isso|assim|isto|desse\\s+jeito|deste\\s+jeito))?|assim|isso)"
+    + "|escrev[ea]\\s+igual"
+    + "|(?:use|usa|utilize|mantenha|mant[eé]m|deixe|deixa)\\s+(?:o\\s+)?(?:meu|este|esse|o\\s+meu|exatamente\\s+(?:este|esse|o\\s+meu))\\s+texto(?:\\s+(?:como\\s+est[aá]|assim))?"
+    + "|(?:manda|mande|mandar|envia|envie|enviar|responda|responde)\\s+(?:exatamente\\s+)?(?:assim|isso|isto|desse\\s+jeito|deste\\s+jeito|do\\s+jeito\\s+que\\s+escrevi)"
+    + "|(?:s[oó]\\s+)?corri(?:ja|gir|ge)\\s+(?:s[oó]\\s+)?(?:o\\s+)?portugu[eê]s(?:\\s+(?:disso|disto|deste|desse|do\\s+texto))?"
+    + "|copie\\s+(?:exatamente\\s+)?(?:isso|isto|este\\s+texto|esse\\s+texto)"
+    + ")(?:\\s*,?\\s*(?:aqui|abaixo|a\\s+seguir|pra\\s+mim|para\\s+mim|por\\s+favor|o\\s+e-?mail|a\\s+resposta|na\\s+resposta|no\\s+e-?mail))*\\s*:\\s*([\\s\\S]+)$",
+    "i",
+  );
+  function keepTextRequest(text) {
+    const m = KEEP_RE.exec(String(text || ""));
+    if (!m) return null;
+    let t = m[1].trim();
+    if (t.length >= 2 && "\"“'«".includes(t[0]) && "\"”'»".includes(t[t.length - 1])) t = t.slice(1, -1).trim();
+    return t || null;
+  }
+  // Toggle "Usar meu texto (só corrigir)" do campo da IA. auto = o pedido já
+  // tem cara de "escreva da mesma forma: …" (liga sozinho, sem clicar).
+  function keepChipHTML(id, on, auto) {
+    const pressed = !!(on || auto);
+    return `<button type="button" class="cmp-keep" id="${id}" aria-pressed="${pressed}" title="O que você escrever no campo abaixo vai como está para o rascunho: a IA só corrige ortografia, gramática, pontuação e acentos.">${pressed ? "✓ " : ""}Usar meu texto (só corrigir)${auto && !on ? ' <span class="auto">· detectado</span>' : ""}</button>`;
+  }
+  // POST /fix-portuguese -> {text, changed[, replacement, start, end]}; erro vira Error(detail).
+  async function fixPortuguese(tid, body) {
+    let res;
+    try {
+      res = await fetch(`/api/threads/${encodeURIComponent(tid)}/fix-portuguese`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    } catch (_) {
+      throw new Error("Sem conexão com o servidor.");
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "Não deu para corrigir o português.");
+    return data;
+  }
+
+  window.Composer = { annotChipsHTML, fit, onEnter, short, draftChipHTML, draftSkelHTML, setDraftLoading, attachChipsHTML, insertAttachRef, formatSize, looksLikeInstruction, keepTextRequest, keepChipHTML, fixPortuguese };
   window.DraftPersist = DraftPersist;
 })();

@@ -250,6 +250,48 @@ def init() -> None:
             conn.execute("ALTER TABLE copilot_items ADD COLUMN msg_count_snapshot INTEGER")
         except sqlite3.OperationalError:
             pass
+        # "Resumo detalhado" do copiloto (sob demanda, com IA): um por thread,
+        # com o retrato da thread de quando foi gerado para saber se envelheceu.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS copilot_resumos (
+                thread_id TEXT PRIMARY KEY,
+                resumo_json TEXT,
+                internal_date_snapshot INTEGER,
+                msg_count_snapshot INTEGER,
+                gerado_em TEXT
+            )
+            """
+        )
+        # "Resumir este e-mail" (uma mensagem da thread, sob demanda): chave =
+        # thread + hash do texto da mensagem + modo. Texto igual reaproveita;
+        # texto mudou = hash novo = gera de novo.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS copilot_msg_resumos (
+                thread_id TEXT NOT NULL,
+                msg_hash TEXT NOT NULL,
+                modo TEXT NOT NULL,
+                resumo_json TEXT,
+                gerado_em TEXT,
+                PRIMARY KEY (thread_id, msg_hash, modo)
+            )
+            """
+        )
+        # "Verificar na caixa" (app/verify.py): afirmações do e-mail checadas
+        # contra a caixa do Leo. Uma por thread, com o retrato da thread
+        # (mensagem nova invalida, como o resumo detalhado).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS copilot_verificacoes (
+                thread_id TEXT PRIMARY KEY,
+                resultado_json TEXT,
+                internal_date_snapshot INTEGER,
+                msg_count_snapshot INTEGER,
+                gerado_em TEXT
+            )
+            """
+        )
         # Fila de envio (app/outbox.py): só envios que o Leo confirmou e que
         # não saíram por falta de conexão. Ver outbox._ensure (mesmo schema).
         conn.execute(
@@ -848,6 +890,63 @@ def list_copilot_items() -> dict[str, dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute("SELECT * FROM copilot_items").fetchall()
     return {r["thread_id"]: dict(r) for r in rows}
+
+
+def save_copilot_resumo(thread_id: str, resumo_json: str, internal_date_snapshot: int, msg_count_snapshot: int) -> str:
+    gerado_em = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO copilot_resumos (thread_id, resumo_json, internal_date_snapshot, msg_count_snapshot, gerado_em) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id) DO UPDATE SET resumo_json=excluded.resumo_json, "
+            "internal_date_snapshot=excluded.internal_date_snapshot, msg_count_snapshot=excluded.msg_count_snapshot, "
+            "gerado_em=excluded.gerado_em",
+            (thread_id, resumo_json, internal_date_snapshot, msg_count_snapshot, gerado_em),
+        )
+    return gerado_em
+
+
+def get_copilot_resumo(thread_id: str) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM copilot_resumos WHERE thread_id=?", (thread_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def save_copilot_msg_resumo(thread_id: str, msg_hash: str, modo: str, resumo_json: str) -> str:
+    gerado_em = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO copilot_msg_resumos (thread_id, msg_hash, modo, resumo_json, gerado_em) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(thread_id, msg_hash, modo) DO UPDATE SET resumo_json=excluded.resumo_json, gerado_em=excluded.gerado_em",
+            (thread_id, msg_hash, modo, resumo_json, gerado_em),
+        )
+    return gerado_em
+
+
+def get_copilot_msg_resumo(thread_id: str, msg_hash: str, modo: str) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM copilot_msg_resumos WHERE thread_id=? AND msg_hash=? AND modo=?", (thread_id, msg_hash, modo)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_copilot_verificacao(thread_id: str, resultado_json: str, internal_date_snapshot: int, msg_count_snapshot: int) -> str:
+    gerado_em = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO copilot_verificacoes (thread_id, resultado_json, internal_date_snapshot, msg_count_snapshot, gerado_em) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id) DO UPDATE SET resultado_json=excluded.resultado_json, "
+            "internal_date_snapshot=excluded.internal_date_snapshot, msg_count_snapshot=excluded.msg_count_snapshot, "
+            "gerado_em=excluded.gerado_em",
+            (thread_id, resultado_json, internal_date_snapshot, msg_count_snapshot, gerado_em),
+        )
+    return gerado_em
+
+
+def get_copilot_verificacao(thread_id: str) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM copilot_verificacoes WHERE thread_id=?", (thread_id,)).fetchone()
+    return dict(row) if row else None
 
 
 def log_copilot_action(thread_id: str, action: str, payload: dict[str, Any] | None = None) -> None:

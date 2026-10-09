@@ -1,0 +1,32 @@
+/* Caixa zerada inline (static/celebrate.js): praia grande (.cz-big) só com o
+   quadro inteiro vazio (área do quadro ou aba da lista). Sem overlay.
+   Animação só com .cz-anim (transição >0 → 0); .cz-still fica parada. */
+.cp-empty.cp-empty-cz{padding:10px 4px}
+.cz-scene{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;color:var(--ink,#24313a)}
+.cz-scene .cz-art{display:block;height:auto}
+.cz-big .cz-art{width:min(380px,90%)}
+.cz-title{margin:4px 0 0;font-size:19px;font-weight:600}
+.cz-sub{margin:0;font-size:14px;color:var(--muted,#5f6b73)}
+.cz-board-zero{grid-column:1/-1;display:flex;align-items:center;justify-content:center;padding:24px 8px;border-radius:var(--radius,18px);background:color-mix(in srgb,var(--fog,#eef1f4) 55%,var(--bg,#fff))}
+
+.cz-anim{animation:cz-pop .4s cubic-bezier(.2,.9,.3,1.2)}
+.cz-anim .cz-rays{animation:cz-spin 14s linear infinite;transform-origin:196px 38px}
+.cz-anim .cz-wave{animation:cz-wave 3.2s ease-in-out infinite}
+.cz-anim .cz-wave2{animation-duration:4.4s;animation-direction:reverse}
+.cz-anim .cz-cloud{animation:cz-drift 9s ease-in-out infinite alternate}
+.cz-anim .cz-sip{animation:cz-sip 2.6s ease-in-out infinite;transform-origin:140px 116px}
+.cz-anim .cz-palm{animation:cz-sway 5s ease-in-out infinite alternate;transform-origin:30px 150px}
+.cz-anim .cz-confetti rect{animation:cz-fall 2.6s ease-in 2;transform-box:fill-box;animation-fill-mode:forwards}
+.cz-still .cz-confetti{opacity:.6}
+
+@keyframes cz-pop{from{transform:scale(.94) translateY(6px);opacity:0}}
+@keyframes cz-spin{to{transform:rotate(360deg)}}
+@keyframes cz-wave{50%{transform:translateX(20px)}}
+@keyframes cz-drift{to{transform:translateX(18px)}}
+@keyframes cz-sip{0%,60%,100%{transform:rotate(0)}75%{transform:rotate(-10deg)}}
+@keyframes cz-sway{to{transform:rotate(2deg)}}
+@keyframes cz-fall{0%{translate:0 -6px;opacity:0}15%{opacity:1}100%{translate:0 70px;opacity:0}}
+
+@media (prefers-reduced-motion: reduce){
+  .cz-scene,.cz-scene *{animation:none!important}
+}
