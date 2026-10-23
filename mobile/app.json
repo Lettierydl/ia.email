@@ -3,21 +3,30 @@
     "name": "Copiloto",
     "slug": "ia-email-copiloto",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "br.com.confrapag.iaemail.copiloto",
+      "requireFullScreen": false,
+      "bundleIdentifier": "com.leodlamare.iaemail",
+      "buildNumber": "1",
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true,
-          "NSAllowsLocalNetworking": true
+          "NSAllowsLocalNetworking": true,
+          "NSExceptionDomains": {
+            "ts.net": {
+              "NSIncludesSubdomains": true,
+              "NSExceptionAllowsInsecureHTTPLoads": true
+            }
+          }
         }
       }
     },
     "android": {
-      "package": "br.com.confrapag.iaemail.copiloto",
+      "package": "com.leodlamare.iaemail",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#F6F5FB",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -28,6 +37,19 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-sharing",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#F6F5FB",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain"
+        }
+      ]
+    ]
   }
 }

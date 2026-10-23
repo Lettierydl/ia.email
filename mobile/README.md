@@ -21,7 +21,9 @@ preparam rascunho no servidor; o envio continua sendo feito por você na tela de
 ```
 mobile/
 ├── App.tsx                    # providers + navegação (pilha simples, BackHandler no Android)
-├── app.json                   # nome, bundle id, ATS liberado para http local
+├── app.json                   # nome, bundle id (com.leodlamare.iaemail), iPad retrato+paisagem, ATS restrito (HTTPS; http só *.ts.net/rede local)
+├── TESTFLIGHT.md              # checklist do que depende do Leo para chegar ao iPad
+├── eas.json                   # perfis EAS: development / preview / production
 └── src/
     ├── api.ts                 # cliente HTTP + base URL configurável
     ├── types.ts               # contrato de /api/copilot (espelha app/copilot.py)
@@ -49,6 +51,15 @@ mobile/
 | GET/POST | `/api/copilot/settings` | skin e horários do digest |
 | GET | `/api/settings/alias-suggest?q=` | sugestões no Delegar |
 | GET | `/api/avatar?email=` | foto do avatar |
+| GET | `/api/health` | "Testar conexão" (sem token) |
+| GET | `/api/status` | "Testar conexão" (rota autenticada) e conta de envio |
+| GET | `/api/threads/{id}/recipients` | Para/Cc padrão (`reply_to`/`reply_cc`) e participantes no Responder |
+| POST | `/api/threads/{id}/send` | envio (só após o ConfirmModal), com `to` e `cc` editados |
+| GET/POST | `/api/copilot/{id}/verificar` | Verificar na caixa (GET = cache; POST = gera) |
+| GET/POST | `/api/copilot/{id}/resumo-detalhado` | Resumo detalhado (POST = regerar) |
+| POST | `/api/copilot/{id}/mensagens/{idx}/resumo` | Resumir uma mensagem (direto/abrangente) |
+| GET | `/api/historico` · POST `/api/historico/{id}/desfazer` · `/refazer` · `/desfazer-ultimo` | 🕘 Histórico |
+| GET | `/api/threads/{id}/gmail-attachments` (+ `/{mid}/image?attachment_id=`, `/{mid}/file?attachment_id=`) | imagens inline (campo `inline`) e anexos |
 
 ## Pré-requisitos
 
@@ -71,7 +82,7 @@ npm run android         # emulador Android
 
 ## Endereço do servidor (base URL)
 
-O endereço fica salvo no aparelho e pode ser trocado em **⚙ Ajustes → Servidor → Testar e salvar**.
+O endereço fica salvo no aparelho e pode ser trocado em **⚙ Ajustes → Servidor → Salvar e testar conexão** (testa `/api/health` e uma rota autenticada e mostra o resultado na tela).
 Padrão sem nada salvo:
 
 | Onde o app roda | Endereço | Observação |
@@ -88,12 +99,44 @@ EXPO_PUBLIC_API_URL=http://192.168.0.10:8765 npx expo start
 
 **Atenção — celular físico:** o `docker-compose.yml` publica a porta só em `127.0.0.1:8765`,
 então o celular não alcança o servidor. Para testar no aparelho, publique na rede local
-(trocando para `"8765:8765"` ou `"0.0.0.0:8765:8765"`) **conscientemente**: a API não tem
-login próprio e passa a ficar acessível para qualquer um na mesma rede. Use só em rede confiável
-e volte ao `127.0.0.1` depois. (Esta rodada não alterou o `docker-compose.yml`.)
+(trocando para `"8765:8765"` ou `"0.0.0.0:8765:8765"`) **conscientemente** e de preferência
+via túnel (Tailscale/cloudflared) em vez de abrir a porta na rede. Fora do Mac a API exige o
+token de acesso (abaixo), mas o tráfego em `http://` vai sem criptografia: use rede confiável.
+(O `docker-compose.yml` continua em `127.0.0.1`.)
 
 O botão **Abrir rascunho / Abrir e-mail** abre `/<rota>` do servidor no navegador do aparelho,
-então vale a mesma regra de alcance.
+então vale a mesma regra de alcance (e o navegador pede o token uma vez na tela `/login`).
+
+## Token de acesso
+
+A API do IA.Email exige `IA_EMAIL_API_TOKEN` para quem não está no próprio Mac.
+
+1. No Mac: `.venv/bin/python -m app.auth --mostrar` (na raiz do repo).
+2. No app: **Ajustes → Servidor → Token de acesso**, cole e toque **Salvar e testar conexão**.
+
+O token fica no Keychain (iOS) / Keystore (Android) via `expo-secure-store` e vai em todo request
+como `Authorization: Bearer …` (avatares servidos pelo IA.Email também). Resposta 401 aparece como
+"Token inválido ou ausente. Confira em Ajustes.". Salvar o campo vazio apaga o token do aparelho.
+
+## Build (EAS) — iPad / TestFlight
+
+Passo a passo do que depende de você (conta Apple, App Store Connect, EAS, Tailscale, token): **[TESTFLIGHT.md](TESTFLIGHT.md)**.
+
+- Layout: largura ≥ 768 (iPad) = duas colunas (lista + detalhe); menor = lista → detalhe.
+
+- Bundle id iOS e package Android: `com.leodlamare.iaemail`. `ios.buildNumber` / `android.versionCode`
+  começam em 1; `cli.appVersionSource: "local"` + `autoIncrement` no perfil `production` sobe esses
+  números no `app.json` a cada build.
+- Perfis (`eas.json`):
+  - `development`: `developmentClient: true`, distribuição interna. **Precisa do `expo-dev-client`**
+    (não instalado de propósito): `npx expo install expo-dev-client` antes de usar esse perfil.
+    Para testar sem ele, use o Expo Go ou o perfil `preview`.
+  - `preview`: build interno (ad hoc no iOS: o iPad precisa estar registrado com `eas device:create`).
+  - `production`: para App Store/TestFlight.
+- `submit.production.ios` está vazio (placeholder): preencha `appleId`, `ascAppId` (só dígitos, do
+  App Store Connect) e `appleTeamId` quando o app existir lá.
+- Fluxo (feito pelo Leo, com login dele): `eas login` → `eas build -p ios --profile production` →
+  `eas submit -p ios --profile production`.
 
 ## Verificações
 
@@ -105,6 +148,6 @@ npx expo export --platform ios --platform android --output-dir /tmp/copiloto-exp
 
 ## Fora do escopo da v1
 
-- Publicação na App Store / Play Store (dá para seguir depois com `npx eas-cli@latest build`).
+- Publicação na App Store / Play Store (preparada no `eas.json`; o build/submit não foi rodado).
 - Notificação push do digest (o servidor ainda só monta o resumo).
 - Envio de e-mail pelo app (proposital: o envio continua na tela de e-mail).

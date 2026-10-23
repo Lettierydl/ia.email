@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar · IA.Email</title>
+  <link rel="icon" href="/static/favicon.svg?v=2" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/dialog.css?v=1">
+  <style>
+    body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;
+      background:linear-gradient(160deg,#f4f1fb 0%,#eef6f3 55%,#fdf4ec 100%);
+      font:14px/1.5 'Google Sans',Roboto,'Segoe UI',system-ui,sans-serif;color:#2d2b3a}
+    .lg-card{background:#fff;width:100%;max-width:400px;border-radius:20px;padding:26px 24px 22px;
+      box-shadow:0 18px 48px rgba(45,43,58,.12),0 2px 6px rgba(45,43,58,.06)}
+    .lg-card h1{font-size:20px;font-weight:600;margin:0 0 4px}
+    .lg-card p{margin:0 0 14px;color:#6b6880;font-size:13.5px}
+    .lg-card .dlg-actions{margin-top:16px}
+    .lg-card .dlg-btn.primary{background:#7c6bd6;border-color:#7c6bd6;width:100%}
+    .lg-card .dlg-btn.primary:hover{background:#6656c2;border-color:#6656c2}
+    .lg-card .dlg-input:focus{outline-color:#7c6bd6}
+  </style>
+</head>
+<body>
+  <form class="lg-card" id="lg-form" autocomplete="off">
+    <h1>IA.Email</h1>
+    <p>Informe o token de acesso para entrar. Ele fica salvo neste navegador.</p>
+    <label class="dlg-field">Token de acesso
+      <input class="dlg-input" id="lg-token" type="password" autocomplete="current-password" required autofocus>
+    </label>
+    <p class="dlg-error" id="lg-erro" hidden></p>
+    <div class="dlg-actions">
+      <button class="dlg-btn primary" id="lg-entrar" type="submit">Entrar</button>
+    </div>
+    <p class="dlg-note">No Mac: <code>.venv/bin/python -m app.auth --mostrar</code></p>
+  </form>
+  <script src="/static/login.js?v=1"></script>
+</body>
+</html>

@@ -9,10 +9,11 @@ const { app, BrowserWindow, Menu, shell, dialog } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const http = require("http");
+const fs = require("fs");
 
 const PROJECT_ROOT = path.join(__dirname, "..");
 const APP_URL = "http://127.0.0.1:8765";
-const HEALTH_URL = `${APP_URL}/api/status`;
+const HEALTH_URL = `${APP_URL}/api/health`;
 
 let mainWindow = null;
 
@@ -26,6 +27,27 @@ function runDockerCompose(args) {
     child.on("exit", (code) => {
       if (code === 0) resolve();
       else reject(new Error(`docker compose ${args.join(" ")} saiu com código ${code}`));
+    });
+  });
+}
+
+// Garante IA_EMAIL_API_TOKEN no .env do projeto ANTES do compose (o container
+// só lê o .env via env_file). A janela em si entra sem token: abre
+// 127.0.0.1, que o backend trata como local; com
+// IA_EMAIL_AUTH_LOCALHOST_LIVRE=false cai na tela /login e o cookie fica na
+// sessão do Electron.
+function ensureApiToken() {
+  const venvPython = path.join(PROJECT_ROOT, ".venv", "bin", "python");
+  const python = fs.existsSync(venvPython) ? venvPython : "python3";
+  return new Promise((resolve, reject) => {
+    const child = spawn(python, ["-m", "app.auth", "--garantir"], {
+      cwd: PROJECT_ROOT,
+      stdio: "inherit",
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`app.auth --garantir saiu com código ${code}`));
     });
   });
 }
@@ -99,6 +121,7 @@ async function boot() {
   win.loadURL(loadingHtml("Subindo o IA.Email (docker compose)…"));
 
   try {
+    await ensureApiToken();
     await runDockerCompose(["up", "-d", "--build"]);
     win.loadURL(loadingHtml("Aguardando o servidor responder…"));
     await waitForServer();

@@ -228,13 +228,16 @@ def finalize_reply(thread_id: str, text: str, ai_draft: str, source: str) -> Non
         sent_via_app_at=int(datetime.now().timestamp() * 1000),
     )
     store.log_event("sent", thread_id)
+    origem = "copilot" if source == "copilot" else "mail"
+    from . import history
+    history.record_send(thread_id, origem)  # entra no histórico como "não reversível"
     for item in attachments.list_files(thread_id):
         attachments.delete_file(thread_id, item["name"])
     # Envio real confirmado: marca Resolvido no Copiloto (igual à ação resolver).
     # Não roda no enqueue/queued — só aqui e no worker após _deliver.
     try:
         from . import copilot
-        copilot.resolve_after_send(thread_id)
+        copilot.resolve_after_send(thread_id, origem)
     except Exception as exc:
         print(f"[envio] resolvido pós-envio falhou ({thread_id}): {exc}")
 
@@ -249,6 +252,8 @@ def finalize_new(result: dict[str, Any]) -> None:
             store.save_ai(thread_id, sent_via_app_at=int(datetime.now().timestamp() * 1000))
         except Exception:
             pass
+    from . import history
+    history.record_send(thread_id or "", "mail", assunto=result.get("subject") or "")
     store.log_event("compose_sent", thread_id or "")
 
 

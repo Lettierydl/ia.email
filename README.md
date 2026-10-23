@@ -18,7 +18,7 @@ personalizada.
 
 ```bash
 cd /Users/leo/Workspace/Assistentes/ia_email
-docker compose up -d --build
+./start.sh   # garante IA_EMAIL_API_TOKEN no .env e faz docker compose up -d --build
 ```
 
 Abra http://127.0.0.1:8765
@@ -37,6 +37,25 @@ Cliente OAuth: tipo **Desktop**, Gmail API ligada. Redirect usado:
 No Google Cloud, se o login falhar com `redirect_uri_mismatch`, acrescente esse URI (ou use Desktop, que aceita loopback).
 
 Token fica em `data/gmail-token.json` (nao versionado). Escopos atuais: `gmail.modify` e `gmail.send`.
+
+## Token de acesso
+
+Todas as rotas `/api/*` e as páginas (`/`, `/copilot`, `/board`...) pedem o
+token `IA_EMAIL_API_TOKEN`, que fica no `.env` desta pasta (no Mac, não no
+container; o compose lê via `env_file`). Livres: `/api/health`, `/login`,
+`/api/login`, `/api/logout`, `/static/*`.
+
+- Gerar (se faltar): `./start.sh` faz sozinho, ou `.venv/bin/python -m app.auth --garantir`.
+- Ver: `.venv/bin/python -m app.auth --mostrar`. Rotacionar: `--rotacionar` e depois `./start.sh`
+  (o container só pega o token novo ao ser recriado).
+- Web: `/login` pede o token uma vez e grava cookie httpOnly (90 dias).
+- API/app iPad: `Authorization: Bearer <token>` ou `X-IA-Email-Token: <token>`.
+- Do próprio Mac não precisa de token enquanto `IA_EMAIL_AUTH_LOCALHOST_LIVRE=true`
+  (padrão): vale para IP loopback ou gateway da bridge docker, **sem** header de
+  proxy (`X-Forwarded-*`, `Forwarded`, `Via`, `CF-*`, `Tailscale-*`) e com Host
+  `127.0.0.1`/`localhost`. Antes de expor por túnel, ponha `false` no `.env`.
+  Se o Mac levar 401 mesmo local, o log mostra `[auth] negado ... de <ip>`:
+  inclua esse IP em `IA_EMAIL_AUTH_LOCAL_IPS`.
 
 ## App de mesa (Electron)
 

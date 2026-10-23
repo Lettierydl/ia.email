@@ -37,6 +37,8 @@
     const LS = "ia_email_draft:";
     const url = (tid) => `/api/threads/${encodeURIComponent(tid)}/save-draft`;
     const getUrl = (tid) => `/api/threads/${encodeURIComponent(tid)}/draft`;
+    // origem do rascunho no Histórico (static/history.js)
+    const source = () => (location.pathname.startsWith("/copilot") ? "copilot" : "mail");
 
     function cacheGet(tid) {
       if (!tid) return null;
@@ -81,7 +83,7 @@
       return fetch(url(tid), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: body }),
+        body: JSON.stringify({ text: body, source: source() }),
         keepalive: true,
       }).then((r) => r.ok).catch(() => {
         // falhou: libera pra tentar de novo no próximo edit/flush
@@ -98,7 +100,7 @@
       cacheSet(tid, body);
       if (lastSent[tid] === body) return;
       lastSent[tid] = body;
-      const payload = JSON.stringify({ text: body });
+      const payload = JSON.stringify({ text: body, source: source() });
       try {
         if (navigator.sendBeacon) {
           const blob = new Blob([payload], { type: "application/json" });

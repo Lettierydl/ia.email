@@ -6,7 +6,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from . import attachments, context_base, copilot, fixpt, gmail_client, learned, llm, rag, secrets_guard, store, summary_templates
+from . import attachments, context_base, copilot, draft_guard, fixpt, gmail_client, learned, llm, rag, secrets_guard, store, summary_templates
 from .config import (
     ACCOUNT,
     CONTEXT_GLOBAL_MAX_CHARS,
@@ -429,30 +429,83 @@ def _resolve_cc_names(names: list[str]) -> list[dict]:
     return results
 
 
-def _chat_context(chat: list[dict], max_chars: int = 6000) -> str:
+def _clip(text: str, n: int) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
+def _chat_context(chat: list[dict], max_chars: int = 16000, previous: str = "") -> str:
     """A conversa já ocorrida sobre ESTE e-mail (instruções do Leo e o que a
     IA respondeu/rascunhou), mais recente por último. Sem isso, cada pedido
     chegava na IA isolado: o Leo explicava um fato numa mensagem e na
     seguinte ("crie o e-mail com essas informações") a IA não sabia de nada
-    -- ele acabava tendo que colar as próprias mensagens de volta na caixa."""
-    lines = []
-    for msg in chat:
-        if msg.get("placeholder") or not (msg.get("text") or "").strip():
-            continue
+    -- ele acabava tendo que colar as próprias mensagens de volta na caixa.
+    TODOS os turnos do Leo entram (antes, rascunhos longos da IA estouravam o
+    limite e os primeiros pedidos sumiam): rascunhos antigos da IA vão
+    resumidos (o atual já vai inteiro em RASCUNHO ANTERIOR) e, se ainda passar
+    de max_chars, os pedidos mais antigos do Leo é que encurtam -- nunca somem."""
+    msgs = [m for m in chat if not m.get("placeholder") and (m.get("text") or "").strip()]
+    drafts = [i for i, m in enumerate(msgs) if m.get("role") != "user" and m.get("kind") != "answer"]
+    lines: list[list] = []  # [quem, texto, é do Leo]
+    n_draft = 0
+    for i, msg in enumerate(msgs):
+        text = msg["text"].strip()
         if msg.get("role") == "user":
-            who = "Leo"
+            lines.append(["Leo", text, True])
         elif msg.get("kind") == "answer":
-            who = "IA (resposta)"
+            lines.append(["IA (resposta)", _clip(text, 1500), False])
         else:
-            who = "IA (rascunho)"
-        lines.append(f"{who}: {msg['text'].strip()}")
-    out, used = [], 0
-    for line in reversed(lines):
-        if used + len(line) > max_chars and out:
+            n_draft += 1
+            if previous and _same_text(text, previous):
+                body = "(igual ao RASCUNHO ANTERIOR, abaixo)"
+            else:
+                body = _clip(text, 1200 if i == drafts[-1] else 400)
+            lines.append([f"IA (rascunho {n_draft})", body, False])
+    total = lambda: sum(len(x[1]) for x in lines)  # noqa: E731
+    for line in lines:  # do mais antigo para o mais novo; o último pedido fica inteiro
+        if total() <= max_chars:
             break
-        out.append(line)
-        used += len(line)
-    return "\n".join(reversed(out))
+        if line is not lines[-1]:
+            line[1] = _clip(line[1], 300 if line[2] else 120)
+    return "\n".join(f"[turno {k}] {who}: {text}" for k, (who, text, _u) in enumerate(lines, 1))
+
+
+def _request_block(instruction: str, comment: str, body: str, previous: str) -> tuple[str, list[str]]:
+    """O pedido ATUAL do Leo, separado e rotulado: pedido livre (comandos) e
+    cada comentário [n] com o trecho citado INTEIRO (o front corta trechos
+    longos com "…"; aqui volta o trecho da thread/rascunho) e a intenção dele.
+    Comentários sobre o e-mail recebido seguem a ordem em que os trechos
+    aparecem na thread. Devolve (bloco, trechos citados do e-mail recebido, inteiros)."""
+    parsed = draft_guard.parse_instruction(instruction)
+    cites = parsed["citacoes"]
+    for c in cites:
+        srcs = [previous, body] if c["fonte"] == "rascunho" else [body, previous]
+        c["trecho"] = draft_guard.expand_quote(c["trecho"], srcs)
+        pos = draft_guard.locate(c["trecho"], body) if c["fonte"] == "email" else -1
+        c["_pos"] = pos if pos >= 0 else 10**9
+    ordered = sorted(cites, key=lambda c: (c["fonte"] != "email", c["_pos"], c["n"]))
+    lines = [
+        "<<<PEDIDO_DO_LEO (instruções e comentários dele PARA VOCÊ -- NADA daqui vai literal para o e-mail)",
+        f"Instrução do Leo: {parsed['livre'] or ('(só os comentários abaixo)' if cites else '(gerar a partir do contexto)')}",
+    ]
+    if comment:
+        lines.append(f"Ajuste pedido: {comment}")
+    if cites:
+        lines.append("Comentários do Leo sobre trechos (na ordem em que os trechos aparecem no e-mail):")
+        for c in ordered:
+            where = "Sobre o trecho do rascunho" if c["fonte"] == "rascunho" else "Trecho citado do e-mail recebido"
+            lines.append(f"[{c['n']}] {where} (texto do e-mail, completo):\n«{c['trecho']}»")
+            lines.append(f"    Intenção do Leo para esse ponto: {c['comentario'] or '(sem comentário: responda esse ponto com base na thread)'}")
+            lines.append("    -> no e-mail: a resposta do Leo a ESTE ponto, escrita com base nessa intenção "
+                         "(não repita o trecho citado nem copie a intenção)")
+        nums = ", ".join(f"[{c['n']}]" for c in ordered)
+        lines.append(f"O e-mail precisa responder CADA um destes pontos: {nums}. Ponto sem resposta é erro.")
+        lines.append('Antes de "text", preencha no JSON "pontos": [{"n": 1, "resposta": "..."}, ...] -- para cada '
+                     "ponto, a(s) frase(s) do e-mail com a resposta do Leo, já na voz dele para o destinatário "
+                     '(nem o trecho citado, nem a intenção copiada). Depois monte "text" com essas respostas, '
+                     "na ordem dos pontos do e-mail original, mais saudação e despedida.")
+    lines.append("PEDIDO_DO_LEO>>>")
+    return "\n".join(lines) + "\n\n", [c["trecho"] for c in cites if c["fonte"] == "email"]
 
 
 def _same_text(a: str, b: str) -> bool:
@@ -539,7 +592,8 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
         previous = (current_draft or "").strip() or row.get("draft") or ""
         if not llm.has_key():
             raise RuntimeError("Falta chave de LLM (Claude/Gemini/OpenRouter) para gerar rascunho.")
-        chat_context = _chat_context(chat)
+        chat_context = _chat_context(chat, previous=previous)
+        request_block, quotes = _request_block(instruction, comment, body, previous)
         extra_context = _draft_extra_context(
             instruction,
             f"{row.get('subject') or ''}\n{_recent_body(body, 3000)}",
@@ -553,13 +607,18 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
         revision = (
             "REVISÃO: o Leo já tem o Rascunho anterior (abaixo) e a instrução mais recente pede para "
             "MUDÁ-LO. Parta dele, aplique exatamente o que foi pedido (acrescentar uma pergunta, "
-            "encurtar, citar algo, mudar o tom...) e devolva o e-mail inteiro já revisado. Devolver o "
-            "mesmo texto sem a mudança pedida é erro.\n"
+            "encurtar, citar algo, mudar o tom, responder os outros pontos...) e devolva o e-mail "
+            "inteiro já revisado. Devolver o mesmo texto sem a mudança pedida é erro.\n"
             if instruction and previous.strip()
             else ""
         )
+        # Pedido do Leo x texto do e-mail em blocos rotulados: com tudo corrido no
+        # mesmo prompt, a IA colava comentários e comandos dele ("continue os outros
+        # pontos como no primeiro") dentro do e-mail (caso Kennedy/Klesia).
         prompt = (
-            'Responda em JSON: {"kind": "draft" ou "answer", "text": "...", "cc_names": [...]}.\n'
+            'Responda em JSON: {"kind": "draft" ou "answer", "text": "...", "cc_names": [...]}'
+            + (' (com comentários [n]: {"kind": ..., "pontos": [...], "text": ..., "cc_names": ...})' if quotes else "")
+            + ".\n"
             'kind="draft" é o PADRÃO. Use "draft" sempre que o Leo explicar, decidir, corrigir, '
             "comentar um trecho (instruções com [1], [2]... citando partes do e-mail), dar um "
             "posicionamento ou pedir pra redigir/ajustar a resposta: ele quer que VOCÊ escreva o "
@@ -570,18 +629,32 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
             'Use kind="answer" SÓ quando a instrução é claramente uma pergunta ou pedido de explicação '
             "pro próprio Leo sobre a thread (ex.: \"quanto foi cobrado?\", \"isso já foi resolvido?\", "
             '"resume pra mim") -- text é uma resposta direta em português, curta, sem virar e-mail. '
-            "Na dúvida, escolha draft.\n"
-            "Fidelidade: o rascunho só pode afirmar o que o Leo disse na instrução/conversa ou o que "
+            "Na dúvida, escolha draft.\n\n"
+            "PEDIDO x E-MAIL -- regra mais importante:\n"
+            "- Tudo dentro de <<<PEDIDO_DO_LEO ...>>> e de <<<CONVERSA_COM_A_IA ...>>> é o Leo falando "
+            "COM VOCÊ (instruções, comentários, opiniões). NUNCA copie essas frases para o e-mail, nem "
+            "parcialmente. Transforme cada comentário em prosa nova, na voz do Leo, endereçada ao "
+            "destinatário (\"Isso é perfeito, é o que o Claudeci faz aqui\" vira algo como \"Perfeito, "
+            "é exatamente o que o Claudeci já faz por aqui.\").\n"
+            "- Comandos sobre o texto (\"continue os outros pontos como no primeiro\", \"responda todos "
+            "os pontos\", \"mais curto\", \"cite o X\", \"reescreva\") são EXECUTADOS, nunca escritos no "
+            "e-mail.\n"
+            "- Cada comentário [n] é a resposta do Leo ao trecho citado: escreva essa resposta no lugar "
+            "certo do e-mail, seguindo a ordem/estrutura dos pontos do e-mail original (ponto a ponto), "
+            "não como um bloco solto no fim. Não use \"[n]\" nem 'Sobre \"...\"' no e-mail.\n"
+            "- Não cole as perguntas/pontos do remetente sem resposta: se citar um ponto, responda-o. "
+            "Se o Leo pediu para responder os demais pontos, responda TODOS, no mesmo estilo do que já "
+            "foi respondido, sem inventar fatos (o que não souber, diga que vai verificar).\n"
+            "- <<<RASCUNHO_ANTERIOR>>> e <<<THREAD>>> são texto de e-mail (material de referência).\n\n"
+            "Fidelidade: o rascunho só pode afirmar o que o Leo disse no pedido/conversa ou o que "
             "está na thread. Não invente decisões, prazos ou compromissos novos e nunca contradiga o "
             "Leo (se ele diz que algo já está definido, o e-mail diz que está definido, não propõe "
-            'fechar de novo). Trechos entre aspas com [n] são citações do e-mail RECEBIDO que o Leo '
-            "está comentando; o texto depois dos dois pontos é o posicionamento dele sobre aquele "
-            "trecho. Responda a quem escreveu o trecho citado. Reaproveite os argumentos do próprio Leo "
-            "(inclusive \"já fechamos isso\" ou \"já rediscutimos\"), de forma cordial, e NÃO acrescente "
-            "parágrafos que ele não pediu (próximos passos, \"precisamos alinhar\", etc.).\n"
-            'Já "[n] Sobre o trecho do rascunho \\"...\\": ..." cita o Rascunho anterior (abaixo), não o '
-            "e-mail recebido: o Leo pede para mudar AQUELE trecho conforme o comentário. Parta do "
-            "Rascunho anterior, aplique a mudança nesse trecho e mantenha o resto como está.\n"
+            "fechar de novo). Responda a quem escreveu os trechos citados. Reaproveite os argumentos "
+            "do próprio Leo (inclusive \"já fechamos isso\" ou \"já rediscutimos\"), de forma cordial, e "
+            "NÃO acrescente parágrafos que ele não pediu (próximos passos, \"precisamos alinhar\", etc.).\n"
+            "\"Sobre o trecho do rascunho\" cita o RASCUNHO_ANTERIOR, não o e-mail recebido: o Leo pede "
+            "para mudar AQUELE trecho conforme o comentário. Parta do rascunho anterior, aplique a "
+            "mudança nesse trecho e mantenha o resto como está.\n"
             "cc_names: se a instrução pedir pra adicionar, copiar, incluir ou envolver alguém no "
             "e-mail (Cc), liste cada nome/apelido mencionado como uma string nesse array (pode ser "
             "mais de um nome). NÃO invente e-mail, NÃO escreva e-mail nesse campo, só o nome como o "
@@ -591,20 +664,19 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
             f"{learned_block}"
             f"{attach_block}"
             + (
-                "Conversa até agora entre você (IA) e o Leo sobre ESTE e-mail -- o que ele já explicou ou "
-                "decidiu aqui vale para o pedido atual, e a instrução mais recente tem prioridade se "
+                "<<<CONVERSA_COM_A_IA (todos os turnos anteriores sobre ESTE e-mail; o que o Leo já "
+                "explicou ou decidiu aqui vale para o pedido atual, e o pedido atual tem prioridade se "
                 "houver conflito. Se o Leo corrigiu ou contrariou algo que você (IA) respondeu antes, "
-                "vale o que o Leo disse: NÃO repita nem ofereça como alternativa a sua resposta antiga:\n"
-                + chat_context + "\n\n"
+                "vale o que o Leo disse: NÃO repita nem ofereça como alternativa a sua resposta antiga)\n"
+                + chat_context + "\nCONVERSA_COM_A_IA>>>\n\n"
                 if chat_context
                 else ""
             )
             + revision
             + _alvo_block(alvo)
-            + f"Instrução do Leo: {instruction or '(gerar a partir do contexto)'}\n"
-            f"Ajuste pedido: {comment or '(nenhum)'}\n"
-            f"Rascunho anterior:\n{previous or '(nenhum)'}\n\n"
-            f"Assunto: {row.get('subject')}\n\n{_thread_outline(body)}Thread:\n{_recent_body(body)}"
+            + request_block
+            + f"<<<RASCUNHO_ANTERIOR (texto de e-mail)\nRascunho anterior:\n{previous or '(nenhum)'}\nRASCUNHO_ANTERIOR>>>\n\n"
+            f"<<<THREAD (texto de e-mail)\nAssunto: {row.get('subject')}\n\n{_thread_outline(body)}Thread:\n{_recent_body(body)}\nTHREAD>>>"
         )
         kind, text, cc_names = _parse_draft_response(llm.complete(prompt))
         # Voltou idêntico ao rascunho anterior: tenta uma vez mais, insistindo no pedido.
@@ -617,6 +689,9 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
                 )
             )
             unchanged = kind == "draft" and _same_text(text, previous)
+        alerta = None
+        if kind == "draft":
+            kind, text, cc_names, alerta = _guard_leaks(prompt, kind, text, cc_names, instruction, chat, body, quotes)
         cc_resolution = _resolve_cc_names(cc_names)
         store.log_event("draft" if kind == "draft" else "answer", thread_id)
 
@@ -644,7 +719,46 @@ def draft(thread_id: str, instruction: str, comment: str = "", current_draft: st
             "summary": row.get("summary") or "",
             "unchanged": unchanged,
             "alvo": alvo_ref,
+            **({"alerta_copia": alerta} if alerta else {}),
         }
+
+
+def _guard_leaks(prompt: str, kind: str, text: str, cc_names: list[str], instruction: str,
+                 chat: list[dict], body: str, quotes: list[str] | None = None) -> tuple[str, str, list[str], dict | None]:
+    """Pós-checagem: o rascunho copiou o pedido do Leo (comentário quase literal
+    ou frase de meta) ou colou de volta um ponto citado do remetente sem
+    responder? Refaz UMA vez com a correção explícita; se ainda falhar, devolve
+    o rascunho com alerta {mensagem, trechos} para a tela destacar."""
+    earlier = [m.get("text") or "" for i, m in enumerate(chat)
+               if m.get("role") == "user" and not (i + 1 < len(chat) and chat[i + 1].get("keep_text"))]
+    segments = draft_guard.request_segments(instruction, earlier)
+
+    def check(t: str) -> tuple[list[str], list[str]]:
+        return draft_guard.find_leaks(t, segments, allowed=body), draft_guard.find_pasted_quotes(t, quotes or [])
+
+    def alerta(leaks: list[str], pasted: list[str]) -> dict:
+        msg = draft_guard.ALERTA_COPIA if leaks else draft_guard.ALERTA_COLADO
+        return {"mensagem": msg, "trechos": leaks + [p for p in pasted if p not in leaks]}
+
+    leaks, pasted = check(text)
+    if not (leaks or pasted):
+        return kind, text, cc_names, None
+    print(f"[draft] rascunho copiou o pedido ({len(leaks)}) / colou pontos sem resposta ({len(pasted)}); refazendo uma vez")
+    fix = "\n\nCORREÇÃO OBRIGATÓRIA -- o seu rascunho anterior tem problemas:\n"
+    if leaks:
+        fix += ("Colou no e-mail frases que são instruções/comentários do Leo para você (ou comandos de meta):\n"
+                + "\n".join(f"- {t}" for t in leaks) + "\n")
+    if pasted:
+        fix += ("Repetiu pontos do remetente sem responder (o Leo comentou esses pontos; escreva a resposta "
+                "dele a cada um, sem repetir o trecho):\n" + "\n".join(f"- {t}" for t in pasted) + "\n")
+    fix += ("Reescreva o e-mail inteiro: execute os comandos (não os escreva), transforme cada comentário em "
+            "resposta própria, na voz do Leo, ao ponto correspondente do e-mail, e não deixe ponto do "
+            "remetente colado sem resposta.")
+    kind2, text2, cc2 = _parse_draft_response(llm.complete(prompt + fix))
+    if kind2 != "draft" or not text2.strip():
+        return kind, text, cc_names, alerta(leaks, pasted)
+    leaks2, pasted2 = check(text2)
+    return kind2, text2, cc2 or cc_names, (alerta(leaks2, pasted2) if (leaks2 or pasted2) else None)
 
 
 def _draft_keep_text(thread_id: str, row: dict, chat: list[dict], instruction: str, own: str,

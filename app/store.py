@@ -318,6 +318,32 @@ def init() -> None:
             )
             """
         )
+        # Histórico de ações do Leo (app/history.py): uma linha por ação (um
+        # lote de "Resolver todos" é uma linha só). Os estados guardam só os
+        # campos que a ação mudou, por thread, para desfazer/refazer.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS historico_acoes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                at TEXT NOT NULL,
+                thread_id TEXT,
+                thread_ids_json TEXT,
+                assunto TEXT,
+                acao TEXT NOT NULL,
+                detalhe TEXT,
+                origem TEXT,
+                estado_anterior_json TEXT,
+                estado_novo_json TEXT,
+                gmail_json TEXT,
+                desfazivel INTEGER NOT NULL DEFAULT 1,
+                motivo TEXT,
+                desfeito_em TEXT,
+                refeito_em TEXT,
+                grupo_id TEXT
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_historico_thread ON historico_acoes(thread_id)")
         # Threads de antes desse controle existir nao tem uma base de
         # comparacao -- da um ponto de partida agora pra passar a detectar
         # mensagem nova a partir daqui (nao reseta o que ja esta desatualizado
@@ -513,6 +539,20 @@ def unread_automatic_ids() -> list[str]:
     return [row["id"] for row in rows]
 
 
+def set_thread_fields(thread_id: str, **fields: Any) -> None:
+    """Desfazer/refazer do histórico: volta campos de estado da thread,
+    inclusive para valor vazio (save_ai ignora None e não mexe em lido/oculto)."""
+    allowed = {"is_unread", "hidden", "is_marketing", "draft", "chat_json"}
+    data = {k: v for k, v in fields.items() if k in allowed}
+    if not data:
+        return
+    with _connect() as conn:
+        conn.execute(
+            f"UPDATE threads SET {', '.join(f'{k}=?' for k in data)} WHERE id=?",
+            [*data.values(), thread_id],
+        )
+
+
 def mark_local_read(ids: list[str]) -> None:
     if not ids:
         return
@@ -547,6 +587,14 @@ def block_sender(email: str) -> None:
             "ON CONFLICT(email) DO NOTHING",
             (email, datetime.now(timezone.utc).isoformat()),
         )
+
+
+def unblock_sender(email: str) -> None:
+    email = (email or "").strip().lower()
+    if not email:
+        return
+    with _connect() as conn:
+        conn.execute("DELETE FROM blocked_senders WHERE email=?", (email,))
 
 
 def is_blocked_sender(email: str) -> bool:
@@ -1051,3 +1099,105 @@ def copilot_actions_for_sender(email: str, exclude_thread_id: str, limit: int = 
             (email, exclude_thread_id, limit),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── Histórico de ações (desfazer/refazer) -- regras em app/history.py ──
+
+def _historico_row(row: sqlite3.Row) -> dict[str, Any]:
+    out = dict(row)
+    for key, default in (("thread_ids_json", []), ("estado_anterior_json", {}), ("estado_novo_json", {}), ("gmail_json", [])):
+        try:
+            out[key[:-5]] = json.loads(out.pop(key) or "null") or default
+        except ValueError:
+            out[key[:-5]] = default
+    out["desfazivel"] = bool(out["desfazivel"])
+    return out
+
+
+def add_historico(
+    *, acao: str, thread_ids: list[str], assunto: str = "", detalhe: str = "", origem: str = "",
+    anterior: dict | None = None, novo: dict | None = None, gmail: list[str] | None = None,
+    desfazivel: bool = True, motivo: str = "", grupo_id: str | None = None,
+) -> dict[str, Any]:
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO historico_acoes(at, thread_id, thread_ids_json, assunto, acao, detalhe, origem, "
+            "estado_anterior_json, estado_novo_json, gmail_json, desfazivel, motivo, grupo_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                datetime.now(timezone.utc).isoformat(), thread_ids[0] if thread_ids else "",
+                json.dumps(thread_ids), assunto, acao, detalhe, origem,
+                json.dumps(anterior or {}, ensure_ascii=False), json.dumps(novo or {}, ensure_ascii=False),
+                json.dumps(gmail or []), int(desfazivel), motivo, grupo_id,
+            ),
+        )
+        row = conn.execute("SELECT * FROM historico_acoes WHERE id=?", (cur.lastrowid,)).fetchone()
+    return _historico_row(row)
+
+
+def update_historico(entry_id: int, **fields: Any) -> None:
+    cols = {"at", "estado_anterior_json", "estado_novo_json", "desfeito_em", "refeito_em", "desfazivel", "motivo"}
+    data = {k: v for k, v in fields.items() if k in cols}
+    if not data:
+        return
+    with _connect() as conn:
+        conn.execute(
+            f"UPDATE historico_acoes SET {', '.join(f'{k}=?' for k in data)} WHERE id=?", [*data.values(), entry_id]
+        )
+
+
+def get_historico(entry_id: int) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM historico_acoes WHERE id=?", (entry_id,)).fetchone()
+    return _historico_row(row) if row else None
+
+
+def list_historico(
+    *, limit: int = 50, before: int | None = None, acoes: list[str] | None = None, q: str = "",
+    thread_id: str | None = None,
+) -> list[dict[str, Any]]:
+    sql, params = "SELECT * FROM historico_acoes WHERE 1=1", []
+    if before:
+        sql += " AND id<?"
+        params.append(before)
+    if acoes:
+        sql += f" AND acao IN ({', '.join('?' for _ in acoes)})"
+        params.extend(acoes)
+    if q:
+        sql += " AND (assunto LIKE ? ESCAPE '\\' OR detalhe LIKE ? ESCAPE '\\')"
+        like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        params.extend([like, like])
+    if thread_id:
+        sql += " AND thread_id=?"
+        params.append(thread_id)
+    sql += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_historico_row(r) for r in rows]
+
+
+def last_historico_undoable(skip_acoes: tuple[str, ...] = ()) -> dict[str, Any] | None:
+    sql = "SELECT * FROM historico_acoes WHERE desfazivel=1 AND desfeito_em IS NULL"
+    if skip_acoes:
+        sql += f" AND acao NOT IN ({', '.join('?' for _ in skip_acoes)})"
+    with _connect() as conn:
+        row = conn.execute(sql + " ORDER BY id DESC LIMIT 1", skip_acoes).fetchone()
+    return _historico_row(row) if row else None
+
+
+def last_historico_redoable(skip_acoes: tuple[str, ...] = ()) -> dict[str, Any] | None:
+    """O último desfeito -- só enquanto nenhuma ação nova (fora as ignoradas)
+    entrou depois de desfazê-lo (igual a editor: ação nova limpa o refazer)."""
+    skip = f" AND acao NOT IN ({', '.join('?' for _ in skip_acoes)})" if skip_acoes else ""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM historico_acoes WHERE desfeito_em IS NOT NULL ORDER BY desfeito_em DESC, id DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return None
+        newer = conn.execute(
+            f"SELECT 1 FROM historico_acoes WHERE at>? AND desfeito_em IS NULL{skip} LIMIT 1",
+            (row["desfeito_em"], *skip_acoes),
+        ).fetchone()
+    return None if newer else _historico_row(row)

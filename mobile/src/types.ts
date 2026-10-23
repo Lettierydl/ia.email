@@ -111,10 +111,114 @@ export interface Endereco {
   email: string;
 }
 
-/** Para/Cc da última mensagem (/api/threads/{id}/recipients). */
+/** Para/Cc da última mensagem (/api/threads/{id}/recipients). reply_to/reply_cc =
+ * o padrão do envio ("responder a todos", sem você); participants = todo mundo da thread. */
 export interface Recipients {
   to: Endereco[];
   cc: Endereco[];
+  reply_to?: Endereco[];
+  reply_cc?: Endereco[];
+  participants?: Endereco[];
+}
+
+/** Resposta do POST /api/threads/{id}/draft. */
+export interface DraftResult {
+  draft: string;
+  chat?: { role: string; text: string; kind?: string }[];
+  /** guarda do backend: a IA pode ter copiado o pedido ou colado pontos sem responder */
+  alerta_copia?: { mensagem?: string; trechos?: string[] };
+  unchanged?: boolean;
+}
+
+/** Anexo recebido na thread (GET /api/threads/{id}/gmail-attachments). */
+export interface GmailFile {
+  message_id: string;
+  attachment_id: string;
+  filename: string;
+  mime_type: string;
+  size: number;
+  content_id: string;
+  inline: boolean;
+  is_image: boolean;
+  /** já aparece no corpo como imagem inline */
+  in_body: boolean;
+}
+
+/** Cada "[image: x]" do texto de uma mensagem -> anexo (ou null sem par). */
+export interface InlinePlaceholder {
+  token: string;
+  name: string;
+  attachment_id: string | null;
+  filename: string | null;
+}
+
+export interface GmailAttachments {
+  files: GmailFile[];
+  /** ids do Gmail na mesma ordem de `mensagens` do detalhe */
+  message_ids: string[];
+  inline: Record<string, InlinePlaceholder[]>;
+}
+
+/** "Verificar na caixa" (GET = só cache; POST = gera). afirmacoes null = sem cache. */
+export interface VerifyEvidence {
+  assunto: string;
+  de: string;
+  data: string;
+  snippet: string;
+  mesma_thread: boolean;
+  gmail_url: string;
+  pasta?: string;
+}
+export interface VerifyClaim {
+  texto: string;
+  veredito: 'confirmado' | 'nao_encontrado' | 'inconclusivo' | string;
+  explicacao?: string;
+  evidencias?: VerifyEvidence[];
+}
+export interface VerifyResult {
+  afirmacoes: VerifyClaim[] | null;
+  aviso?: string;
+  gerado_em: string;
+  cached: boolean;
+  desatualizado: boolean;
+}
+
+/** Resumo detalhado da thread / resumo de uma mensagem. */
+export type ResumoLista = (string | { nome?: string; pedido?: string; data?: string; o_que?: string })[];
+export interface ResumoDetalhado {
+  resumo: Record<string, string | ResumoLista> | null;
+  gerado_em: string;
+  cached: boolean;
+  desatualizado: boolean;
+  aviso?: string;
+}
+export type ModoResumoMsg = 'direto' | 'abrangente';
+export interface ResumoMensagem {
+  idx: number;
+  modo: ModoResumoMsg;
+  resumo: Record<string, string | ResumoLista> | null;
+  gerado_em: string;
+  cached: boolean;
+}
+
+/** Histórico de ações (/api/historico). */
+export interface HistEntry {
+  id: number;
+  at: string;
+  thread_id: string;
+  n: number;
+  assunto: string;
+  acao: string;
+  rotulo: string;
+  origem: string;
+  desfazivel: boolean;
+  motivo: string;
+  desfeito: boolean;
+  estado: 'nao_reversivel' | 'desfeito' | 'ativo';
+}
+export interface HistList {
+  items: HistEntry[];
+  proximo: number | null;
 }
 
 export interface SendResult {

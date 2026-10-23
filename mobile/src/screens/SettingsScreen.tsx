@@ -1,10 +1,11 @@
-// Ajustes: endereço do servidor (fica no aparelho), skin, horários do digest
+// Ajustes: endereço do servidor e token de acesso (ficam no aparelho; o token
+// no Keychain via expo-secure-store), skin, horários do digest
 // (por usuário, no servidor) e prévia do resumo diário/semanal.
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { api, DEFAULT_BASE_URL, getBaseUrl, saveBaseUrl } from '../api';
+import { api, ConnCheck, DEFAULT_BASE_URL, getBaseUrl, hasToken, saveBaseUrl, saveToken, testConnection } from '../api';
 import { Block, Btn, T, useToast } from '../components/ui';
 import { WEEK } from '../labels';
 import { SkinName, useTheme } from '../theme';
@@ -19,10 +20,14 @@ export function SettingsScreen({ onBack, onSkin, onServerChanged }: {
   const toast = useToast();
   const insets = useSafeAreaInsets();
   const [url, setUrl] = useState(getBaseUrl());
+  // O token salvo nunca volta para a tela: o campo só serve para trocar.
+  const [token, setToken] = useState('');
+  const [tokenSaved, setTokenSaved] = useState(hasToken());
   const [prefs, setPrefs] = useState<Prefs>({ ...DEFAULT_PREFS, skin: t.name });
   const [prefsOk, setPrefsOk] = useState(false);
   const [digest, setDigest] = useState<Digest | null>(null);
   const [busy, setBusy] = useState('');
+  const [check, setCheck] = useState<ConnCheck | null>(null);
 
   const loadPrefs = async () => {
     try {
@@ -36,20 +41,37 @@ export function SettingsScreen({ onBack, onSkin, onServerChanged }: {
     loadPrefs();
   }, []);
 
-  const testAndSave = async () => {
-    setBusy('url');
-    await saveBaseUrl(url);
-    setUrl(getBaseUrl());
+  // Salva o endereço (e o token, se colou um novo) e testa: /api/health
+  // (sem token) e depois uma rota autenticada (/api/status).
+  const saveAndTest = async () => {
+    setBusy('test');
+    setCheck(null);
     try {
-      await api.status();
-      toast('Conectado. Endereço salvo.');
-      onServerChanged();
-      loadPrefs();
+      await saveBaseUrl(url);
+      setUrl(getBaseUrl());
+      if (token.trim()) {
+        await saveToken(token);
+        setToken('');
+      }
+      setTokenSaved(hasToken());
+      const r = await testConnection();
+      setCheck(r);
+      if (r.ok) {
+        onServerChanged();
+        loadPrefs();
+      }
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Sem conexão.');
+      setCheck({ ok: false, lines: [{ ok: false, text: e instanceof Error ? e.message : 'Não salvou.' }] });
     } finally {
       setBusy('');
     }
+  };
+
+  const removeToken = async () => {
+    await saveToken('');
+    setTokenSaved(false);
+    setCheck(null);
+    toast('Token removido do aparelho.');
   };
 
   const setSkin = (s: SkinName) => {
@@ -87,7 +109,7 @@ export function SettingsScreen({ onBack, onSkin, onServerChanged }: {
     <ScrollView
       style={{ flex: 1, backgroundColor: t.bg }}
       keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ paddingTop: Math.max(12, insets.top), paddingHorizontal: 16, paddingBottom: insets.bottom + 40 }}
+      contentContainerStyle={{ paddingTop: Math.max(12, insets.top), paddingHorizontal: 16 + Math.max(insets.left, insets.right), paddingBottom: insets.bottom + 40, width: '100%', maxWidth: 760, alignSelf: 'center' }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <Pressable onPress={onBack} accessibilityLabel="Voltar" hitSlop={8} style={{ width: 40, height: 40, justifyContent: 'center' }}>
@@ -98,7 +120,8 @@ export function SettingsScreen({ onBack, onSkin, onServerChanged }: {
 
       <Block label="Servidor">
         <T muted style={{ fontSize: 13, marginBottom: 6 }}>
-          Endereço do IA.Email. No celular físico use o IP do Mac na mesma rede (ex.: http://192.168.0.10:8765).
+          Endereço do IA.Email. Fora do Mac, prefira o Tailscale com HTTPS (tailscale serve):
+          https://seu-mac.seu-tailnet.ts.net. Também vale http:// com o nome *.ts.net ou o IP 100.x do Mac.
         </T>
         <TextInput
           value={url}
@@ -108,12 +131,39 @@ export function SettingsScreen({ onBack, onSkin, onServerChanged }: {
           keyboardType="url"
           placeholder={DEFAULT_BASE_URL}
           placeholderTextColor={t.muted}
+          accessibilityLabel="Endereço do servidor"
           style={input}
         />
-        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-          <Btn primary label="Testar e salvar" busy={busy === 'url'} onPress={testAndSave} style={{ flex: 1 }} />
+        <T muted style={{ fontSize: 13, marginTop: 12, marginBottom: 6 }}>
+          {tokenSaved
+            ? 'Token de acesso: há um salvo no aparelho (Keychain). Cole outro só para trocar.'
+            : 'Token de acesso: necessário fora do Mac. No Mac: .venv/bin/python -m app.auth --mostrar'}
+        </T>
+        <TextInput
+          value={token}
+          onChangeText={setToken}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+          textContentType="password"
+          placeholder={tokenSaved ? '••••••••' : 'Cole o token aqui'}
+          placeholderTextColor={t.muted}
+          accessibilityLabel="Token de acesso"
+          style={input}
+        />
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+          <Btn primary label="Salvar e testar conexão" busy={busy === 'test'} onPress={saveAndTest} style={{ flex: 1 }} />
           <Btn label="Padrão" onPress={() => setUrl(DEFAULT_BASE_URL)} />
+          {tokenSaved ? <Btn label="Remover token" onPress={removeToken} /> : null}
         </View>
+        {check ? (
+          <View accessibilityLiveRegion="polite" style={{ marginTop: 10, padding: 10, borderRadius: 12, backgroundColor: check.ok ? t.mint : t.rose, gap: 4 }}>
+            <T style={{ fontSize: 14, fontWeight: '600' }}>{check.ok ? 'Conexão ok' : 'Conexão com problema'}</T>
+            {check.lines.map((l, i) => (
+              <T key={i} style={{ fontSize: 13 }}>{l.ok ? '✓' : '✗'} {l.text}</T>
+            ))}
+          </View>
+        ) : null}
       </Block>
 
       <Block label="Visual">

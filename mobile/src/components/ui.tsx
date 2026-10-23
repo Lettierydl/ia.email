@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { absolute, api } from '../api';
+import { absolute, api, imageSource } from '../api';
 import { PASTEL, shadow, Theme, useTheme } from '../theme';
 import type { Papel, Urgencia } from '../types';
 
@@ -87,7 +87,7 @@ export function Avatar({ email, name, size = 34, a11y }: { email: string; name: 
       style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}
     >
       {photo ? (
-        <Image source={{ uri: photo }} style={{ width: size, height: size }} />
+        <Image source={imageSource(photo)} style={{ width: size, height: size }} />
       ) : (
         <T style={{ fontSize: size * 0.37, fontWeight: '600', color: known ? t.ink : t.muted }}>{known ? initials(name, email) : '–'}</T>
       )}
@@ -188,12 +188,14 @@ export function Sheet({ visible, onClose, title, children }: { visible: boolean;
   const t = useTheme();
   const insets = useSafeAreaInsets();
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} supportedOrientations={['portrait', 'landscape']}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(45,43,58,0.28)' }} onPress={onClose} accessibilityLabel="Fechar" />
         <View
           style={{
+            // iPad / paisagem: folha centralizada, sem esticar a tela inteira
             backgroundColor: t.card, borderTopLeftRadius: 22, borderTopRightRadius: 22,
+            width: '100%', maxWidth: 720, alignSelf: 'center',
             paddingHorizontal: 18, paddingTop: 18, paddingBottom: Math.max(20, insets.bottom), maxHeight: '88%',
           }}
         >

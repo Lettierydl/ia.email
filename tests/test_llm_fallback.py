@@ -45,7 +45,8 @@ def _fake(monkeypatch, behaviour):
 
 def test_default_chain_has_gemini_first_then_free_openrouter():
     assert llm.chain()[0] == "gemini:gemini-flash-latest"
-    assert all(e.startswith("openrouter:") for e in llm.chain()[1:])
+    assert llm.chain()[1] == "gemini:gemini-flash-lite-latest"
+    assert all(e.startswith("openrouter:") for e in llm.chain()[2:])
 
 
 def test_gemini_answers_first_when_healthy(monkeypatch):
@@ -63,7 +64,7 @@ def test_falls_to_openrouter_when_gemini_is_billing_blocked(monkeypatch):
 
     calls = _fake(monkeypatch, behaviour)
     assert llm.complete("oi") == "resposta openrouter"
-    assert calls[0][0] == "gemini" and calls[1][0] == "openrouter"
+    assert [c[0] for c in calls[:3]] == ["gemini", "gemini", "openrouter"]
     skipped = llm.last_used()["skipped"]
     assert skipped[0]["name"] == "Gemini Flash (Google)" and "403" in skipped[0]["reason"]
 
@@ -77,7 +78,7 @@ def test_model_that_failed_with_quota_error_is_skipped_for_a_while(monkeypatch):
     calls = _fake(monkeypatch, behaviour)
     llm.complete("um")
     llm.complete("dois")
-    assert [c for c in calls if c[0] == "gemini"] == [("gemini", "gemini-flash-latest")]
+    assert [c for c in calls if c[0] == "gemini"] == [("gemini", "gemini-flash-latest"), ("gemini", "gemini-flash-lite-latest")]
     paused = llm.last_used()["skipped"][0]
     assert paused["name"] == "Gemini Flash (Google)" and "em pausa" in paused["reason"] and "cota" in paused["reason"]
 
@@ -235,3 +236,20 @@ def test_a_model_that_never_answers_is_abandoned_after_the_total_deadline(monkey
         llm._post("openrouter", "https://x.test", "k", json={}, timeout=45, total_timeout=1)
     assert time.time() - started < 3
     gate.set()
+
+
+def test_gemini_retries_without_thinking_config_on_generic_400(monkeypatch):
+    monkeypatch.setattr(llm, "reasoning_enabled", lambda: False)
+    monkeypatch.setattr(llm, "_keys", lambda: {"anthropic": "", "gemini": "k", "openrouter": ""})
+    monkeypatch.setattr(llm.store, "add_llm_usage", lambda n: None)
+    bodies = []
+
+    def fake_post(provider, url, key, **kw):
+        bodies.append(dict(kw["json"]))
+        if "generationConfig" in kw["json"]:
+            raise llm.LLMError("Gemini recusou a chamada (HTTP 400): Request contains an invalid argument.", status=400)
+        return {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
+
+    monkeypatch.setattr(llm, "_post", fake_post)
+    assert llm._call_gemini("gemini-flash-lite-latest", "oi", "sys", 5) == "ok"
+    assert "generationConfig" in bodies[0] and "generationConfig" not in bodies[1]

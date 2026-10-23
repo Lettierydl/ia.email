@@ -1,0 +1,23 @@
+/* Imagens inline no corpo do e-mail + lightbox (static/inlineimg.js). */
+.ii-wrap{display:block;margin:6px 0;line-height:0;white-space:normal}
+.ii-link{display:inline-block;border:1px solid var(--line,#e3e3e8);border-radius:8px;overflow:hidden;cursor:zoom-in;background:var(--card,#fff)}
+.ii-img{display:block;max-width:min(360px,100%);max-height:360px;width:auto;height:auto;object-fit:contain}
+.ii-link:hover{border-color:color-mix(in srgb,var(--muted,#888) 45%,transparent)}
+.ii-missing{color:var(--muted,#888);font-size:.85em;font-style:italic;opacity:.8}
+.ii-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border:1px solid var(--line,#e3e3e8);border-radius:999px;font-size:12.5px;color:inherit;text-decoration:none;background:var(--card,#fff)}
+.ii-pill:hover{background:var(--fog,#f1f1f4)}
+/* pill de anexo que já aparece no corpo */
+.ii-in-body{opacity:.72}
+.ii-tag{margin:0 6px 0 2px;padding:0 6px;border-radius:999px;background:var(--fog,#eef0f5);color:var(--muted,#777);font-size:10.5px;line-height:16px;white-space:nowrap}
+.ii-lb{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(20,20,28,.86)}
+.ii-lb.hidden,.ii-lb .hidden{display:none}
+.ii-lb-img{max-width:min(92vw,1600px);max-height:84vh;object-fit:contain;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.45);background:#fff}
+.ii-lb-bar{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:8px;padding:10px 14px;color:#fff;font-size:13px}
+.ii-lb-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ii-lb-count{opacity:.75}
+.ii-lb-btn{appearance:none;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.08);color:#fff;border-radius:999px;padding:4px 12px;font:inherit;cursor:pointer;text-decoration:none}
+.ii-lb-btn:hover{background:rgba(255,255,255,.2)}
+.ii-lb-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:64px;border:0;border-radius:10px;background:rgba(255,255,255,.1);color:#fff;font-size:34px;cursor:pointer}
+.ii-lb-nav:hover{background:rgba(255,255,255,.22)}
+.ii-lb-prev{left:14px}
+.ii-lb-next{right:14px}

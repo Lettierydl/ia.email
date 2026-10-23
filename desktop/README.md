@@ -41,3 +41,12 @@ Apple) -- na primeira abertura o macOS vai avisar que o app "não pode ser
 aberto" ou "é de um desenvolvedor não identificado". Pra abrir mesmo assim:
 clique com o botão direito no app → **Abrir** → **Abrir** de novo na
 confirmação (só precisa fazer isso uma vez).
+
+## Token de acesso
+
+Antes do `docker compose up`, o app roda `.venv/bin/python -m app.auth --garantir`
+(gera `IA_EMAIL_API_TOKEN` no `.env` da raiz se faltar; não imprime o valor). A
+janela abre `http://127.0.0.1:8765`, que o backend trata como local (sem token)
+enquanto `IA_EMAIL_AUTH_LOCALHOST_LIVRE=true`. Com `false`, a janela mostra a tela
+`/login` uma vez e o cookie fica na sessão do Electron. O health check usa
+`/api/health` (livre).

@@ -94,6 +94,12 @@ function card(item) {
   </a>`;
 }
 
+// Histórico + Desfazer (static/history.js): Cmd/Ctrl+Z desfaz a última ação
+// (fora de campo de texto) e as ações daqui oferecem "Desfazer" no toast.
+const offerUndo = (entry, text) => window.UndoHistory && window.UndoHistory.offer(entry, text);
+const historicoOf = (res) => (res && res.ok ? res.json().then((d) => d.historico).catch(() => null) : Promise.resolve(null));
+if (window.UndoHistory) window.UndoHistory.init({ onChange: () => loadRadar({ preload: false }) });
+
 document.addEventListener("click", (e) => {
   const readBtn = e.target.closest(".quick-read");
   if (readBtn) {
@@ -102,7 +108,9 @@ document.addEventListener("click", (e) => {
     const id = readBtn.dataset.id;
     readBtn.disabled = true;
     fetch(`/api/threads/${id}/mark-read`, { method: "POST" })
-      .then(() => {
+      .then(historicoOf)
+      .then((entry) => {
+        offerUndo(entry, "Marcado como lido.");
         kickPreload();
         loadRadar({ preload: false });
       })
@@ -118,7 +126,11 @@ document.addEventListener("click", (e) => {
     const id = niBtn.dataset.id;
     niBtn.disabled = true;
     fetch(`/api/threads/${id}/not-interested`, { method: "POST" })
-      .then(() => loadRadar({ preload: false }))
+      .then(historicoOf)
+      .then((entry) => {
+        offerUndo(entry, "Remetente vai para Promoções.");
+        loadRadar({ preload: false });
+      })
       .catch(() => {
         niBtn.disabled = false;
       });
@@ -382,6 +394,7 @@ $("btn-mark-all-read").onclick = async () => {
     });
     btn.innerHTML = original;
     if (res.ok) {
+      offerUndo(await historicoOf(res), `${n} marcado${n === 1 ? "" : "s"} como lido${n === 1 ? "" : "s"}.`);
       await loadRadar({ preload: false });
     }
   } finally {
@@ -413,6 +426,7 @@ async function markReadBulk(ids, btn) {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
+      offerUndo(data.historico, `${ids.length} marcado${ids.length === 1 ? "" : "s"} como lido${ids.length === 1 ? "" : "s"}.`);
       await loadRadar({ preload: false });
     } else {
       showBanner(bannerDetail(data), true);
@@ -1515,12 +1529,13 @@ $("pane-mark-read").onclick = async () => {
   if (!paneId) return;
   $("pane-mark-read").disabled = true;
   try {
-    await fetch(`/api/threads/${paneId}/mark-read`, { method: "POST" });
+    const entry = await historicoOf(await fetch(`/api/threads/${paneId}/mark-read`, { method: "POST" }));
     await kickPreload();
     if (mailPathId()) {
-      window.location.href = "/";
+      window.location.href = "/"; // na caixa, Cmd/Ctrl+Z ainda desfaz
     } else {
       $("pane").classList.add("hidden");
+      offerUndo(entry, "Marcado como lido.");
       await loadRadar({ preload: false });
     }
   } finally {
@@ -1586,6 +1601,7 @@ function gmailAttachmentUrl(f, asDownload) {
 function renderBodyAttachments(data) {
   const files = (data && data.files) || [];
   const messageIds = (data && data.message_ids) || [];
+  const inline = (data && data.inline) || {};
   document.querySelectorAll("#pane-body .msg-attachments").forEach((n) => n.remove());
   if (!files.length) return;
   const byMessage = {};
@@ -1596,12 +1612,25 @@ function renderBodyAttachments(data) {
     const msgId = messageIds[Number(card.dataset.idx)];
     const list = msgId && byMessage[msgId];
     if (!list || !list.length) return;
+    // "[image: x]" do texto -> miniatura no corpo (static/inlineimg.js)
+    let inBody = new Set();
+    if (window.InlineImg && inline[msgId]) {
+      inBody = InlineImg.apply(card.querySelector(".msg-text"), { tid: paneId, messageId: msgId, files: list, placeholders: inline[msgId] });
+    }
     const holder = document.createElement("div");
     holder.className = "msg-attachments";
     holder.innerHTML = list
       .map((f) => {
         const url = gmailAttachmentUrl(f, false);
         const urlDl = gmailAttachmentUrl(f, true);
+        // já está no corpo: não repete a imagem grande, vira chip marcado "no corpo"
+        if (inBody.has(f.attachment_id)) {
+          return `<span class="attach-chip gmail" data-att-id="${escHtml(f.attachment_id)}">
+          🖼 ${escHtml(f.filename)} <span class="size">${formatSize(f.size)}</span>
+          <a href="${url}" target="_blank" rel="noopener" title="Abrir">Abrir</a>
+          <a href="${urlDl}" download="${escHtml(f.filename)}" title="Baixar">Baixar</a>
+        </span>`;
+        }
         if ((f.mime_type || "").startsWith("image/")) {
           return `<a class="msg-inline-image" href="${url}" target="_blank" rel="noopener" title="Abrir imagem original">
             <img src="${url}" alt="${escHtml(f.filename)}" loading="lazy" />
@@ -1615,6 +1644,7 @@ function renderBodyAttachments(data) {
       })
       .join("");
     card.appendChild(holder);
+    if (window.InlineImg) InlineImg.markPills(holder, inBody);
   });
 }
 
@@ -2236,6 +2266,12 @@ $("pane-gen").onclick = async () => {
     const lastMsg = chatHistory[chatHistory.length - 1];
     const answered = lastMsg && lastMsg.kind === "answer";
     $("draft-status").textContent = answered ? "A IA respondeu no chat; o rascunho da caixa continua o mesmo." : "Rascunho novo da IA na caixa. Nada foi enviado.";
+    // a IA ainda colou parte do pedido no e-mail (mesmo depois de refazer): avisa e destaca
+    annot.flagPassages(null);
+    if (data.alerta_copia && !answered) {
+      $("draft-status").innerHTML = `<span class="draft-copy-warn">${escHtml(data.alerta_copia.mensagem || "A IA pode ter copiado parte do seu pedido no texto — revise os trechos destacados.")}</span>`;
+      if ($("pane-draft").value === data.draft) annot.flagPassages($("pane-draft"), data.alerta_copia.trechos || []);
+    }
     mailKeep = false;
     mailKeepOff = null;
     updateKeepChip();

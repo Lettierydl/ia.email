@@ -21,7 +21,9 @@
 // #annot-popup-textarea, #annot-save, #annot-cancel e #annot-delete.
 (function () {
   const byId = (id) => document.getElementById(id);
-  const MAX_QUOTE = 600;
+  // trecho inteiro vai para a IA (a bolha do chat é que encurta); o servidor
+  // ainda recupera da thread trecho que chegar cortado com "…"
+  const MAX_QUOTE = 4000;
 
   function clip(text) {
     return text.length > MAX_QUOTE ? `${text.slice(0, MAX_QUOTE)}…` : text;
@@ -148,8 +150,9 @@
     let undo = null; // {taId, before, after, start, replacement, passage, ranges}
     let fixed = []; // palavras trocadas pelo "Corrigir português" (brilham uns segundos)
     let fixedTimer = null;
+    let warned = []; // trechos que a IA pode ter copiado do pedido (ficam até editar ou gerar de novo)
     const findTa = (id) => textareas().find((t) => t && t.id === id) || null;
-    const ranges = () => list.filter((a) => a.source === "draft").concat([rwAsk, rw, rwDone].filter(Boolean), fixed);
+    const ranges = () => list.filter((a) => a.source === "draft").concat([rwAsk, rw, rwDone].filter(Boolean), fixed, warned);
 
     // O valor do textarea mudou desde a última olhada: desloca (ou anula) os ranges.
     function track(ta, caret) {
@@ -180,6 +183,7 @@
         if (rw && rw.taId === ta.id) marks.push(Object.assign({}, rw, { id: "rw", cls: "dm-busy", busy: true }));
         if (rwDone && rwDone.taId === ta.id) marks.push(Object.assign({}, rwDone, { id: "rw", cls: "dm-done" }));
         fixed.forEach((f, k) => { if (f.taId === ta.id) marks.push(Object.assign({}, f, { id: `fx${k}`, cls: "dm-fix" })); });
+        warned.forEach((w, k) => { if (w.taId === ta.id && w.start != null) marks.push(Object.assign({}, w, { id: `wn${k}`, cls: "dm-warn" })); });
         if (!marks.length && !ta._dm) return; // nada a pintar: não mexe no textarea
         window.DraftMarks.render(ta, marks);
       });
@@ -574,6 +578,21 @@
       };
     }
 
+    // Destaca (até editar o trecho ou gerar de novo) frases do rascunho que a IA
+    // pode ter copiado do pedido. ta=null limpa tudo. Devolve quantas achou.
+    function flagPassages(ta, texts) {
+      drawDraft(); // prevVal em dia antes de criar ranges sobre o texto atual
+      warned = ta ? warned.filter((w) => w.taId !== ta.id) : [];
+      if (ta) {
+        (texts || []).forEach((t) => {
+          const i = t ? ta.value.indexOf(t) : -1;
+          if (i >= 0) warned.push({ taId: ta.id, start: i, end: i + t.length, text: t });
+        });
+      }
+      drawDraft();
+      return ta ? warned.filter((w) => w.taId === ta.id).length : 0;
+    }
+
     function doUndo() {
       const u = undo;
       undo = null;
@@ -674,6 +693,8 @@
       // Desfazer genérico: o texto `before` volta se a caixa ainda está em `after`
       setUndo: (ta, before) => { undo = { taId: ta.id, before, after: ta.value, start: 0, replacement: ta.value, passage: before, ranges: [] }; },
       undo: () => doUndo(),
+      // "A IA pode ter copiado parte do seu pedido": destaque persistente
+      flagPassages: (ta, texts) => flagPassages(ta, texts),
     };
   }
 

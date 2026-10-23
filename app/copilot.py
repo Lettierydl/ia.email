@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.utils import getaddresses, parsedate_to_datetime
 from urllib.parse import urlencode
 
-from . import config, gmail_client, learned, llm, netstatus, rag, secrets_guard, store
+from . import config, gmail_client, history, learned, llm, netstatus, rag, secrets_guard, store
 
 # Copiloto: lê a caixa e, para cada thread, diz em 3 camadas
 #   1. papel do Leo (só cópia, mencionado, demanda, FYI, pode ignorar);
@@ -1682,13 +1682,14 @@ def _set_status(status):
                 from . import gmail_client
                 gmail_client.mark_threads_read([row["id"]])
                 store.mark_local_read([row["id"]])
+                return {"_gmail_lido": [row["id"]]}  # histórico: desfazer devolve o não lido no Gmail
             except Exception:
                 pass
         return {}
     return run
 
 
-def resolve_after_send(thread_id: str) -> None:
+def resolve_after_send(thread_id: str, origem: str = "") -> None:
     """Pós-envio real (/mail ou /copilot, ou worker da outbox): igual a
     'resolver' — status resolvido, lido local, some do quadro de não lidos.
     Gmail já foi marcado lido em finalize_reply; aqui só o estado do copiloto.
@@ -1706,11 +1707,15 @@ def resolve_after_send(thread_id: str) -> None:
     if (db.get("status") or "") == "resolvido":
         store.save_copilot_item(row["id"], **snap)
         return
+    before = history.take([row["id"]])
     store.save_copilot_item(row["id"], status="resolvido", **snap)
     try:
         store.mark_local_read([row["id"]])
     except Exception:
         pass
+    # Gmail já ficou lido pelo próprio envio (finalize_reply): desfazer aqui
+    # só reabre o item no copiloto, sem mexer no UNREAD do Gmail.
+    history.record("resolvido", before, origem=origem, detalhe="após o envio")
     try:
         store.log_copilot_action(thread_id, "resolver", {"from_send": True})
     except Exception:
@@ -1770,6 +1775,8 @@ def resolve_column(tab: str, thread_ids: list[str] | None = None, user: str | No
     for tid in ids:
         if not store.get_copilot_item(tid):
             _ensure_item(tid)  # item só da heurística: cria a linha antes de mudar o status
+    before = history.take(ids)
+    for tid in ids:
         store.save_copilot_item(tid, status="resolvido")
         store.log_copilot_action(tid, "resolver", {"lote": tab})
     gmail_ok = True
@@ -1780,7 +1787,12 @@ def resolve_column(tab: str, thread_ids: list[str] | None = None, user: str | No
         except Exception:
             gmail_ok = False  # falha de scope/API não desfaz o resolve local (igual ao unitário)
         store.mark_local_read(ids)
-    return {"ok": True, "tab": tab, "resolvidos": len(ids), "thread_ids": ids, "gmail_ok": gmail_ok}
+    # o lote inteiro é uma linha do histórico: desfazer volta todos de uma vez
+    titles = {t["key"]: t["title"] for t in (*TABS, FILA)}
+    entry = history.record(
+        "resolver_coluna", before, origem="copilot", detalhe=titles.get(tab, tab), gmail=ids if gmail_ok else [],
+    ) if ids else None
+    return {"ok": True, "tab": tab, "resolvidos": len(ids), "thread_ids": ids, "gmail_ok": gmail_ok, "historico": entry}
 
 
 def act(thread_id: str, action: str, body: dict | None = None) -> dict:
@@ -1788,10 +1800,37 @@ def act(thread_id: str, action: str, body: dict | None = None) -> dict:
     if action not in ACTIONS:
         raise ValueError("Ação desconhecida.")
     row, item = _ensure_item(thread_id)
+    before = history.take([thread_id])
     result = ACTIONS[action](row, item, body)
+    gmail_lido = result.pop("_gmail_lido", [])
     log = {k: v for k, v in result.items() if k in ("para", "modo", "acao")}
     store.log_copilot_action(thread_id, action, log)
-    return {"ok": True, "action": action, **result, "item": detail(thread_id)}
+    acao, detalhe = _HIST_ACAO.get(action, (action, ""))
+    if action == "delegar":
+        detalhe = result.get("para") or ""
+    elif action == "aplicar":
+        detalhe = _APLICAR_LABEL.get(result.get("acao") or "", "")
+    elif action == "tarefa":
+        detalhe = "Tarefa concluída" if body.get("feita", True) else "Tarefa reaberta"
+    entry = history.record(acao, before, origem="copilot", detalhe=detalhe, gmail=gmail_lido)
+    return {"ok": True, "action": action, **result, "item": detail(thread_id), "historico": entry}
+
+
+# ação do copiloto → (tipo no histórico, detalhe). Arrastar no quadro = mover.
+_HIST_ACAO = {
+    "assumir": ("acompanhar", ""),
+    "acompanhar": ("acompanhar", ""),
+    "aguardar": ("mover", "Aguardando outras pessoas"),
+    "so_saber": ("mover", "Só conhecimento"),
+    "resolver": ("resolvido", ""),
+    "reabrir": ("reabrir", ""),
+    "delegar": ("delegar", ""),
+    "cobrar": ("cobrar", ""),
+    "aplicar": ("aplicar", ""),
+    "tarefa": ("tarefa", ""),
+}
+_APLICAR_LABEL = {"direcionar": "Direcionar", "estudar_depois_responder": "Estudar e depois responder",
+                  "pedir_contexto": "Pedir contexto", "responder": "Responder", "aguardar": "Aguardar"}
 
 
 # ── gancho do piloto automático ──

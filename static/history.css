@@ -1,0 +1,46 @@
+/* Histórico + Desfazer (static/history.js): página do /copilot e toast com
+   ação (/copilot e /mail). Cores das variáveis da página, com padrão próprio. */
+.uh-toast,.uh-page{--uh-card:var(--card,#fff);--uh-ink:var(--ink,#202124);--uh-muted:var(--muted,#5f6368);--uh-line:var(--line,#dadce0);
+  --uh-accent:var(--accent,var(--blue,#1a73e8));--uh-soft:var(--fog,var(--blue-soft,#f1f3f4))}
+.uh-toast{position:fixed;left:50%;bottom:86px;transform:translateX(-50%);display:flex;align-items:center;gap:14px;background:var(--uh-ink);color:var(--uh-card);
+  padding:10px 12px 10px 16px;border-radius:12px;font-size:13.5px;z-index:70;max-width:min(92vw,620px);box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.uh-toast.hidden{display:none}
+.uh-toast-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.uh-toast-b{flex:none;font:inherit;font-weight:600;background:transparent;color:inherit;border:1px solid color-mix(in srgb,currentColor 40%,transparent);
+  border-radius:9px;padding:5px 12px;cursor:pointer}
+.uh-toast-b:hover{background:color-mix(in srgb,currentColor 14%,transparent)}
+.uh-page{max-width:860px;color:var(--uh-ink)}
+.uh-head h2{margin:4px 0 2px;font-size:18px}
+.uh-head p{margin:0 0 12px;color:var(--uh-muted);font-size:13px}
+.uh-bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.uh-q,.uh-tipo{font:inherit;font-size:14px;border:1px solid var(--uh-line);border-radius:12px;padding:8px 12px;background:var(--uh-card);color:var(--uh-ink)}
+.uh-q{flex:1 1 220px;min-width:0}
+.uh-tipo{flex:0 1 220px}
+.uh-day h3{font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--uh-muted);margin:16px 0 6px}
+.uh-day ul{list-style:none;margin:0;padding:0;background:var(--uh-card);border:1px solid var(--uh-line);border-radius:14px;overflow:hidden}
+.uh-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--uh-line)}
+.uh-row:first-child{border-top:0}
+.uh-row time{flex:none;width:44px;color:var(--uh-muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.uh-ic{flex:none;display:inline-flex;width:28px;height:28px;align-items:center;justify-content:center;border-radius:50%;background:var(--uh-soft);color:var(--uh-muted)}
+.uh-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.uh-act{font-size:12.5px;color:var(--uh-muted)}
+.uh-subj{font:inherit;font-size:14px;text-align:left;color:var(--uh-ink);background:none;border:0;padding:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.uh-link{cursor:pointer}
+.uh-link:hover{text-decoration:underline}
+.uh-org{font-size:11.5px;color:var(--uh-muted)}
+.uh-side{flex:none;display:flex;align-items:center;gap:8px}
+.uh-state{font-size:12.5px;color:var(--uh-muted)}
+.uh-btn{font:inherit;font-size:13px;border:1px solid var(--uh-line);background:var(--uh-card);color:var(--uh-ink);border-radius:10px;padding:5px 12px;cursor:pointer}
+.uh-btn:hover{background:var(--uh-soft)}
+.uh-btn.primary{border-color:var(--uh-accent);color:var(--uh-accent);font-weight:600}
+.uh-btn:disabled{opacity:.55;cursor:default}
+.uh-row.is-undone .uh-subj,.uh-row.is-undone .uh-act{text-decoration:line-through;opacity:.7}
+.uh-empty{color:var(--uh-muted);font-size:13.5px;padding:18px 4px}
+.uh-more{display:block;margin:14px auto 0;font:inherit;font-size:13.5px;border:1px solid var(--uh-line);background:var(--uh-card);color:var(--uh-ink);border-radius:12px;padding:8px 18px;cursor:pointer}
+.uh-more.hidden{display:none}
+@media (max-width:640px){
+  .uh-row{flex-wrap:wrap}
+  .uh-main{flex-basis:calc(100% - 92px)}
+  .uh-side{margin-left:82px}
+  .uh-toast{bottom:76px;left:12px;right:12px;transform:none;max-width:none}
+}

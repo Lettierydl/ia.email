@@ -3,24 +3,26 @@
 // rascunho no servidor. Responder abre o composer com o rascunho da IA; o envio
 // usa a rota do /mail e só sai depois da confirmação.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, ScrollView, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { absolute, api } from '../api';
 import { DelegateSheet } from '../components/DelegateSheet';
+import { ResumoSheet, VerifySheet } from '../components/InsightSheets';
+import { AttachmentPills, filesFor, ImageViewer, MessageBody, MessageSummary } from '../components/MessageParts';
 import { LearnSheet } from '../components/LearnSheet';
 import { ReplyComposer, type ReplyPreset } from '../components/ReplyComposer';
 import { Avatar, Block, Btn, Chip, IconBtn, papelColor, Sheet, T, urgColor, useToast } from '../components/ui';
 import { ACAO, ago, ddmm, EVID, PAPEL, PAPEL_HINT, URG } from '../labels';
 import { ICON, ICON_COLOR } from '../icons';
 import { useTheme } from '../theme';
-import type { ActionResult, ItemDetail, Opcao, Prefs, ResumoContexto } from '../types';
+import type { ActionResult, GmailAttachments, GmailFile, ItemDetail, Opcao, Prefs, ResumoContexto } from '../types';
 
 const DONE_MSG: Record<string, string> = { assumir: 'Você acompanha.', acompanhar: 'Você acompanha.', resolver: 'Resolvido e marcado como lido.', reabrir: 'Reaberto.' };
 // Ícones: mesmo conjunto da web (src/icons.ts ↔ static/icons.js). Resolvido = duplo check verde.
 const ICO = { reply: ICON.reply, eye: ICON.eye, bell: ICON.bell, bellOff: ICON['bell-off'], share: ICON.handoff, done: ICON['check-circle-double'], reopen: ICON.reopen, thread: ICON.thread, summary: ICON.summary, mail: ICON.mail, spark: ICON.sparkles, learn: ICON.learn };
 
-export function DetailScreen({ id, onBack, onChanged }: { id: string; onBack: () => void; onChanged: () => void }) {
+export function DetailScreen({ id, onBack, onChanged, wide = false }: { id: string; onBack: () => void; onChanged: () => void; wide?: boolean }) {
   const t = useTheme();
   const toast = useToast();
   const insets = useSafeAreaInsets();
@@ -36,6 +38,11 @@ export function DetailScreen({ id, onBack, onChanged }: { id: string; onBack: ()
   const [replyPreset, setReplyPreset] = useState<ReplyPreset | null>(null);
   const [sendInfo, setSendInfo] = useState({ me: '', canSend: false });
   const [prefs, setPrefs] = useState<Partial<Prefs>>({});
+  // anexos recebidos (imagens inline + arquivos); null = sem Gmail / carregando
+  const [att, setAtt] = useState<GmailAttachments | null>(null);
+  const [viewer, setViewer] = useState<GmailFile | null>(null);
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [resumoOpen, setResumoOpen] = useState(false);
   const scroll = useRef<ScrollView>(null);
   const replyY = useRef(0);
   const replyNonce = useRef(0);
@@ -63,6 +70,9 @@ export function DetailScreen({ id, onBack, onChanged }: { id: string; onBack: ()
     setSummaryOpen(true);
     setReplyOpen(false);
     setReplyPreset(null);
+    setAtt(null);
+    let alive = true;
+    api.gmailAttachments(id).then((a) => alive && setAtt(a)).catch(() => undefined);
     (async () => {
       try {
         const first = await api.detail(id);
@@ -78,6 +88,7 @@ export function DetailScreen({ id, onBack, onChanged }: { id: string; onBack: ()
         setError(e instanceof Error ? e.message : 'Falha ao abrir.');
       }
     })();
+    return () => { alive = false; };
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openReply = (preset: ReplyPreset | null = null) => {
@@ -137,8 +148,8 @@ export function DetailScreen({ id, onBack, onChanged }: { id: string; onBack: ()
 
   const top = (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-      <Pressable onPress={onBack} accessibilityLabel="Voltar à lista" hitSlop={8} style={{ width: 40, height: 40, justifyContent: 'center' }}>
-        <T style={{ fontSize: 22 }}>←</T>
+      <Pressable onPress={onBack} accessibilityLabel={wide ? 'Fechar o e-mail' : 'Voltar à lista'} hitSlop={8} style={{ width: 40, height: 40, justifyContent: 'center' }}>
+        <T style={{ fontSize: 22 }}>{wide ? '×' : '←'}</T>
       </Pressable>
       <T title style={{ flex: 1, fontSize: 19, fontWeight: '600', lineHeight: 25 }}>{it?.subject || ''}</T>
       {it && it.bola.com !== 'ninguem' ? <Avatar email={it.bola.email} name={it.bola.nome} size={44} a11y={it.bola.com === 'outros' ? `Aguardando: ${it.bola.nome || it.bola.email || 'outra pessoa'}` : 'Com você'} /> : null}
@@ -147,7 +158,7 @@ export function DetailScreen({ id, onBack, onChanged }: { id: string; onBack: ()
 
   if (!it) {
     return (
-      <View style={{ flex: 1, backgroundColor: t.bg, paddingTop: Math.max(12, insets.top), paddingHorizontal: 16 }}>
+      <View style={{ flex: 1, backgroundColor: t.bg, paddingTop: Math.max(12, insets.top), paddingHorizontal: 16 + (wide ? 0 : Math.max(insets.left, insets.right)) }}>
         {top}
         {error ? (
           <View style={{ gap: 10 }}>
@@ -179,8 +190,13 @@ export function DetailScreen({ id, onBack, onChanged }: { id: string; onBack: ()
   const resolved = it.status === 'resolvido';
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.bg }}>
-      <ScrollView ref={scroll} contentContainerStyle={{ paddingTop: Math.max(12, insets.top), paddingHorizontal: 16, paddingBottom: 120 + insets.bottom }}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: t.bg }}>
+      <ScrollView
+        ref={scroll}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        contentContainerStyle={{ paddingTop: Math.max(12, insets.top), paddingHorizontal: 16 + (wide ? 0 : Math.max(insets.left, insets.right)), paddingBottom: 120 + insets.bottom }}
+      >
         {top}
         <T muted style={{ fontSize: 13, marginBottom: 12 }}>
           {conv?.solicitante ? (conv.solicitante.voce ? 'Você pediu' : `${conv.solicitante.nome} pediu`) : it.from_name}
@@ -207,18 +223,32 @@ export function DetailScreen({ id, onBack, onChanged }: { id: string; onBack: ()
                 style={{ width: 40, height: 40 }}
               />
             ) : null}
+            <IconBtn icon="📑" label="Resumo detalhado" onPress={() => setResumoOpen(true)} style={{ width: 40, height: 40 }} />
+            <IconBtn icon="🔎" label="Verificar na caixa" onPress={() => setVerifyOpen(true)} style={{ width: 40, height: 40 }} />
           </View>
           {summaryOpen ? <T style={{ fontSize: 16, lineHeight: 23 }}>{it.o_que_aconteceu || '—'}</T> : null}
           {threadOpen && it.mensagens
-            ? it.mensagens.map((m, i) => (
-                <View key={i} style={{ backgroundColor: t.bg, borderRadius: 12, padding: 10, marginTop: 8 }}>
-                  <T style={{ fontWeight: '600', fontSize: 13 }}>{m.de || '—'}</T>
-                  {m.data ? <T muted style={{ fontSize: 12 }}>{m.data}</T> : null}
-                  <T style={{ fontSize: 13.5, lineHeight: 20, marginTop: 6 }}>{m.texto}</T>
-                </View>
-              ))
+            ? it.mensagens.map((m, i) => {
+                const own = filesFor(att, i, it.mensagens!.length);
+                return (
+                  <View key={i} style={{ backgroundColor: t.bg, borderRadius: 12, padding: 10, marginTop: 8 }}>
+                    <T style={{ fontWeight: '600', fontSize: 13 }}>{m.de || '—'}</T>
+                    {m.data ? <T muted style={{ fontSize: 12 }}>{m.data}</T> : null}
+                    <MessageBody tid={it.thread_id} text={m.texto} mid={own.mid} att={att} onImage={setViewer} />
+                    <AttachmentPills tid={it.thread_id} files={own.files} onImage={setViewer} />
+                    <MessageSummary key={`${it.thread_id}:${i}`} tid={it.thread_id} idx={i} />
+                  </View>
+                );
+              })
             : null}
         </Block>
+
+        {att?.files.length ? (
+          <Block label={`Anexos (${att.files.length})`}>
+            <T muted style={{ fontSize: 12.5 }}>Toque para ver ou salvar em Arquivos. “no corpo” = a imagem também aparece na conversa completa.</T>
+            <AttachmentPills tid={it.thread_id} files={att.files} onImage={setViewer} />
+          </Block>
+        ) : null}
 
         <Block label="O que eu faria" n={3}>
           {it.opcoes.map((op, i) => (
@@ -358,6 +388,10 @@ export function DetailScreen({ id, onBack, onChanged }: { id: string; onBack: ()
         }}
       />
 
+      <VerifySheet tid={it.thread_id} subject={it.subject} visible={verifyOpen} onClose={() => setVerifyOpen(false)} />
+      <ResumoSheet tid={it.thread_id} subject={it.subject} visible={resumoOpen} onClose={() => setResumoOpen(false)} />
+      <ImageViewer tid={it.thread_id} file={viewer} onClose={() => setViewer(null)} />
+
       {learning ? <LearnSheet item={it} me={sendInfo.me} visible onClose={() => setLearning(false)} /> : null}
 
       <Sheet visible={!!draft} onClose={() => setDraft(null)} title={`${draft?.verb || ''} preparado`}>
@@ -380,7 +414,7 @@ export function DetailScreen({ id, onBack, onChanged }: { id: string; onBack: ()
           <Btn label="Depois" onPress={() => setDraft(null)} />
         </View>
       </Sheet>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

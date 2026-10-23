@@ -24,13 +24,14 @@ _PROVIDERS = tuple(_LABELS)
 # principal; se acabar a cota ou falhar, cai nos gratuitos do OpenRouter.
 _DEFAULT_CHAIN = [
     "gemini:gemini-flash-latest",
-    "openrouter:nvidia/nemotron-3-super-120b-a12b:free",
+    "gemini:gemini-flash-lite-latest",
+    "openrouter:openrouter/free",
     "openrouter:google/gemma-4-31b-it:free",
 ]
 
 _MAX_FALLBACK_ATTEMPTS = 5
 _COOLDOWN_SECONDS = 300
-_COOLDOWN_STATUS = {401, 402, 403, 429}
+_COOLDOWN_STATUS = {401, 402, 403, 404, 429}
 _COOLDOWN: dict[str, float] = {}
 _COOLDOWN_WHY: dict[str, str] = {}
 _POOL = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="llm")
@@ -347,7 +348,9 @@ def _call_gemini(model_name: str, user: str, system: str, timeout: float) -> str
     try:
         data = send(payload)
     except LLMError as exc:
-        if exc.status == 400 and "generationConfig" in payload and "think" in str(exc).lower():
+        # alguns modelos (ex.: flash-lite) recusam thinkingBudget=0 com um 400
+        # genérico ("invalid argument"): tenta de novo sem o generationConfig
+        if exc.status == 400 and "generationConfig" in payload:
             payload.pop("generationConfig")
             data = send(payload)
         else:

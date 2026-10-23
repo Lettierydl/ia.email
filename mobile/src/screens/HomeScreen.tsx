@@ -24,8 +24,8 @@ function histKey(i: Item): '' | 'resolvido' | 'lidos' {
   return '';
 }
 
-export function HomeScreen({ onOpen, onSettings, reloadKey, selected }: {
-  onOpen: (id: string) => void; onSettings: () => void; reloadKey: number; selected: string | null;
+export function HomeScreen({ onOpen, onSettings, onHistory, reloadKey, selected }: {
+  onOpen: (id: string) => void; onSettings: () => void; onHistory: () => void; reloadKey: number; selected: string | null;
 }) {
   const t = useTheme();
   const toast = useToast();
@@ -138,6 +138,7 @@ export function HomeScreen({ onOpen, onSettings, reloadKey, selected }: {
           <T title style={{ fontSize: 24, fontWeight: '600' }}>{data?.saudacao || 'Olá'}</T>
         </View>
         <IconBtn label="⟳" a11y="Pedir para a IA ler os e-mails novos" onPress={run} />
+        <IconBtn label="🕘" a11y="Histórico (desfazer ações)" onPress={onHistory} />
         <IconBtn label="⚙" a11y="Ajustes" onPress={onSettings} />
       </View>
       {sync && sync.status !== 'online' ? (
@@ -258,7 +259,7 @@ export function HomeScreen({ onOpen, onSettings, reloadKey, selected }: {
   return (
     <FlatList
       style={{ flex: 1, backgroundColor: t.bg }}
-      contentContainerStyle={{ paddingTop: Math.max(14, insets.top), paddingHorizontal: 16, paddingBottom: insets.bottom + 40, gap: 10 }}
+      contentContainerStyle={{ paddingTop: Math.max(14, insets.top), paddingLeft: 16 + insets.left, paddingRight: 16, paddingBottom: insets.bottom + 40, gap: 10 }}
       data={items}
       keyExtractor={(i) => i.thread_id}
       ListHeaderComponent={header}

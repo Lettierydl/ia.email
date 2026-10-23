@@ -9,14 +9,14 @@ import threading
 import time
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from googleapiclient.errors import HttpError
 
 from pydantic import BaseModel
 
-from . import assist, assistant, attachments, board, calendar_client, copilot, context_base, fixpt, fs_browser, gmail_client, learned, llm, metrics, netstatus, outbox, people_client, rag, recipients, store, summary_templates, verify
+from . import assist, assistant, auth, attachments, board, calendar_client, copilot, context_base, fixpt, fs_browser, gmail_client, history, learned, llm, metrics, netstatus, outbox, people_client, rag, recipients, store, summary_templates, verify
 from .gmail_client import QuotaPartial
 from .preload import pick_preload
 from .config import ACCOUNT, CONTEXT_MD, ROOT, TZ
@@ -26,6 +26,23 @@ STATIC = ROOT / "static"
 app = FastAPI(title="IA.Email")
 store.init()
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+if auth.ensure_token():
+    print("[auth] IA_EMAIL_API_TOKEN ausente: token novo gerado (valor não exibido). Veja `python -m app.auth --help`.")
+
+
+@app.middleware("http")
+async def _exigir_token(request: Request, call_next):
+    # Toda rota pede token, menos health/login/static (app/auth.py). Do
+    # próprio Mac (loopback ou gateway da bridge docker, sem header de
+    # proxy) passa livre enquanto IA_EMAIL_AUTH_LOCALHOST_LIVRE=true.
+    path = request.url.path
+    if auth.is_public_path(path) or auth.request_authorized(request):
+        return await call_next(request)
+    client_ip = request.client.host if request.client else "?"
+    print(f"[auth] negado {request.method} {path} de {client_ip}")
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": auth.UNAUTHORIZED_DETAIL}, status_code=401)
+    return RedirectResponse(auth.login_redirect_url(path, request.url.query), status_code=302)
 
 
 def _autopilot_loop() -> None:
@@ -120,6 +137,7 @@ class LearnedBody(BaseModel):
 class SaveDraftBody(BaseModel):
     """Persistência do rascunho editado (autosave). Sem LLM, sem envio."""
     text: str = ""
+    source: str = ""  # mail | copilot (só para o histórico)
 
 
 class SendBody(BaseModel):
@@ -227,6 +245,45 @@ def _index():
         STATIC / "index.html",
         headers={"Cache-Control": "no-store"},
     )
+
+
+class LoginBody(BaseModel):
+    token: str = ""
+    next: str = "/"
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True}
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse(STATIC / "login.html", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/login")
+def web_login(body: LoginBody, request: Request):
+    if not auth.token_ok(body.token):
+        return JSONResponse({"detail": "Token inválido."}, status_code=401)
+    res = JSONResponse({"ok": True, "next": auth.safe_next(body.next)})
+    res.set_cookie(
+        auth.COOKIE_NAME,
+        auth.session_value(),
+        max_age=auth.COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        secure=auth.is_https(request),
+        path="/",
+    )
+    return res
+
+
+@app.post("/api/logout")
+def web_logout():
+    res = JSONResponse({"ok": True})
+    res.delete_cookie(auth.COOKIE_NAME, path="/")
+    return res
 
 
 @app.get("/")
@@ -338,21 +395,17 @@ def setup(body: SetupBody):
     secret = body.client_secret.strip()
     if not cid or not secret:
         raise HTTPException(400, "Client ID e Secret são obrigatórios.")
-    env_path = ROOT / ".env"
-    env_path.write_text(
-        "\n".join(
-            [
-                "RADAR_ACCOUNT=leo@confrapag.com.br",
-                "RADAR_HOST=127.0.0.1",
-                "RADAR_PORT=8765",
-                f"GOOGLE_GMAIL_CLIENT_ID={cid}",
-                f"GOOGLE_GMAIL_CLIENT_SECRET={secret}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    # upsert (não sobrescreve): o .env também guarda IA_EMAIL_API_TOKEN.
+    auth.upsert_env(
+        {
+            "RADAR_ACCOUNT": "leo@confrapag.com.br",
+            "RADAR_HOST": "127.0.0.1",
+            "RADAR_PORT": "8765",
+            "GOOGLE_GMAIL_CLIENT_ID": cid,
+            "GOOGLE_GMAIL_CLIENT_SECRET": secret,
+        },
+        ROOT / ".env",
     )
-    env_path.chmod(0o600)
     os.environ["GOOGLE_GMAIL_CLIENT_ID"] = cid
     os.environ["GOOGLE_GMAIL_CLIENT_SECRET"] = secret
     return {"ok": True, "has_client": gmail_client.has_client()}
@@ -519,30 +572,71 @@ def radar(
 
 @app.post("/api/threads/{thread_id}/hide")
 def hide(thread_id: str, hidden: bool = Query(True)):
-    store.set_hidden(thread_id, hidden)
-    return {"ok": True}
+    with history.tracking("ocultar" if hidden else "mostrar", [thread_id], origem="mail") as rec:
+        store.set_hidden(thread_id, hidden)
+    return {"ok": True, "historico": rec.get("entry")}
 
 
 class MarkReadBody(BaseModel):
     ids: List[str]
 
 
-@app.post("/api/threads/{thread_id}/mark-read")
-def mark_read_single(thread_id: str):
+def _mark_read(ids: list[str], origem: str) -> dict:
+    """Marcar como lido (Gmail + local) e registrar no histórico: desfazer
+    devolve o não lido no Gmail e aqui. Um lote = uma linha do histórico."""
     try:
-        done = gmail_client.mark_threads_read([thread_id])
-        return {"ok": True, "marked": done}
+        with history.tracking("marcar_lido", ids, origem=origem) as rec:
+            done = gmail_client.mark_threads_read(ids)
+            rec["gmail"] = done
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "marked": done, "historico": rec.get("entry")}
+
+
+@app.post("/api/threads/{thread_id}/mark-read")
+def mark_read_single(thread_id: str, origem: str = Query("mail")):
+    return _mark_read([thread_id], origem)
 
 
 @app.post("/api/mark-read")
-def mark_read_batch(body: MarkReadBody):
+def mark_read_batch(body: MarkReadBody, origem: str = Query("mail")):
+    return _mark_read(body.ids, origem)
+
+
+# ── Histórico de ações + Desfazer/Refazer (app/history.py) ──
+def _hist(fn, *args):
     try:
-        done = gmail_client.mark_threads_read(body.ids)
-        return {"ok": True, "marked": done}
-    except RuntimeError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        return fn(*args)
+    except history.HistoryError as exc:
+        raise HTTPException(exc.status, exc.message) from exc
+
+
+@app.get("/api/historico")
+def historico_list(
+    limit: int = Query(50, ge=1, le=200), before: Optional[int] = Query(None),
+    tipo: str = Query("", max_length=300), q: str = Query("", max_length=200),
+):
+    return history.listing(limit=limit, before=before, tipo=tipo, q=q)
+
+
+@app.post("/api/historico/desfazer-ultimo")
+def historico_undo_last():
+    return _hist(history.undo_last)
+
+
+@app.post("/api/historico/refazer-ultimo")
+def historico_redo_last():
+    return _hist(history.redo_last)
+
+
+@app.post("/api/historico/{entry_id}/desfazer")
+def historico_undo(entry_id: int):
+    return _hist(history.undo, entry_id)
+
+
+@app.post("/api/historico/{entry_id}/refazer")
+def historico_redo(entry_id: int):
+    return _hist(history.redo, entry_id)
 
 
 @app.get("/api/threads/{thread_id}")
@@ -597,6 +691,7 @@ def thread_save_draft(thread_id: str, body: SaveDraftBody):
     text = body.text if body.text is not None else ""
     store.save_ai(thread_id, draft=text)
     store.log_event("draft_save", thread_id)
+    history.record_draft(thread_id, row.get("draft") or "", text, body.source)
     return {"ok": True, "len": len(text)}
 
 
@@ -764,9 +859,10 @@ def thread_not_interested(thread_id: str):
     if not row:
         raise HTTPException(404, "Thread não encontrada.")
     email = row.get("from_email") or ""
-    store.block_sender(email)
-    store.save_ai(thread_id, is_marketing=1)
-    return {"ok": True, "blocked": email}
+    with history.tracking("nao_interessado", [thread_id], origem="mail", detalhe=email) as rec:
+        store.block_sender(email)
+        store.save_ai(thread_id, is_marketing=1)
+    return {"ok": True, "blocked": email, "historico": rec.get("entry")}
 
 
 @app.get("/api/threads/{thread_id}/invite")
@@ -1370,6 +1466,49 @@ def download_gmail_attachment_file(
 ):
     """attachment_id na query: IDs longos/com caracteres especiais não quebram a rota."""
     return _gmail_attachment_response(thread_id, message_id, attachment_id, filename, download)
+
+
+INLINE_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+# Assinatura dos bytes -> Content-Type. Só esses: SVG/HTML nunca saem daqui.
+_IMAGE_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"BM", "image/bmp"),
+)
+
+
+def sniff_image_type(data: bytes) -> Optional[str]:
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return next((ctype for magic, ctype in _IMAGE_MAGIC if data.startswith(magic)), None)
+
+
+@app.get("/api/threads/{thread_id}/gmail-attachments/{message_id}/image")
+def gmail_inline_image(thread_id: str, message_id: str, attachment_id: str = Query(...)):
+    """Imagem inline do corpo (miniatura/lightbox): só image/* de verdade
+    (pelos bytes, não pelo nome), até 10 MB, cache privado do navegador."""
+    try:
+        data = gmail_client.get_attachment_bytes(thread_id, message_id, attachment_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except HttpError as exc:
+        raise HTTPException(404, "Imagem não encontrada.") from exc
+    if len(data) > INLINE_IMAGE_MAX_BYTES:
+        raise HTTPException(413, "Imagem grande demais para mostrar no corpo.")
+    ctype = sniff_image_type(data)
+    if not ctype:
+        raise HTTPException(415, "Anexo não é imagem.")
+    return Response(
+        content=data,
+        media_type=ctype,
+        headers={
+            "Cache-Control": "private, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'",
+        },
+    )
 
 
 @app.get("/api/threads/{thread_id}/gmail-attachments/{message_id}/{attachment_id}")

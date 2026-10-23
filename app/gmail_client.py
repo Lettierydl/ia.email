@@ -6,6 +6,7 @@ import re
 import threading
 import time
 from datetime import datetime
+from html import unescape
 from html.parser import HTMLParser
 import mimetypes
 from email import encoders
@@ -502,10 +503,24 @@ def get_invite_ics(thread_id: str) -> str | None:
     return None
 
 
+_IMAGE_EXT_RE = re.compile(r"\.(png|jpe?g|gif|webp|bmp)$", re.I)
+
+
+def _is_image_file(f: dict[str, Any]) -> bool:
+    """Imagem que dá pra mostrar no corpo (SVG fica de fora: pode ter script)."""
+    mime = (f.get("mime_type") or "").lower()
+    if mime == "image/svg+xml":
+        return False
+    return mime.startswith("image/") or bool(_IMAGE_EXT_RE.search(f.get("filename") or ""))
+
+
 def _collect_attachments(message_id: str, payload: dict[str, Any], out: list[dict[str, Any]]) -> None:
     filename = payload.get("filename") or ""
     body = payload.get("body") or {}
     if filename and body.get("attachmentId"):
+        headers = _header_map(payload)
+        cid = (headers.get("content-id") or headers.get("x-attachment-id") or "").strip().strip("<>")
+        disposition = (headers.get("content-disposition") or "").strip().lower()
         out.append(
             {
                 "message_id": message_id,
@@ -513,10 +528,97 @@ def _collect_attachments(message_id: str, payload: dict[str, Any], out: list[dic
                 "filename": filename,
                 "mime_type": payload.get("mimeType") or "application/octet-stream",
                 "size": body.get("size") or 0,
+                "content_id": cid,
+                "inline": disposition.startswith("inline"),
             }
         )
     for part in payload.get("parts") or []:
         _collect_attachments(message_id, part, out)
+
+
+# <img src="cid:..."> do HTML, na ordem em que aparecem (o texto puro que o
+# Gmail gera troca cada uma por "[image: alt]", na mesma ordem).
+_IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
+_IMG_SRC_CID_RE = re.compile(r"""\bsrc\s*=\s*["']?\s*cid:([^"'\s>]+)""", re.I)
+_IMG_ALT_RE = re.compile(r"""\balt\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
+# "[image: image.png]", "[imagem: foto.jpg]", "[cid:abc@123]"
+INLINE_PLACEHOLDER_RE = re.compile(
+    r"\[(?:image|imagem|img)\s*:\s*([^\]\n]{0,200}?)\s*\]|\[cid:([^\]\s]{1,200})\]", re.I
+)
+
+
+def html_image_refs(html: str) -> list[dict[str, str]]:
+    refs: list[dict[str, str]] = []
+    for tag in _IMG_TAG_RE.findall(html or ""):
+        src = _IMG_SRC_CID_RE.search(tag)
+        if not src:
+            continue
+        alt = _IMG_ALT_RE.search(tag)
+        alt_text = next((g for g in alt.groups() if g is not None), "") if alt else ""
+        refs.append({"cid": unescape(src.group(1)).strip().strip("<>"), "alt": unescape(alt_text).strip()})
+    return refs
+
+
+def map_inline_placeholders(
+    text: str, files: list[dict[str, Any]], html_refs: list[dict[str, str]]
+) -> list[dict[str, Any]]:
+    """Cada placeholder do texto -> anexo de imagem da MESMA mensagem.
+
+    Ordem de tentativa: [cid:X] direto; <img cid> do HTML (alt igual ao nome,
+    senão a próxima na ordem); nome do arquivo; ordem das imagens (inline
+    primeiro). Cada anexo é usado uma vez. Sem par -> attachment_id None (o
+    front deixa o texto, discreto)."""
+    images = [f for f in files if _is_image_file(f)]
+    by_cid = {f["content_id"].lower(): f for f in images if f.get("content_id")}
+    used: set[str] = set()
+    refs_left = [r for r in html_refs if r["cid"].lower() in by_cid]
+
+    def free(f: dict[str, Any] | None) -> dict[str, Any] | None:
+        return f if f and f["attachment_id"] not in used else None
+
+    out: list[dict[str, Any]] = []
+    for m in INLINE_PLACEHOLDER_RE.finditer(text or ""):
+        name, cid = (m.group(1) or "").strip(), (m.group(2) or "").strip()
+        hit = None
+        rule = ""
+        if cid:
+            hit, rule = free(by_cid.get(cid.lower())), "cid"
+        else:
+            ref = next((r for r in refs_left if name and r["alt"].lower() == name.lower()), None)
+            ref = ref or next((r for r in refs_left if free(by_cid.get(r["cid"].lower()))), None)
+            if ref:
+                refs_left.remove(ref)
+                hit, rule = free(by_cid.get(ref["cid"].lower())), "cid"
+            if not hit and name:
+                hit = next((f for f in images if free(f) and f["filename"].lower() == name.lower()), None)
+                rule = "filename" if hit else ""
+            if not hit:
+                ordered = [f for f in images if f.get("inline") or f.get("content_id")] + [
+                    f for f in images if not (f.get("inline") or f.get("content_id"))
+                ]
+                hit = next((f for f in ordered if free(f)), None)
+                rule = "ordem" if hit else ""
+        if hit:
+            used.add(hit["attachment_id"])
+        out.append(
+            {
+                "token": m.group(0),
+                "name": name or cid,
+                "attachment_id": hit["attachment_id"] if hit else None,
+                "filename": hit["filename"] if hit else None,
+                "rule": rule if hit else None,
+            }
+        )
+    return out
+
+
+def _message_body_text(payload: dict[str, Any]) -> tuple[str, str]:
+    """(texto como em get_thread_text, html bruto) de uma mensagem."""
+    plain: list[str] = []
+    html: list[str] = []
+    _collect_text(payload, plain, html)
+    raw_html = "\n".join(html)
+    return "\n".join(plain).strip() or _html_to_text(raw_html), raw_html
 
 
 def list_thread_attachments(thread_id: str) -> dict[str, Any]:
@@ -533,11 +635,28 @@ def list_thread_attachments(thread_id: str) -> dict[str, Any]:
     )
     files: list[dict[str, Any]] = []
     message_ids: list[str] = []
+    # Por mensagem: cada "[image: x]" do texto -> attachment_id (ou None).
+    inline_map: dict[str, list[dict[str, Any]]] = {}
     for message in raw.get("messages") or []:
         msg_id = message.get("id") or ""
         message_ids.append(msg_id)
-        _collect_attachments(msg_id, message.get("payload") or {}, files)
-    return {"files": files, "message_ids": message_ids}
+        payload = message.get("payload") or {}
+        mine: list[dict[str, Any]] = []
+        _collect_attachments(msg_id, payload, mine)
+        text, html = _message_body_text(payload)
+        refs = html_image_refs(html)
+        cids = {r["cid"].lower() for r in refs}
+        placeholders = map_inline_placeholders(text, mine, refs)
+        shown_ids = {p["attachment_id"] for p in placeholders if p["attachment_id"]}
+        for f in mine:
+            f["is_image"] = _is_image_file(f)
+            # inline = disposition inline OU referenciada por cid no HTML
+            f["inline"] = bool(f["inline"] or (f["content_id"] and f["content_id"].lower() in cids))
+            f["in_body"] = f["attachment_id"] in shown_ids
+        if placeholders:
+            inline_map[msg_id] = placeholders
+        files.extend(mine)
+    return {"files": files, "message_ids": message_ids, "inline": inline_map}
 
 
 def get_attachment_bytes(thread_id: str, message_id: str, attachment_id: str) -> bytes:
@@ -580,6 +699,36 @@ def mark_threads_read(thread_ids: list[str]) -> list[str]:
         done.append(thread_id)
         time.sleep(0.08)
     store.mark_local_read(done)
+    return done
+
+
+def mark_threads_unread(thread_ids: list[str]) -> list[str]:
+    """Desfazer "marcar como lido": devolve o UNREAD à thread no Gmail. O
+    Gmail põe a label em todas as mensagens da thread (não sabemos quais
+    estavam não lidas antes); para o Leo o efeito é a thread não lida de novo.
+    O lido local fica com quem chamou (app/history.py)."""
+    creds = load_credentials()
+    if not creds:
+        raise RuntimeError("Gmail nao autenticado.")
+    if not has_modify_scope(creds):
+        raise RuntimeError(
+            "Reautorize o Gmail (Entrar no Gmail): o app precisa de gmail.modify "
+            "para marcar como não lido."
+        )
+    service = _service(creds)
+    done: list[str] = []
+    for thread_id in thread_ids:
+        _execute(
+            service.users()
+            .threads()
+            .modify(
+                userId="me",
+                id=thread_id,
+                body={"addLabelIds": ["UNREAD"]},
+            )
+        )
+        done.append(thread_id)
+        time.sleep(0.08)
     return done
 
 

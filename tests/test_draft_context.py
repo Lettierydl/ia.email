@@ -52,11 +52,26 @@ def test_previous_instructions_and_answers_reach_the_draft_prompt(monkeypatch):
     assert prompt.index("via chamado direto") < prompt.index("Instrução do Leo")
 
 
-def test_chat_context_keeps_the_most_recent_messages_when_too_long():
+def test_chat_context_keeps_every_leo_turn_when_too_long():
+    """Antes os turnos antigos sumiam; agora todos ficam (os antigos encurtados)."""
     chat = [{"role": "user", "text": f"mensagem {i} " + "x" * 400} for i in range(40)]
-    out = assistant._chat_context(chat, max_chars=2000)
-    assert "mensagem 39" in out and "mensagem 0 " not in out
-    assert len(out) < 2600
+    out = assistant._chat_context(chat, max_chars=14000)
+    assert all(f"mensagem {i} " in out for i in range(40))
+    assert ("x" * 400) in out.splitlines()[-1]  # o último pedido fica inteiro
+    assert len(out) < 16000
+
+
+def test_chat_context_compacts_old_ai_drafts_and_points_to_previous():
+    chat = [
+        {"role": "user", "text": "primeiro pedido"},
+        {"role": "ai", "kind": "draft", "text": "RASCUNHO_VELHO " + "y" * 3000},
+        {"role": "user", "text": "segundo pedido"},
+        {"role": "ai", "kind": "draft", "text": "Rascunho atual"},
+    ]
+    out = assistant._chat_context(chat, previous="Rascunho atual")
+    assert "primeiro pedido" in out and "segundo pedido" in out
+    assert "y" * 500 not in out and "RASCUNHO_VELHO" in out
+    assert "(igual ao RASCUNHO ANTERIOR, abaixo)" in out
 
 
 def test_bank_data_is_a_hard_exclusion_pattern():

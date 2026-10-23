@@ -38,6 +38,7 @@
     quadro: { title: "Quadro", hint: "Não lidos que ainda pedem algo." },
     resolvido: { title: "Resolvidos", hint: "Fechados por você — já marcados como lidos no Gmail." },
     lidos: { title: "Marcados como lido", hint: "Lidos no Gmail que o copiloto já leu ou em que você agiu (sem os resolvidos)." },
+    historico: { title: "Histórico", hint: "Suas últimas ações (marcar como lido, resolver, mover…), com Desfazer." },
   };
   const DESK = window.matchMedia("(min-width: 900px)");
   // detalhe largo (2 colunas): "O que aconteceu" vai para a coluna lateral
@@ -165,7 +166,7 @@
       const name = f.filename || "anexo";
       const size = formatAttSize(f.size);
       const tip = `${name}${size ? ` (${size})` : ""}`;
-      return `<span class="cp-att-pill">
+      return `<span class="cp-att-pill" data-att-id="${esc(f.attachment_id)}">
         <a class="cp-att-open" href="${gmailAttUrl(tid, f, false)}" target="_blank" rel="noopener" title="Abrir ${esc(tip)}">
           <svg class="cp-att-ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">${ATT_ICON[attKind(f)]}</svg>
           <span class="cp-att-name">${esc(name)}</span>
@@ -180,7 +181,7 @@
       const r = await api(`/api/threads/${encodeURIComponent(tid)}/gmail-attachments`);
       if (!r.ok) return;
       if (current !== tid && (!shown || shown.thread_id !== tid)) return;
-      gmailAtt = { tid, files: r.data.files || [], message_ids: r.data.message_ids || [] };
+      gmailAtt = { tid, files: r.data.files || [], message_ids: r.data.message_ids || [], inline: r.data.inline || {} };
       // Re-pinta a thread se o detalhe ainda estiver aberto nesta thread.
       if (shown && shown.thread_id === tid) {
         const root = $("cp-thread");
@@ -351,6 +352,7 @@
   };
   let toastTimer;
   function toast(text) {
+    if (window.UndoHistory) window.UndoHistory.hideToast();
     const el = $("cp-toast");
     el.textContent = text; el.classList.remove("hidden");
     clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.add("hidden"), 4200);
@@ -476,7 +478,7 @@
     const r = await api("/api/copilot/resolve-column", "POST", { tab: key, thread_ids: ids });
     if (!r.ok) { btn.disabled = false; toast(r.data.detail || "Não deu certo."); return; }
     const n = r.data.resolvidos || 0;
-    toast(`${n} resolvido${n === 1 ? "" : "s"}.${r.data.gmail_ok === false ? " Não consegui marcar como lido no Gmail (reautorize o Gmail)." : ""}`);
+    offerUndo(r.data.historico, `${n} resolvido${n === 1 ? "" : "s"}.${r.data.gmail_ok === false ? " Não consegui marcar como lido no Gmail (reautorize o Gmail)." : ""}`);
     if (current && (r.data.thread_ids || []).includes(current)) closeDetail();
     load();
   }
@@ -494,7 +496,8 @@
     $("cp-views").innerHTML = Object.entries(MODES)
       .map(([k, m]) => {
         const n = k === "quadro" ? board : counts[k] || 0;
-        return `<button type="button" role="tab" class="cp-view${k === mode ? " on" : ""}" data-mode="${k}" aria-selected="${k === mode}">${esc(m.title)}<b>${n}</b></button>`;
+        const badge = k === "historico" ? "" : `<b>${n}</b>`; // histórico não tem contador
+        return `<button type="button" role="tab" class="cp-view${k === mode ? " on" : ""}" data-mode="${k}" aria-selected="${k === mode}">${esc(m.title)}${badge}</button>`;
       })
       .join("");
     document.body.dataset.mode = mode;
@@ -511,12 +514,19 @@
       .join("")}</div>`;
     hydrateAvatars(box);
   }
+  // ── view "Histórico": ações do Leo com Desfazer (static/history.js) ──
+  let activity = null;
+  function renderActivity() {
+    const box = $("cp-hist");
+    if (activity && box.contains(activity.root)) return; // já montada: mantém busca/filtro/páginas
+    activity = window.UndoHistory ? window.UndoHistory.mountPage(box, { openThread: (id) => open(id) }) : null;
+  }
   function setMode(next) {
     if (!(next in MODES) || next === mode) return;
     mode = next;
     sessionStorage.setItem("cp_mode", mode);
     renderModes();
-    if (mode === "quadro") renderList();
+    if (mode === "quadro" || mode === "historico") renderList();
     else { $("cp-hist").innerHTML = '<p class="cp-empty">Carregando…</p>'; load(); }
   }
   // ── busca: filtro por cima de quadro/histórico, olhando lidos e resolvidos ──
@@ -567,6 +577,7 @@
   }
   function renderList() {
     if (query) { renderSearch(); return; }
+    if (mode === "historico") { renderActivity(); return; }
     if (mode !== "quadro") { renderHistory(); return; }
     if (layout() === "kanban") { renderBoard(); return; }
     if (!data.tabs.some((t) => t.key === tab)) tab = "precisa_de_voce";
@@ -636,7 +647,7 @@
     if (card) card.classList.add("pending");
     const r = await api(`/api/copilot/${encodeURIComponent(id)}/action`, "POST", { action });
     if (!r.ok) { it.tab = prev; renderBoard(); toast(r.data.detail || "Não deu certo."); return; }
-    toast(DROP_MSG[action]);
+    offerUndo(r.data.historico, DROP_MSG[action]);
     if (current === id && $("cp-detail").classList.contains("open")) renderDetail(r.data.item);
     load();
   }
@@ -710,7 +721,7 @@
   }
   async function load() {
     const want = mode;
-    const [r, h] = await Promise.all([api("/api/copilot"), want === "quadro" ? null : api("/api/copilot?all=1")]);
+    const [r, h] = await Promise.all([api("/api/copilot"), want === "quadro" || want === "historico" ? null : api("/api/copilot?all=1")]);
     if (!r.ok) { toast(r.data.detail || "Falha ao carregar."); return; }
     data = r.data;
     trackZero();
@@ -1039,7 +1050,22 @@
       if (c) setCard(c, true, m.closest(".msg-quoted") ? true : undefined);
     });
   }
+  // "[image: x]" do texto -> miniatura (static/inlineimg.js); a pill da mesma
+  // imagem fica marcada "no corpo" (continua lá para baixar).
+  function applyInlineImages(root) {
+    if (!window.InlineImg || !root || !shown || gmailAtt.tid !== shown.thread_id) return;
+    const inline = gmailAtt.inline || {};
+    root.querySelectorAll(".msg-card").forEach((card) => {
+      const msgId = gmailAtt.message_ids[Number(card.dataset.idx)];
+      if (!msgId || !inline[msgId]) return;
+      const text = card.querySelector(".msg-text");
+      const files = gmailAtt.files.filter((f) => f.message_id === msgId);
+      const ids = window.InlineImg.apply(text, { tid: shown.thread_id, messageId: msgId, files, placeholders: inline[msgId] });
+      window.InlineImg.markPills(card, ids);
+    });
+  }
   function bindThread(root) {
+    applyInlineImages(root);
     // "Resumir este e-mail" (static/msgsummary.js): liga os botões e repõe as caixas
     if (window.MsgSummary && shown) window.MsgSummary.bind(root, shown.thread_id);
     // Para/Cc por mensagem + "Responder a esta mensagem" / "a todos" (static/msgreply.js)
@@ -1758,6 +1784,7 @@
     const tid = it.thread_id;
     const before = reply.text; // para o Desfazer, se a IA trocar o texto editado
     reply.busy = true; reply.status = "";
+    annot.flagPassages(null); // destaques de "pode ter copiado" do rascunho anterior saem
     if (withInstruction) reply.chatOpen = true; // a bolha do pedido + "escrevendo" ficam à vista
     // bolha do pedido = o texto que vai para a IA (citações listadas; ChatUI encurta o trecho)
     reply.pending = withInstruction ? instruction : "";
@@ -1799,6 +1826,8 @@
         });
       }
       if (r.data.unchanged) reply.status = "A IA devolveu o mesmo texto. Tente pedir de outro jeito (ex. \"acrescente no fim: faz sentido?\").";
+      // a IA ainda colou parte do pedido no e-mail (mesmo depois de refazer): avisa e destaca
+      if (r.data.alerta_copia) reply.status = r.data.alerta_copia.mensagem || "A IA pode ter copiado parte do seu pedido no texto — revise os trechos destacados.";
       if (r.data.keep_text) reply.keepResult = { original: r.data.original || "", draft: r.data.draft, corrigido: !!r.data.corrigido, aviso: r.data.aviso || "" };
     }
     else reply.status = (last && last.text) || "A IA não devolveu rascunho.";
@@ -1808,6 +1837,8 @@
     if (kr) reply.status = kr.aviso || (kr.corrigido ? "Seu texto foi para o rascunho, só com o português corrigido." : "Seu texto foi para o rascunho como está (nada a corrigir).");
     if (!shown || shown.thread_id !== tid) return;
     renderDetail(shown);
+    const copia = r.ok && r.data.alerta_copia;
+    if (copia && $("cp-reply-text") && $("cp-reply-text").value === r.data.draft) annot.flagPassages($("cp-reply-text"), copia.trechos || []);
     // "Usar meu texto": destaca o que a correção mudou; Desfazer volta o texto sem correção
     const kta = $("cp-reply-text");
     if (kr && kta && kr.corrigido && kr.original && kta.value === kr.draft) {
@@ -2013,8 +2044,14 @@
     else renderDetail(r.data.item);
     load();
     if (action === "cobrar") afterDraft(r.data, "Cobrança", r.data.item);
-    else if (action !== "tarefa") toast({ assumir: "Você acompanha.", acompanhar: "Você acompanha.", resolver: "Resolvido e marcado como lido — está em Resolvidos.", reabrir: "Reaberto." }[action] || "Pronto.");
+    else if (action !== "tarefa") offerUndo(r.data.historico, { assumir: "Você acompanha.", acompanhar: "Você acompanha.", resolver: "Resolvido e marcado como lido — está em Resolvidos.", reabrir: "Reaberto." }[action] || "Pronto.");
     return r.data;
+  }
+  // Depois de uma ação desfazível: toast com "Desfazer" (~6 s). Sem o módulo
+  // ou sem entrada no histórico, o toast simples de sempre.
+  function offerUndo(entry, text) {
+    if (window.UndoHistory && entry && entry.desfazivel) { $("cp-toast").classList.add("hidden"); window.UndoHistory.offer(entry, text); }
+    else toast(text);
   }
   async function apply(it, idx) {
     const op = it.opcoes[idx];
@@ -2254,6 +2291,15 @@
     if (!r.ok) return;
     canSend = !!r.data.can_send; me = lower(r.data.account);
     if (shown && reply && reply.open) renderDetail(shown);
+  });
+  // Cmd/Ctrl+Z desfaz a última ação (fora de campo de texto); depois de
+  // desfazer/refazer, quadro/listas e o detalhe aberto refletem o estado novo.
+  if (window.UndoHistory) window.UndoHistory.init({
+    onToast: () => $("cp-toast").classList.add("hidden"),
+    onChange: (entry) => {
+      load();
+      if (shown && current && $("cp-detail").classList.contains("open") && entry && (entry.thread_ids || []).includes(current)) open(current, true);
+    },
   });
   window.addEventListener("pagehide", flushReplyDraft);
   window.addEventListener("beforeunload", flushReplyDraft);

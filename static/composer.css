@@ -165,6 +165,9 @@ textarea.dm-on{position:relative;z-index:1;background:transparent!important}
 .dm-mark.dm-fix{background:color-mix(in srgb,#f9ab00 38%,transparent);box-shadow:0 1px 0 #e37400;animation:dm-fix-fade 4.5s ease-in forwards}
 @keyframes dm-fix-fade{0%,70%{background:color-mix(in srgb,#f9ab00 38%,transparent)}100%{background:transparent;box-shadow:none}}
 @media (prefers-reduced-motion:reduce){.dm-mark.dm-fix{animation:none}}
+/* trecho que a IA pode ter copiado do pedido do Leo (fica até editar ou gerar de novo) */
+.dm-mark.dm-warn{background:color-mix(in srgb,#ea4335 18%,transparent);box-shadow:0 1px 0 #d93025}
+.draft-copy-warn{color:#b3261e}
 .cmp-fixpt{margin-left:auto;display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border-radius:999px;border:1px solid var(--cmp-line,#dadce0);background:var(--cmp-card,#fff);color:var(--cmp-ink,#202124);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
 .cmp-fixpt:hover:not(:disabled){border-color:var(--cmp-accent,#1a73e8);color:var(--cmp-accent,#1a73e8)}
 .cmp-fixpt:disabled{opacity:.5;cursor:default}
