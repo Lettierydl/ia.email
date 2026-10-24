@@ -9,6 +9,7 @@ import { BackHandler, StyleSheet, useWindowDimensions, View } from 'react-native
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { api, loadBaseUrl, loadToken } from './src/api';
+import { loadDataSource } from './src/data/source';
 import { T, ToastProvider } from './src/components/ui';
 import { DetailScreen } from './src/screens/DetailScreen';
 import { HistoryScreen } from './src/screens/HistoryScreen';
@@ -32,7 +33,7 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      await Promise.all([loadBaseUrl(), loadToken()]);
+      await Promise.all([loadBaseUrl(), loadToken(), loadDataSource()]);
       const saved = (await AsyncStorage.getItem(SKIN_KEY).catch(() => null)) as SkinName | null;
       if (saved && saved in themes) setSkinState(saved);
       setReady(true);

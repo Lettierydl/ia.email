@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, TextInput, View } from 'react-native';
 
-import { api } from '../api';
+import { data as source } from '../data';
 import { useTheme } from '../theme';
 import type { ItemDetail, LearnedNote, LearnedScope } from '../types';
 import { Radio } from './DelegateSheet';
@@ -26,7 +26,7 @@ export function LearnSheet({ item, me, visible, onClose }: { item: ItemDetail; m
 
   const reload = useCallback(async () => {
     try {
-      setNotes((await api.learned(item.thread_id)).notes || []);
+      setNotes((await source.learned(item.thread_id)).notes || []);
     } catch {
       setNotes([]);
     }
@@ -35,14 +35,14 @@ export function LearnSheet({ item, me, visible, onClose }: { item: ItemDetail; m
   // O pai só monta a folha quando abre: estado sempre novo, aqui só busca a lista.
   useEffect(() => {
     let alive = true;
-    api.learned(item.thread_id).then((r) => alive && setNotes(r.notes || [])).catch(() => undefined);
+    source.learned(item.thread_id).then((r) => alive && setNotes(r.notes || [])).catch(() => undefined);
     return () => { alive = false; };
   }, [item.thread_id]);
 
   const save = async () => {
     setBusy(true);
     try {
-      await api.learn(scope, text.trim(), item.thread_id, scope === 'person' ? person : '');
+      await source.learn(scope, text.trim(), item.thread_id, scope === 'person' ? person : '');
       setText('');
       toast(`Aprendido: vale para ${scope === 'person' ? person : scope === 'general' ? 'todos os e-mails' : 'esta conversa/assunto'}.`);
       reload();
@@ -55,7 +55,7 @@ export function LearnSheet({ item, me, visible, onClose }: { item: ItemDetail; m
 
   const remove = async (id: number) => {
     try {
-      await api.unlearn(id);
+      await source.unlearn(id);
       toast('Aprendizado removido.');
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Não removeu.');

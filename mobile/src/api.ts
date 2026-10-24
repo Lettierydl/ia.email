@@ -153,6 +153,9 @@ export const api = {
       : request<ResumoDetalhado>(`/api/copilot/${enc(id)}/resumo-detalhado`, 'GET', undefined, 120000),
   resumoMensagem: (id: string, idx: number, modo: ModoResumoMsg, regerar = false) =>
     request<ResumoMensagem>(`/api/copilot/${enc(id)}/mensagens/${idx}/resumo`, 'POST', { modo, regerar }, 90000),
+  // só o cache (nunca chama a IA): resumo null quando ainda não há
+  resumoMensagemCached: (id: string, idx: number, modo: ModoResumoMsg) =>
+    request<ResumoMensagem>(`/api/copilot/${enc(id)}/mensagens/${idx}/resumo?modo=${enc(modo)}`),
   // Histórico de ações + desfazer/refazer (mesmas rotas da página Histórico da web).
   historico: (before?: number | null) => request<HistList>(`/api/historico?limit=50${before ? `&before=${before}` : ''}`),
   desfazer: (entryId: number) => request<{ ok: boolean; entry: HistEntry }>(`/api/historico/${entryId}/desfazer`, 'POST'),

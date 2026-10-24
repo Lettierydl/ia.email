@@ -1,11 +1,16 @@
-// Ajustes: endereço do servidor e token de acesso (ficam no aparelho; o token
-// no Keychain via expo-secure-store), skin, horários do digest
+// Ajustes: conta Google e fonte de dados do modo standalone (local/servidor),
+// endereço do servidor e token de acesso (ficam no aparelho; o token
+// no Keychain via expo-secure-store), chaves de IA do modo standalone
+// (AiKeysBlock, também no Keychain), skin, horários do digest
 // (por usuário, no servidor) e prévia do resumo diário/semanal.
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { api, ConnCheck, DEFAULT_BASE_URL, getBaseUrl, hasToken, saveBaseUrl, saveToken, testConnection } from '../api';
+import { AiKeysBlock } from '../components/AiKeysBlock';
+import { DataSourceBlock } from '../components/DataSourceBlock';
+import { GoogleAccountBlock } from '../components/GoogleAccountBlock';
 import { Block, Btn, T, useToast } from '../components/ui';
 import { WEEK } from '../labels';
 import { SkinName, useTheme } from '../theme';
@@ -38,7 +43,18 @@ export function SettingsScreen({ onBack, onSkin, onServerChanged }: {
     }
   };
   useEffect(() => {
-    loadPrefs();
+    let alive = true;
+    api
+      .prefs()
+      .then((p) => {
+        if (!alive) return;
+        setPrefs(p);
+        setPrefsOk(true);
+      })
+      .catch(() => alive && setPrefsOk(false));
+    return () => {
+      alive = false;
+    };
   }, []);
 
   // Salva o endereço (e o token, se colou um novo) e testa: /api/health
@@ -118,6 +134,9 @@ export function SettingsScreen({ onBack, onSkin, onServerChanged }: {
         <T title style={{ fontSize: 20, fontWeight: '600' }}>Ajustes do copiloto</T>
       </View>
 
+      <GoogleAccountBlock onChanged={onServerChanged} />
+      <DataSourceBlock onChanged={onServerChanged} />
+
       <Block label="Servidor">
         <T muted style={{ fontSize: 13, marginBottom: 6 }}>
           Endereço do IA.Email. Fora do Mac, prefira o Tailscale com HTTPS (tailscale serve):
@@ -165,6 +184,8 @@ export function SettingsScreen({ onBack, onSkin, onServerChanged }: {
           </View>
         ) : null}
       </Block>
+
+      <AiKeysBlock />
 
       <Block label="Visual">
         <View style={{ flexDirection: 'row', gap: 8 }}>

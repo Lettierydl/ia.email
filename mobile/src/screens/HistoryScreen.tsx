@@ -1,11 +1,12 @@
-// Histórico de ações (mesmas rotas da página Histórico da web): lista o que
-// foi feito (resolver, mover, delegar…) com Desfazer / Refazer por linha e
-// "Desfazer a última". E-mail enviado não volta (o servidor marca não reversível).
+// Histórico de ações (fonte local: historico_acoes do aparelho; servidor: as
+// rotas da página Histórico da web): lista o que foi feito (resolver, mover,
+// delegar…) com Desfazer / Refazer por linha e "Desfazer a última". E-mail
+// enviado não volta (marcado não reversível).
 import { useCallback, useEffect, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { api } from '../api';
+import { data as source } from '../data';
 import { ConfirmModal, ConfirmRequest } from '../components/ConfirmModal';
 import { Btn, T, useToast } from '../components/ui';
 import { useTheme } from '../theme';
@@ -30,7 +31,7 @@ export function HistoryScreen({ onBack, onChanged, onOpen }: { onBack: () => voi
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.historico();
+      const r = await source.historico();
       setItems(r.items);
       setNext(r.proximo);
       setError('');
@@ -49,7 +50,7 @@ export function HistoryScreen({ onBack, onChanged, onOpen }: { onBack: () => voi
   const more = async () => {
     if (!next || loading) return;
     try {
-      const r = await api.historico(next);
+      const r = await source.historico(next);
       setItems((prev) => [...prev, ...r.items]);
       setNext(r.proximo);
     } catch { /* puxar para atualizar tenta de novo */ }
@@ -74,7 +75,7 @@ export function HistoryScreen({ onBack, onChanged, onOpen }: { onBack: () => voi
       title: 'Desfazer?',
       message: `${h.rotulo}${h.assunto ? `\n“${h.assunto}”` : ''}${h.n > 1 ? `\n(${h.n} e-mails)` : ''}\n\nVolta ao estado de antes desta ação (no app e no Gmail, quando for o caso).`,
       confirmLabel: 'Desfazer',
-      onConfirm: () => doIt(h.id, () => api.desfazer(h.id), 'Desfeito'),
+      onConfirm: () => doIt(h.id, () => source.desfazer(h.id), 'Desfeito'),
     });
 
   return (
@@ -97,7 +98,7 @@ export function HistoryScreen({ onBack, onChanged, onOpen }: { onBack: () => voi
                 label="↶ Desfazer a última"
                 busy={busy === 'ultimo'}
                 disabled={busy !== null}
-                onPress={() => doIt('ultimo', api.desfazerUltimo, 'Desfeito')}
+                onPress={() => doIt('ultimo', () => source.desfazerUltimo(), 'Desfeito')}
               />
             </View>
             <T muted style={{ fontSize: 12.5 }}>Suas ações no copiloto e no /mail. E-mail enviado não pode ser desfeito.</T>
@@ -109,7 +110,7 @@ export function HistoryScreen({ onBack, onChanged, onOpen }: { onBack: () => voi
             ) : null}
           </View>
         }
-        ListEmptyComponent={!loading && !error ? <T muted style={{ textAlign: 'center', paddingVertical: 30 }}>Nada no histórico ainda.</T> : null}
+        ListEmptyComponent={!loading && !error ? <T muted style={{ textAlign: 'center', paddingVertical: 30 }}>Nada no histórico ainda.</T> : undefined}
         renderItem={({ item: h }) => (
           <View style={{ backgroundColor: t.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: t.line, opacity: h.desfeito ? 0.7 : 1 }}>
             <Pressable disabled={!h.thread_id} onPress={() => onOpen(h.thread_id)} accessibilityRole="button">
@@ -122,7 +123,7 @@ export function HistoryScreen({ onBack, onChanged, onOpen }: { onBack: () => voi
             {h.estado !== 'nao_reversivel' ? (
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                 {h.desfeito ? (
-                  <Btn label="↷ Refazer" busy={busy === h.id} disabled={busy !== null} onPress={() => doIt(h.id, () => api.refazer(h.id), 'Refeito')} />
+                  <Btn label="↷ Refazer" busy={busy === h.id} disabled={busy !== null} onPress={() => doIt(h.id, () => source.refazer(h.id), 'Refeito')} />
                 ) : (
                   <Btn label="↶ Desfazer" busy={busy === h.id} disabled={busy !== null} onPress={() => undo(h)} />
                 )}

@@ -1,10 +1,12 @@
 // Home: saudação, cartões Hoje / Aguardando outras pessoas, abas e lista de cards.
 // Views: Quadro (3 abas) | Resolvidos | Marcados como lido.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { AppState, FlatList, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { api, ApiError } from '../api';
+import { ApiError } from '../api';
+import { data as source } from '../data';
+import { onDataSourceChange } from '../data/source';
 import { Avatar, Btn, Chip, papelColor, T, urgColor, useToast } from '../components/ui';
 import { ago, ddmm, PAPEL, STATUS, TAB_TITLE, URG } from '../labels';
 import { shadow, useTheme } from '../theme';
@@ -43,12 +45,12 @@ export function HomeScreen({ onOpen, onSettings, onHistory, reloadKey, selected 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const d = await api.list(modeRef.current !== 'quadro');
+      const d = await source.list(modeRef.current !== 'quadro');
       setData(d);
       setError('');
       watchJob(d.job);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Falha ao carregar.');
+      setError(e instanceof ApiError || e instanceof Error ? e.message : 'Falha ao carregar.');
     } finally {
       setLoading(false);
     }
@@ -61,7 +63,7 @@ export function HomeScreen({ onOpen, onSettings, onHistory, reloadKey, selected 
     if (!j.running) return;
     poll.current = setTimeout(async () => {
       try {
-        const s = await api.status();
+        const s = await source.status();
         if (s.running && s.done === j.done) watchJob(s);
         else if (s.running) load();
         else {
@@ -77,26 +79,65 @@ export function HomeScreen({ onOpen, onSettings, onHistory, reloadKey, selected 
   useEffect(() => {
     load();
   }, [load, reloadKey, mode]);
+  // trocou a fonte de dados em Ajustes: recarrega da outra
+  useEffect(() => onDataSourceChange(() => load()), [load]);
+
+  // Fonte local: sync incremental do Gmail ao abrir e ao voltar ao app.
+  const syncing = useRef(false);
+  const syncLocal = useCallback(async (quiet: boolean) => {
+    if (!source.isLocal() || syncing.current) return;
+    syncing.current = true;
+    if (!quiet) setLoading(true);
+    try {
+      const s = await source.syncNow();
+      if (!quiet && s.status !== 'online') toast(syncMsg(s.status, s.last_error));
+    } catch (e) {
+      if (!quiet) toast(e instanceof Error ? e.message : 'O sync falhou.');
+    } finally {
+      syncing.current = false;
+    }
+    load();
+  }, [load, toast]);
+  useEffect(() => {
+    const first = setTimeout(() => syncLocal(true), 0);
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') syncLocal(true);
+    });
+    return () => {
+      clearTimeout(first);
+      sub.remove();
+    };
+  }, [syncLocal]);
+
+  // puxar para baixo: no modo local baixa o Gmail antes de reler o banco
+  const refresh = () => (source.isLocal() ? syncLocal(false) : load());
   useEffect(() => () => {
     if (poll.current) clearTimeout(poll.current);
   }, []);
 
   const run = async () => {
     if (data && !data.llm) {
-      toast('Falta chave de IA no .env do servidor: sigo só com a leitura por regra.');
-      return;
+      toast(source.isLocal()
+        ? 'Falta chave de IA (Ajustes → Chaves de IA): sigo só com a leitura por regra.'
+        : 'Falta chave de IA no .env do servidor: sigo só com a leitura por regra.');
+      if (!source.isLocal()) return;
     }
     try {
       // ⟳ baixa o Gmail primeiro (antes só relia o banco do servidor)
-      const s = await api.syncNow();
+      const s = await source.syncNow();
       if (s.status !== 'online') {
-        toast(s.status === 'auth_error' ? 'O acesso ao Gmail expirou: entre no Gmail de novo no computador.' : 'Sem conexão: não consegui baixar e-mails novos.');
+        toast(syncMsg(s.status, s.last_error));
         load();
         return;
       }
       const n = s.result?.fetched || 0;
       const synced = n ? `Gmail sincronizado: ${n} nova(s)/atualizada(s).` : 'Gmail sincronizado: nada novo.';
-      const j = await api.run(12);
+      if (data && !data.llm) {
+        toast(synced);
+        load();
+        return;
+      }
+      const j = await source.run(12);
       if (!j.running) toast(`${synced} A IA já leu tudo.`);
       else watchJob(j);
       load();
@@ -145,7 +186,9 @@ export function HomeScreen({ onOpen, onSettings, onHistory, reloadKey, selected 
         <View style={{ marginTop: 10, padding: 10, borderRadius: 12, backgroundColor: sync.status === 'auth_error' ? '#fde3e3' : '#fff4d6' }}>
           <T style={{ fontSize: 13, color: sync.status === 'auth_error' ? '#6d1a1a' : '#5c4400' }}>
             {sync.status === 'auth_error'
-              ? 'O acesso ao Gmail expirou — entre no Gmail de novo para ler e enviar. O que você já confirmou fica na fila.'
+              ? source.isLocal()
+                ? 'Sem acesso ao Gmail neste aparelho — entre com a conta Google em Ajustes → Conta Google.'
+                : 'O acesso ao Gmail expirou — entre no Gmail de novo para ler e enviar. O que você já confirmou fica na fila.'
               : 'Sem conexão — não estou conseguindo ler/baixar e-mails novos. Você pode responder os que já estão aqui; envio fica na fila e sai quando a conexão voltar.'}
             {sync.last_sync_label ? ` Último e-mail baixado em ${sync.last_sync_label}.` : ''}
           </T>
@@ -264,14 +307,23 @@ export function HomeScreen({ onOpen, onSettings, onHistory, reloadKey, selected 
       keyExtractor={(i) => i.thread_id}
       ListHeaderComponent={header}
       ListEmptyComponent={
-        data ? <T muted style={{ textAlign: 'center', paddingVertical: 30, fontSize: 14 }}>{emptyMsg} 🌿</T> : null
+        data ? <T muted style={{ textAlign: 'center', paddingVertical: 30, fontSize: 14 }}>{emptyMsg} 🌿</T> : undefined
       }
       renderItem={({ item }) => (
         <ItemCard it={item} reading={reading(item)} llm={!!data?.llm} selected={item.thread_id === selected} onPress={() => onOpen(item.thread_id)} />
       )}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={t.accent} />}
+      refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={t.accent} />}
     />
   );
+}
+
+function syncMsg(status: string, detail?: string): string {
+  if (status === 'auth_error') {
+    return source.isLocal()
+      ? detail || 'Sem acesso ao Gmail: entre com a conta Google em Ajustes → Conta Google.'
+      : 'O acesso ao Gmail expirou: entre no Gmail de novo no computador.';
+  }
+  return 'Sem conexão: não consegui baixar e-mails novos.';
 }
 
 function IconBtn({ label, a11y, onPress }: { label: string; a11y: string; onPress: () => void }) {

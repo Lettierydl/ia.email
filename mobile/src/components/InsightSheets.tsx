@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, View } from 'react-native';
 
-import { api } from '../api';
+import { data as source } from '../data';
 import { useTheme } from '../theme';
 import type { ResumoDetalhado, VerifyClaim, VerifyResult } from '../types';
 import { ResumoView, THREAD_SECOES } from './MessageParts';
@@ -31,7 +31,7 @@ export function VerifySheet({ tid, subject, visible, onClose }: { tid: string; s
     try {
       if (!regerar) {
         setBusy('abrindo');
-        const c = await api.verifyCached(tid);
+        const c = await source.verifyCached(tid);
         if (my !== seq.current) return;
         if (Array.isArray(c.afirmacoes) && !c.desatualizado) {
           setData(c);
@@ -39,7 +39,7 @@ export function VerifySheet({ tid, subject, visible, onClose }: { tid: string; s
         }
       }
       setBusy('gerando');
-      const r = await api.verify(tid, regerar);
+      const r = await source.verify(tid, regerar);
       if (my === seq.current) setData(r);
     } catch (e) {
       if (my === seq.current) setErro(e instanceof Error ? e.message : 'Não deu para verificar agora.');
@@ -133,7 +133,7 @@ export function ResumoSheet({ tid, subject, visible, onClose }: { tid: string; s
     setBusy(true);
     setErro('');
     try {
-      const r = await api.resumoDetalhado(tid, regerar);
+      const r = await source.resumoDetalhado(tid, regerar);
       if (my === seq.current) setData(r);
     } catch (e) {
       if (my === seq.current) setErro(e instanceof Error ? e.message : 'Não deu para resumir agora.');

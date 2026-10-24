@@ -49,7 +49,20 @@
           "imageWidth": 200,
           "resizeMode": "contain"
         }
+      ],
+      "expo-status-bar",
+      "expo-sqlite",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.REPLACE_WITH_IOS_CLIENT_ID"
+        }
       ]
-    ]
+    ],
+    "extra": {
+      "googleAuth": {
+        "iosClientId": "REPLACE_WITH_IOS_CLIENT_ID.apps.googleusercontent.com"
+      }
+    }
   }
 }

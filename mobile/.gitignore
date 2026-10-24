@@ -39,3 +39,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# O data/ do .gitignore da raiz é o banco do backend (data/*.db); aqui
+# src/data/ é código (camada de dados das telas) e precisa ir para o git.
+!/src/data/

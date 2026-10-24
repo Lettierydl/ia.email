@@ -1,9 +1,10 @@
 // Delegar em 2 modos: às claras (rascunho na thread com Cc de quem já está nela)
-// ou e-mail novo silencioso (só para a pessoa). Nada é enviado.
+// ou e-mail novo silencioso (só para a pessoa). Nada é enviado: o texto
+// preparado abre no composer e só sai pelo ConfirmModal.
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, TextInput, View } from 'react-native';
 
-import { api } from '../api';
+import { data } from '../data';
 import { useTheme } from '../theme';
 import type { ActionResult, ItemDetail, ModoDelegar } from '../types';
 import { Btn, Sheet, T, useToast } from './ui';
@@ -37,7 +38,7 @@ export function DelegateSheet({ item, visible, onClose, onDone }: {
     }
     const mine = ++seq.current;
     try {
-      const r = await api.aliasSuggest(s);
+      const r = await data.aliasSuggest(s);
       if (mine === seq.current) setSug(r.suggestions || []);
     } catch {
       setSug([]);
@@ -47,7 +48,7 @@ export function DelegateSheet({ item, visible, onClose, onDone }: {
   const go = async () => {
     setBusy(true);
     try {
-      onDone(await api.delegar(item.thread_id, para.trim(), modo, nome, nota.trim()));
+      onDone(await data.delegar(item.thread_id, para.trim(), modo, nome, nota.trim()));
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Não deu certo.');
     } finally {

@@ -2,11 +2,11 @@
 // do "[image: x]" (o backend já casa cada placeholder com o anexo, campo
 // `inline` de /gmail-attachments), lista de anexos (abre a folha do sistema
 // para ver/salvar) e "Resumir este e-mail" (direto/abrangente) por mensagem.
-import { ReactNode, useState } from 'react';
-import { Image, Modal, Pressable, useWindowDimensions, View } from 'react-native';
+import { ReactNode, useEffect, useState } from 'react';
+import { Image, type ImageURISource, Modal, Pressable, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { api, imageSource, inlineImageUrl, openAttachment } from '../api';
+import { data as source } from '../data';
 import { useTheme } from '../theme';
 import type { GmailAttachments, GmailFile, ModoResumoMsg, ResumoLista, ResumoMensagem } from '../types';
 import { Btn, T, useToast } from './ui';
@@ -63,9 +63,26 @@ export function MessageBody({ tid, text, mid, att, onImage }: {
   );
 }
 
+/** Fonte da imagem do anexo: URL do servidor (com token) ou data: URI baixada do Gmail no modo local. */
+function useAttachmentImage(tid: string, f: GmailFile | null): { src: ImageURISource | null; failed: boolean; fail: () => void } {
+  const [state, setState] = useState<{ key: string; src: ImageURISource | null; failed: boolean }>({ key: '', src: null, failed: false });
+  const key = f ? `${tid}:${f.message_id}:${f.attachment_id}` : '';
+  useEffect(() => {
+    if (!f) return;
+    let alive = true;
+    source.imageSource(tid, f).then(
+      (src) => alive && setState({ key, src, failed: false }),
+      () => alive && setState({ key, src: null, failed: true }),
+    );
+    return () => { alive = false; };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cur = state.key === key ? state : { src: null, failed: false };
+  return { src: cur.src, failed: cur.failed, fail: () => setState({ key, src: null, failed: true }) };
+}
+
 function InlineImage({ tid, f, onPress }: { tid: string; f: GmailFile; onPress: () => void }) {
   const t = useTheme();
-  const [failed, setFailed] = useState(false);
+  const { src, failed, fail } = useAttachmentImage(tid, f);
   if (failed) {
     return (
       <Pressable onPress={onPress} style={{ alignSelf: 'flex-start', marginVertical: 4, borderWidth: 1, borderColor: t.line, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
@@ -76,8 +93,8 @@ function InlineImage({ tid, f, onPress }: { tid: string; f: GmailFile; onPress: 
   return (
     <Pressable onPress={onPress} accessibilityRole="imagebutton" accessibilityLabel={`${f.filename || 'imagem'} — toque para ampliar`} style={{ marginVertical: 6 }}>
       <Image
-        source={imageSource(inlineImageUrl(tid, f))}
-        onError={() => setFailed(true)}
+        source={src || undefined}
+        onError={fail}
         resizeMode="contain"
         style={{ width: '100%', height: 220, borderRadius: 10, backgroundColor: t.fog }}
       />
@@ -95,7 +112,7 @@ export function AttachmentPills({ tid, files, onImage }: { tid: string; files: G
     if (f.is_image) return onImage(f);
     setBusy(f.attachment_id);
     try {
-      await openAttachment(tid, f);
+      await source.openAttachment(tid, f);
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Não abriu o anexo.');
     } finally {
@@ -129,6 +146,7 @@ export function ImageViewer({ tid, file, onClose }: { tid: string; file: GmailFi
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const [busy, setBusy] = useState(false);
+  const { src } = useAttachmentImage(tid, file);
   return (
     <Modal visible={!!file} transparent animationType="fade" onRequestClose={onClose} supportedOrientations={['portrait', 'landscape']}>
       <View style={{ flex: 1, backgroundColor: 'rgba(20,20,28,0.94)', paddingTop: insets.top, paddingBottom: insets.bottom }}>
@@ -140,14 +158,14 @@ export function ImageViewer({ tid, file, onClose }: { tid: string; file: GmailFi
             onPress={async () => {
               if (!file) return;
               setBusy(true);
-              try { await openAttachment(tid, file); } catch (e) { toast(e instanceof Error ? e.message : 'Não abriu.'); } finally { setBusy(false); }
+              try { await source.openAttachment(tid, file); } catch (e) { toast(e instanceof Error ? e.message : 'Não abriu.'); } finally { setBusy(false); }
             }}
           />
           <Btn label="Fechar" onPress={onClose} />
         </View>
-        {file ? (
+        {file && src ? (
           <Pressable style={{ flex: 1 }} onPress={onClose} accessibilityLabel="Fechar imagem">
-            <Image source={imageSource(inlineImageUrl(tid, file))} resizeMode="contain" style={{ width, height: height - insets.top - insets.bottom - 80 }} />
+            <Image source={src} resizeMode="contain" style={{ width, height: height - insets.top - insets.bottom - 80 }} />
           </Pressable>
         ) : null}
       </View>
@@ -216,7 +234,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-/** "Resumir este e-mail" de uma mensagem da conversa (cache no servidor; Regerar refaz). */
+/** "Resumir este e-mail" de uma mensagem da conversa (cache no aparelho ou no servidor, conforme a fonte; Regerar refaz). */
 export function MessageSummary({ tid, idx }: { tid: string; idx: number }) {
   const t = useTheme();
   const [modo, setModo] = useState<ModoResumoMsg | null>(null);
@@ -228,7 +246,7 @@ export function MessageSummary({ tid, idx }: { tid: string; idx: number }) {
     setBusy(true);
     setErro('');
     try {
-      setData(await api.resumoMensagem(tid, idx, m, regerar));
+      setData(await source.resumoMensagem(tid, idx, m, regerar));
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Não deu para resumir agora.');
     } finally {

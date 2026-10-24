@@ -1,13 +1,18 @@
 // Detalhe em 3 camadas: seu papel, o que aconteceu, o que eu faria (com o porquê).
 // Ações Acompanhar / Cobrar / Delegar / Resolvido só mudam estado ou preparam
-// rascunho no servidor. Responder abre o composer com o rascunho da IA; o envio
-// usa a rota do /mail e só sai depois da confirmação.
+// rascunho (no aparelho, na fonte local; no Mac, na fonte servidor). Responder
+// abre o composer com o rascunho da IA; o envio só sai depois da confirmação
+// (no aparelho, ainda com alguns segundos para desfazer).
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, View } from 'react-native';
+import type { ScrollViewInstance } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { absolute, api } from '../api';
+import { absolute } from '../api';
+import { data as source } from '../data';
+import { ComposeNewSheet, type NewMail } from '../components/ComposeNewSheet';
 import { DelegateSheet } from '../components/DelegateSheet';
+import { OutboxBanner } from '../components/OutboxBanner';
 import { ResumoSheet, VerifySheet } from '../components/InsightSheets';
 import { AttachmentPills, filesFor, ImageViewer, MessageBody, MessageSummary } from '../components/MessageParts';
 import { LearnSheet } from '../components/LearnSheet';
@@ -19,6 +24,7 @@ import { useTheme } from '../theme';
 import type { ActionResult, GmailAttachments, GmailFile, ItemDetail, Opcao, Prefs, ResumoContexto } from '../types';
 
 const DONE_MSG: Record<string, string> = { assumir: 'Você acompanha.', acompanhar: 'Você acompanha.', resolver: 'Resolvido e marcado como lido.', reabrir: 'Reaberto.' };
+const DONE_LOCAL: Record<string, string> = { ...DONE_MSG, resolver: 'Resolvido: lido e arquivado no Gmail. Dá para desfazer no Histórico.' };
 // Ícones: mesmo conjunto da web (src/icons.ts ↔ static/icons.js). Resolvido = duplo check verde.
 const ICO = { reply: ICON.reply, eye: ICON.eye, bell: ICON.bell, bellOff: ICON['bell-off'], share: ICON.handoff, done: ICON['check-circle-double'], reopen: ICON.reopen, thread: ICON.thread, summary: ICON.summary, mail: ICON.mail, spark: ICON.sparkles, learn: ICON.learn };
 
@@ -32,6 +38,8 @@ export function DetailScreen({ id, onBack, onChanged, wide = false }: { id: stri
   const [delegating, setDelegating] = useState(false);
   const [learning, setLearning] = useState(false);
   const [draft, setDraft] = useState<{ verb: string; res: ActionResult } | null>(null);
+  const [newMail, setNewMail] = useState<NewMail | null>(null);
+  const [outboxNonce, setOutboxNonce] = useState(0);
   const [threadOpen, setThreadOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [replyOpen, setReplyOpen] = useState(false);
@@ -43,18 +51,18 @@ export function DetailScreen({ id, onBack, onChanged, wide = false }: { id: stri
   const [viewer, setViewer] = useState<GmailFile | null>(null);
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [resumoOpen, setResumoOpen] = useState(false);
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ScrollViewInstance>(null);
   const replyY = useRef(0);
   const replyNonce = useRef(0);
 
   useEffect(() => {
-    api.appStatus().then((s) => setSendInfo({ me: (s.account || '').toLowerCase(), canSend: !!s.can_send })).catch(() => undefined);
-    api.prefs().then(setPrefs).catch(() => undefined);
+    source.appStatus().then((s) => setSendInfo({ me: (s.account || '').toLowerCase(), canSend: !!s.can_send })).catch(() => undefined);
+    source.prefs().then(setPrefs).catch(() => undefined);
   }, []);
 
   const load = useCallback(async (refresh = false) => {
     try {
-      setIt(await api.detail(id, refresh));
+      setIt(await source.detail(id, refresh));
       setError('');
       if (refresh) onChanged();
     } catch (e) {
@@ -72,10 +80,10 @@ export function DetailScreen({ id, onBack, onChanged, wide = false }: { id: stri
     setReplyPreset(null);
     setAtt(null);
     let alive = true;
-    api.gmailAttachments(id).then((a) => alive && setAtt(a)).catch(() => undefined);
+    source.gmailAttachments(id).then((a) => alive && setAtt(a)).catch(() => undefined);
     (async () => {
       try {
-        const first = await api.detail(id);
+        const first = await source.detail(id);
         setIt(first);
         setError('');
         // ainda sem leitura da IA (ou com mensagem nova): lê agora
@@ -105,23 +113,26 @@ export function DetailScreen({ id, onBack, onChanged, wide = false }: { id: stri
         text: res.draft || '', cc: cc.split(',').map((e) => e.trim()).filter(Boolean), nonce: ++replyNonce.current,
         status: `${verb} preparado pela IA. Nada foi enviado: revise e envie daqui.`,
       });
-    } else if (res.open_url) setDraft({ verb, res });
+    } else if (res.compose && source.isLocal()) setNewMail({ ...res.compose, verb });
+    else if (res.open_url) setDraft({ verb, res });
     else toast(`${verb}: feito.`);
   };
+
+  const actionError = (e: unknown) => (e instanceof Error ? e.message : 'Não deu certo.');
 
   const act = async (action: string, extra: Record<string, unknown> = {}) => {
     if (!it) return;
     setBusy(action);
     try {
-      const r = await api.action(it.thread_id, action, extra);
+      const r = await source.action(it.thread_id, action, extra);
       setIt(r.item);
       onChanged();
       // Resolvido = lido no Gmail: sai do quadro, então volta para a lista.
       if (action === 'resolver') onBack();
       if (action === 'cobrar') afterDraft(r, 'Cobrança');
-      else if (action !== 'tarefa') toast(DONE_MSG[action] || 'Pronto.');
+      else if (action !== 'tarefa') toast((source.isLocal() ? DONE_LOCAL : DONE_MSG)[action] || 'Pronto.');
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Não deu certo.');
+      toast(actionError(e));
     } finally {
       setBusy('');
     }
@@ -135,12 +146,12 @@ export function DetailScreen({ id, onBack, onChanged, wide = false }: { id: stri
     }
     setBusy(`apply${idx}`);
     try {
-      const r = await api.action(it.thread_id, 'aplicar', { opcao: idx });
+      const r = await source.action(it.thread_id, 'aplicar', { opcao: idx });
       setIt(r.item);
       onChanged();
       afterDraft(r, op.acao === 'direcionar' ? 'Delegação' : op.acao === 'pedir_contexto' ? 'Pedido de contexto' : 'Rascunho');
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Não deu certo.');
+      toast(actionError(e));
     } finally {
       setBusy('');
     }
@@ -298,6 +309,8 @@ export function DetailScreen({ id, onBack, onChanged, wide = false }: { id: stri
           </View>
         </Block>
 
+        <OutboxBanner threadId={it.thread_id} nonce={outboxNonce} onSent={() => { onChanged(); load(); }} />
+
         {replyOpen ? (
           <View onLayout={(e) => { replyY.current = e.nativeEvent.layout.y; }}>
             <ReplyComposer
@@ -306,7 +319,7 @@ export function DetailScreen({ id, onBack, onChanged, wide = false }: { id: stri
               preset={replyPreset}
               me={sendInfo.me}
               canSend={sendInfo.canSend}
-              onSent={() => { setReplyOpen(false); setReplyPreset(null); onChanged(); load(); }}
+              onSent={() => { setReplyOpen(false); setReplyPreset(null); setOutboxNonce((n) => n + 1); onChanged(); load(); }}
               onLearn={() => setLearning(true)}
             />
           </View>
@@ -393,6 +406,14 @@ export function DetailScreen({ id, onBack, onChanged, wide = false }: { id: stri
       <ImageViewer tid={it.thread_id} file={viewer} onClose={() => setViewer(null)} />
 
       {learning ? <LearnSheet item={it} me={sendInfo.me} visible onClose={() => setLearning(false)} /> : null}
+
+      {newMail ? (
+        <ComposeNewSheet
+          mail={newMail}
+          onClose={() => setNewMail(null)}
+          onQueued={() => { setNewMail(null); setOutboxNonce((n) => n + 1); }}
+        />
+      ) : null}
 
       <Sheet visible={!!draft} onClose={() => setDraft(null)} title={`${draft?.verb || ''} preparado`}>
         <T muted style={{ fontSize: 13, marginBottom: 10 }}>Nada foi enviado. Revise e envie pela tela do e-mail.</T>

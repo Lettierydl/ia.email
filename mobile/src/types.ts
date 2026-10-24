@@ -119,6 +119,44 @@ export interface Recipients {
   reply_to?: Endereco[];
   reply_cc?: Endereco[];
   participants?: Endereco[];
+  /** só no modo local: mensagens da thread para escolher qual responder */
+  messages?: ComposeMessage[];
+  /** mensagem que o Para/Cc acima responde (padrão: a última de outra pessoa) */
+  target_id?: string;
+}
+
+/** Uma mensagem da thread no seletor "Responder a" do composer. */
+export interface ComposeMessage {
+  id: string;
+  idx: number;
+  de: string;
+  email: string;
+  data: string;
+  snippet: string;
+  voce: boolean;
+}
+
+/** Envio confirmado no composer (ConfirmModal). */
+export interface SendInput {
+  text: string;
+  cc: string;
+  to: string[];
+  /** id do Gmail da mensagem respondida (vazio = padrão) */
+  replyToMessageId?: string;
+}
+
+/** Item da fila de envio do aparelho (modo local). */
+export interface OutboxView {
+  id: string;
+  kind: 'reply' | 'new';
+  thread_id: string;
+  to: string;
+  subject: string;
+  status: 'queued' | 'sending' | 'sent' | 'failed' | 'cancelled';
+  last_error: string;
+  attempts: number;
+  /** ms: até quando dá para desfazer sem ter saído; 0 = janela passou */
+  undo_until: number;
 }
 
 /** Resposta do POST /api/threads/{id}/draft. */
@@ -128,6 +166,8 @@ export interface DraftResult {
   /** guarda do backend: a IA pode ter copiado o pedido ou colado pontos sem responder */
   alerta_copia?: { mensagem?: string; trechos?: string[] };
   unchanged?: boolean;
+  /** "usar meu texto": aviso quando a correção de português não foi aplicada */
+  aviso?: string;
 }
 
 /** Anexo recebido na thread (GET /api/threads/{id}/gmail-attachments). */
@@ -229,6 +269,8 @@ export interface SendResult {
   queued?: boolean;
   message?: string;
   outbox_id?: string;
+  /** modo local: ms até quando o envio pode ser desfeito */
+  undo_until?: number;
 }
 
 /** Estado da conexão do servidor com o Gmail (GET /api/sync/status). */
@@ -302,6 +344,8 @@ export interface ActionResult {
   open_url?: string;
   para?: string;
   acao?: Acao;
+  /** modo local: e-mail novo preparado (delegar silencioso / cobrar) — só sai pelo composer */
+  compose?: { to: string; subject: string; body: string };
 }
 
 export interface Digest {
