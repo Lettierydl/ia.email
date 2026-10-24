@@ -55,13 +55,13 @@
       [
         "@react-native-google-signin/google-signin",
         {
-          "iosUrlScheme": "com.googleusercontent.apps.REPLACE_WITH_IOS_CLIENT_ID"
+          "iosUrlScheme": "com.googleusercontent.apps.193041844604-02qbecj1b347ucgpnjq6liq7frb810t5"
         }
       ]
     ],
     "extra": {
       "googleAuth": {
-        "iosClientId": "REPLACE_WITH_IOS_CLIENT_ID.apps.googleusercontent.com"
+        "iosClientId": "193041844604-02qbecj1b347ucgpnjq6liq7frb810t5.apps.googleusercontent.com"
       }
     }
   }
